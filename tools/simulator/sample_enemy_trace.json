@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "game": "ladybug",
+    "source": "sample placeholder trace",
+    "tick_rate": 60,
+    "notes": "Temporary hand-authored trace for validating the Godot simulator UI only."
+  },
+  "initial_state": {
+    "frame": 0,
+    "gates": [
+      { "gate_id": 0, "orientation": "horizontal" },
+      { "gate_id": 1, "orientation": "vertical" }
+    ]
+  },
+  "frames": [
+    {
+      "frame": 0,
+      "player": { "slot": -1, "x": 88, "y": 86, "dir": "down", "active": true },
+      "enemies": [
+        { "slot": 0, "x": 88, "y": 86, "dir": "up", "active": true },
+        { "slot": 1, "x": 88, "y": 70, "dir": "up", "active": false }
+      ],
+      "gates": [
+        { "gate_id": 0, "orientation": "horizontal" },
+        { "gate_id": 1, "orientation": "vertical" }
+      ]
+    },
+    {
+      "frame": 1,
+      "player": { "slot": -1, "x": 88, "y": 87, "dir": "down", "active": true },
+      "enemies": [
+        { "slot": 0, "x": 88, "y": 85, "dir": "up", "active": true },
+        { "slot": 1, "x": 88, "y": 70, "dir": "up", "active": false }
+      ],
+      "gates": [
+        { "gate_id": 0, "orientation": "horizontal" },
+        { "gate_id": 1, "orientation": "vertical" }
+      ]
+    },
+    {
+      "frame": 2,
+      "player": { "slot": -1, "x": 88, "y": 88, "dir": "down", "active": true },
+      "enemies": [
+        { "slot": 0, "x": 88, "y": 84, "dir": "up", "active": true },
+        { "slot": 1, "x": 88, "y": 70, "dir": "up", "active": false }
+      ],
+      "gates": [
+        { "gate_id": 0, "orientation": "horizontal" },
+        { "gate_id": 1, "orientation": "vertical" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/tools/EnemyTraceSimulatorWindow.cs" id="1_enemy_trace_window"]
+[ext_resource type="Script" path="res://scripts/tools/EnemyTraceBoardView.cs" id="2_enemy_trace_board"]
+
+[node name="EnemyTraceSimulator" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_enemy_trace_window")
+
+[node name="Root" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="MainLayout" type="VBoxContainer" parent="Root"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Title" type="Label" parent="Root/MainLayout"]
+layout_mode = 2
+text = "Lady Bug - Enemy trace simulator"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 22
+
+[node name="LuaPathRow" type="HBoxContainer" parent="Root/MainLayout"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="LuaScriptLabel" type="Label" parent="Root/MainLayout/LuaPathRow"]
+custom_minimum_size = Vector2(130, 0)
+layout_mode = 2
+text = "Script Lua MAME"
+
+[node name="LuaScriptPath" type="LineEdit" parent="Root/MainLayout/LuaPathRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "res://tools/mame/ladybug_enemy_trace_v0.lua"
+placeholder_text = "Chemin du script Lua MAME"
+
+[node name="LaunchMameLuaButton" type="Button" parent="Root/MainLayout/LuaPathRow"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+text = "Lancer MAME/Lua"
+
+[node name="TracePathRow" type="HBoxContainer" parent="Root/MainLayout"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TracePathLabel" type="Label" parent="Root/MainLayout/TracePathRow"]
+custom_minimum_size = Vector2(130, 0)
+layout_mode = 2
+text = "Trace MAME"
+
+[node name="TracePath" type="LineEdit" parent="Root/MainLayout/TracePathRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "res://tools/simulator/sample_enemy_trace.json"
+placeholder_text = "Chemin de la trace MAME à charger"
+
+[node name="LoadTraceButton" type="Button" parent="Root/MainLayout/TracePathRow"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+text = "Charger trace"
+
+[node name="PlaybackControls" type="HBoxContainer" parent="Root/MainLayout"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="RunSimulationButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+text = "Lancer simulation"
+
+[node name="PauseResumeButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+text = "Pause / Continuer"
+
+[node name="StepButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+text = "Tick suivant"
+
+[node name="StatusLabel" type="Label" parent="Root/MainLayout/PlaybackControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Aucune trace chargée."
+horizontal_alignment = 2
+
+[node name="BoardComparison" type="HBoxContainer" parent="Root/MainLayout"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SimulationBoard" type="Control" parent="Root/MainLayout/BoardComparison"]
+custom_minimum_size = Vector2(360, 360)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+script = ExtResource("2_enemy_trace_board")
+
+[node name="MameTraceBoard" type="Control" parent="Root/MainLayout/BoardComparison"]
+custom_minimum_size = Vector2(360, 360)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+script = ExtResource("2_enemy_trace_board")
+
+[node name="Console" type="TextEdit" parent="Root/MainLayout"]
+custom_minimum_size = Vector2(0, 140)
+layout_mode = 2
+size_flags_horizontal = 3
+editable = false
+text = ""

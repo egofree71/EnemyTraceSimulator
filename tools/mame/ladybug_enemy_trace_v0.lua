@@ -1,0 +1,15 @@
+-- Lady Bug enemy trace exporter placeholder.
+--
+-- This file is intentionally not a finished MAME script yet.
+-- It exists so the first Godot simulator UI has a default path to display.
+--
+-- Next package goal:
+--   1. verify the exact Lua API calls against the MAME version you use;
+--   2. sample the Z80 RAM addresses for player/enemy state once per gameplay tick;
+--   3. export JSON using the schema shown in tools/simulator/sample_enemy_trace.json;
+--   4. include the initial rotating-gate states before frame 0.
+--
+-- RAM reminders from current reverse-engineering notes:
+--   Player state begins at 0x6026.
+--   Enemy slots are five bytes each, starting at 0x602B, 0x6030, 0x6035, 0x603A.
+--   Enemy direction encoding: 01=left, 02=up, 04=right, 08=down.
