@@ -52,9 +52,47 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.2.5: compact toolbar UI. MAME config and trace paths now use defaults instead of visible fields.");
+        Log("v0.2.16: clean view by default. Use Ctrl+D to toggle player debug markers; Ctrl+arrows adjust sprite offset.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
+            return;
+
+        if (!keyEvent.CtrlPressed)
+            return;
+
+        if (keyEvent.Keycode == Key.D)
+        {
+            TogglePlayerDebugMarkers();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+
+        Vector2 delta = keyEvent.Keycode switch
+        {
+            Key.Left => new Vector2(-1.0f, 0.0f),
+            Key.Right => new Vector2(1.0f, 0.0f),
+            Key.Up => new Vector2(0.0f, -1.0f),
+            Key.Down => new Vector2(0.0f, 1.0f),
+            _ => Vector2.Zero
+        };
+
+        if (delta != Vector2.Zero)
+        {
+            NudgePlayerSpriteOffset(delta);
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+
+        if (keyEvent.Keycode == Key.Home)
+        {
+            ResetPlayerSpriteOffset();
+            GetViewport().SetInputAsHandled();
+        }
     }
 
     public override void _Process(double delta)
@@ -160,6 +198,42 @@ public partial class EnemyTraceSimulatorWindow : Control
         _mameBoard?.LoadMazeFromResource("res://data/maze.json");
     }
 
+    private void NudgePlayerSpriteOffset(Vector2 deltaArcade)
+    {
+        _simulationBoard?.NudgePlayerSpriteVisualOffsetArcade(deltaArcade);
+        _mameBoard?.NudgePlayerSpriteVisualOffsetArcade(deltaArcade);
+
+        Vector2 offset = _mameBoard?.PlayerSpriteVisualOffsetArcade
+                         ?? _simulationBoard?.PlayerSpriteVisualOffsetArcade
+                         ?? Vector2.Zero;
+        Log($"Player sprite visual offset arcade = ({offset.X:0}, {offset.Y:0})");
+    }
+
+    private void ResetPlayerSpriteOffset()
+    {
+        _simulationBoard?.ResetPlayerSpriteVisualOffsetArcade();
+        _mameBoard?.ResetPlayerSpriteVisualOffsetArcade();
+
+        Vector2 offset = _mameBoard?.PlayerSpriteVisualOffsetArcade
+                         ?? _simulationBoard?.PlayerSpriteVisualOffsetArcade
+                         ?? Vector2.Zero;
+        Log($"Player sprite visual offset arcade reset = ({offset.X:0}, {offset.Y:0})");
+    }
+
+    private void TogglePlayerDebugMarkers()
+    {
+        bool show = !(_mameBoard?.ShowPlayerDebugMarkers
+                      ?? _simulationBoard?.ShowPlayerDebugMarkers
+                      ?? false);
+
+        _simulationBoard?.SetShowPlayerDebugMarkers(show);
+        _mameBoard?.SetShowPlayerDebugMarkers(show);
+
+        Log(show
+            ? "Player debug markers visible. Cyan P = raw x/y, yellow T = turn target."
+            : "Player debug markers hidden.");
+    }
+
     private async void OnLaunchMameLuaPressed()
     {
         if (_isLaunchingMame)
@@ -248,6 +322,11 @@ public partial class EnemyTraceSimulatorWindow : Control
         Log($"Trace loaded: {path}");
         Log($"Frames: {_frames.Count}");
         Log($"Gates in first frame: {_frames[0].gates?.Count ?? 0}");
+
+        EnemyTraceActor? player = _frames[0].player;
+        if (player != null)
+            Log($"Player first frame: x={player.x:X2} y={player.y:X2} target=({player.turnTargetX:X2},{player.turnTargetY:X2}) dir={player.dir}");
+
         UpdateStatus();
     }
 
@@ -329,12 +408,17 @@ public partial class EnemyTraceSimulatorWindow : Control
         bool activeFromRaw = raw >= 0 ? (raw & 0x02) != 0 : defaultActive;
         bool activeFallback = ReadBool(element, "collisionActive", activeFromRaw);
 
+        int turnTargetX = ReadInt(element, "turnTargetX", ReadInt(element, "targetX", -1));
+        int turnTargetY = ReadInt(element, "turnTargetY", ReadInt(element, "targetY", -1));
+
         return new EnemyTraceActor
         {
             slot = ReadInt(element, "slot", defaultSlot),
             raw = raw,
             x = ReadInt(element, "x", 0),
             y = ReadInt(element, "y", 0),
+            turnTargetX = turnTargetX,
+            turnTargetY = turnTargetY,
             dir = ReadString(element, "dir", ReadString(element, "currentDir", string.Empty)),
             active = ReadBool(element, "active", activeFallback)
         };
@@ -568,6 +652,9 @@ public sealed class EnemyTraceActor
     public int raw { get; set; } = -1;
     public int x { get; set; }
     public int y { get; set; }
+    public int turnTargetX { get; set; } = -1;
+    public int turnTargetY { get; set; } = -1;
+    public bool HasTurnTarget => turnTargetX >= 0 && turnTargetY >= 0;
     public string? dir { get; set; }
     public bool active { get; set; } = true;
 }

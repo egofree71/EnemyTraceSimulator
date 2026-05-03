@@ -7,13 +7,13 @@ The goal is to compare two synchronized timelines:
 - a **reference timeline** exported from MAME with a Lua script;
 - a **candidate timeline** produced later by the C# / Godot enemy simulation.
 
-The current version focuses on the MAME trace side: launching MAME from Godot, generating a trace through Lua, loading the generated JSONL trace, and visualizing the maze, rotating gates, player, and enemies in a debug board.
+The current version focuses on the MAME trace side: launching MAME from Godot, generating a trace through Lua, loading the generated JSONL trace, and visualizing the maze, rotating gates, player, and enemies in a diagnostic board.
 
 This repository is deliberately separate from the main Lady Bug remake project. It is a validation tool, not the game itself.
 
 ## Current status
 
-Current package version: **v0.2.5**
+Current package version: **v0.2.16**
 
 Implemented now:
 
@@ -27,8 +27,13 @@ Implemented now:
 - MAME save-state loading through MAME command-line options;
 - JSONL trace loading;
 - debug rendering of the logical 11 x 11 maze from `data/maze.json`;
-- debug rendering of rotating gates from the loaded trace;
-- debug rendering of player and active enemies from the loaded trace;
+- rendering of rotating gates from the loaded trace;
+- rendering of the player from `assets/sprites/player/ladybug_spritesheet.png` when available;
+- nearest-neighbor player sprite rendering at a fixed 32 x 32 debug size;
+- fallback debug rendering when the player sprite is missing;
+- optional player debug markers for raw MAME position and turn target;
+- runtime player sprite visual offset tuning with keyboard shortcuts;
+- active enemy debug rendering from the loaded trace;
 - playback controls: restart, pause/resume, step one tick;
 - two synchronized boards: left for future C# simulation, right for MAME trace;
 - bottom console area for runtime messages;
@@ -41,7 +46,7 @@ Not implemented yet:
 - mismatch highlighting;
 - first-mismatch navigation;
 - exact final actor coordinate mapping;
-- use of the original Lady Bug visual assets;
+- original enemy and gate sprite rendering;
 - integration with the full Lady Bug game codebase.
 
 ## Requirements
@@ -51,7 +56,15 @@ Not implemented yet:
 - MAME with Lua support
 - A valid local Lady Bug MAME setup
 
-This repository does **not** include Lady Bug ROM files, MAME binaries, or copyrighted arcade assets.
+This repository does **not** include Lady Bug ROM files or MAME binaries.
+
+The player sprite renderer expects this optional file if visual player rendering is desired:
+
+```text
+assets/sprites/player/ladybug_spritesheet.png
+```
+
+The file can be copied from the main Lady Bug remake repository if needed. If it is missing, the board falls back to a simple debug marker for the player.
 
 ## Running the tool
 
@@ -117,10 +130,26 @@ to load the generated trace.
 ▶|   advance one tick
 ```
 
+## Important Godot .NET rebuild note
+
+After replacing C# files, Godot may continue to run an older compiled assembly. If the UI does not reflect the latest patch, use:
+
+```text
+MSBuild > Rebuild
+```
+
+inside Godot, then relaunch the scene.
+
+A normal **Build** is often enough, but **Rebuild** is the safest option when the visible version/debug text does not change.
+
 ## Repository layout
 
 ```text
 .
+├─ assets/
+│  └─ sprites/
+│     └─ player/
+│        └─ ladybug_spritesheet.png   optional local asset
 ├─ config/
 │  └─ mame_trace_settings.json
 ├─ data/
@@ -172,22 +201,27 @@ A typical frame contains:
 
 ```json
 {
-  "frame": 123,
+  "schema": "ladybug.sequenceTrace.v7",
+  "tick": 0,
+  "phase": "post_load_tick0",
+  "mameFrame": 5,
   "player": {
-    "raw": [130, 88, 86, 0, 0],
-    "x": 88,
-    "y": 86,
-    "dir": "08",
-    "active": true
+    "raw": "82",
+    "x": "78",
+    "y": "8B",
+    "sprite": "00",
+    "attr": "00",
+    "turnTargetX": "78",
+    "turnTargetY": "86",
+    "currentDir": "08"
   },
   "enemies": [
     {
       "slot": 0,
-      "raw": [130, 88, 134, 12, 4],
-      "x": 88,
-      "y": 134,
-      "dir": "08",
-      "active": true
+      "raw": "82",
+      "x": "58",
+      "y": "86",
+      "currentDir": "08"
     }
   ],
   "gates": [
@@ -204,20 +238,43 @@ The parser is intentionally tolerant and supports several field names used durin
 
 ## Debug board rendering
 
-The current renderer is diagnostic only.
+The current renderer is diagnostic, but less noisy by default than the early prototype.
 
 It draws:
 
 - static maze walls in purple;
 - rotating gates in green;
-- the player as a red debug marker;
+- the player with the Lady Bug player sprite when available;
 - active enemies as blue debug markers;
-- a direction vector for each actor when available.
+- a direction vector for active enemies when available.
 
 Rotating gates are rendered as two-cell segments centered on their logical pivot:
 
 - horizontal gates occupy two logical cells horizontally;
 - vertical gates occupy two logical cells vertically.
+
+The player sprite is rendered with nearest-neighbor filtering at a fixed 32 x 32 debug size. Its visual offset is currently:
+
+```text
+(0, -7) arcade pixels
+```
+
+This offset only affects the sprite drawing. It does **not** change the raw MAME gameplay coordinate.
+
+Useful debug shortcuts:
+
+```text
+Ctrl + D       toggle player debug markers
+Ctrl + arrows  adjust player sprite visual offset
+Ctrl + Home    reset player sprite visual offset to (0, -7)
+```
+
+When enabled, the player debug markers mean:
+
+```text
+cyan P    raw player x/y read from MAME
+yellow T  player turn target, when present in the trace
+```
 
 Actor coordinate mapping is still provisional. The current renderer applies a temporary vertical offset for actors because the MAME arcade coordinate space includes a larger logical area than the 11 x 11 diagnostic maze currently displayed.
 
@@ -225,7 +282,7 @@ Actor coordinate mapping is still provisional. The current renderer applies a te
 
 The left board is labelled **Simulation C# / Godot**, but it currently displays the loaded MAME trace frame just like the right board. This is intentional for now: the C# simulation side has not been connected yet.
 
-The actor positions are close enough for visual inspection, but the coordinate mapping is not considered final. Gates are currently more reliable than actor placement.
+The actor positions are good enough for visual inspection, but the coordinate mapping is not considered final. Gates are currently more reliable than actor placement.
 
 The tool does not yet compare states. It only loads, displays, and replays the trace.
 

@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.2.5  
+**Current package version:** v0.2.16  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -30,6 +30,10 @@ The current implementation covers steps 1 to 4 partially. It can launch MAME fro
 
 ```text
 .
+├─ assets/
+│  └─ sprites/
+│     └─ player/
+│        └─ ladybug_spritesheet.png   optional local asset
 ├─ config/
 │  └─ mame_trace_settings.json
 ├─ data/
@@ -112,11 +116,12 @@ Current role:
 - loads the default logical maze into both board views;
 - launches MAME/Lua through `MameTraceLauncher`;
 - loads JSON or JSONL trace files;
-- parses frame, actor, and gate data;
+- parses frame, actor, gate, and player turn-target data;
 - stores loaded frames in memory;
 - manages playback state;
 - advances playback at 60 Hz while running;
 - supports manual single-frame stepping;
+- supports runtime player debug controls;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -132,6 +137,14 @@ Current playback buttons:
 ▶    resume playback
 ❚❚   pause playback
 ▶|   advance one tick
+```
+
+Current debug shortcuts:
+
+```text
+Ctrl + D       toggle player debug markers
+Ctrl + arrows  adjust player sprite visual offset
+Ctrl + Home    reset player sprite visual offset to (0, -7)
 ```
 
 Important current limitation:
@@ -150,8 +163,12 @@ Current role:
 - draws static maze walls from wall bitmasks;
 - draws rotating gates from the trace;
 - draws the player if present and active;
+- uses `assets/sprites/player/ladybug_spritesheet.png` for the player when available;
+- falls back to a simple player debug marker when the sprite is missing;
+- renders the player sprite with nearest-neighbor filtering at a fixed 32 x 32 debug size;
+- supports optional player debug markers for raw MAME position and turn target;
 - draws active enemies;
-- draws a short direction vector for each actor.
+- draws a short direction vector for each enemy when available.
 
 Current maze assumptions:
 
@@ -175,6 +192,24 @@ Gate rendering rules:
 ```text
 Horizontal gate = two-cell green horizontal segment centered on the gate pivot
 Vertical gate   = two-cell green vertical segment centered on the gate pivot
+```
+
+Player rendering rules:
+
+```text
+source sprite frame size = 64 x 64
+debug display size       = 32 x 32
+texture filtering        = nearest
+default sprite offset    = (0, -7) arcade pixels
+```
+
+The player offset only changes the visual sprite position. It does not alter the raw MAME coordinate used for trace validation.
+
+When enabled with `Ctrl + D`, player debug markers mean:
+
+```text
+cyan P    raw player x/y read from MAME
+yellow T  player turn target from turnTargetX / turnTargetY
 ```
 
 Actor rendering currently interprets MAME positions as arcade-pixel coordinates. A temporary vertical offset is applied because the arcade coordinate space used by the runtime is larger than the 11 x 11 diagnostic maze currently displayed. This mapping is not final.
@@ -276,19 +311,26 @@ Current responsibilities:
 - capture the initial post-load state;
 - export frame data to JSONL;
 - export player state;
+- export player turn target;
 - export enemy slot state;
 - export rotating gate state;
 - use the loaded MAME save-state as the start of the sequence.
 
 The script is still part of the trace-generation pipeline, not a simulation or comparison component.
 
-### 6.4 traces/mame/
+### 6.4 assets/sprites/player/ladybug_spritesheet.png
+
+Optional local asset used for player rendering.
+
+If the texture is present, the board renders the player with the sprite. If it is absent, the board falls back to a simple debug marker.
+
+### 6.5 traces/mame/
 
 This directory is used for generated traces.
 
 Trace outputs are intentionally ignored by Git. The directory can be kept in the repository with `.gitkeep`.
 
-### 6.5 tools/mame/states/
+### 6.6 tools/mame/states/
 
 This directory exists as an optional project-side location for MAME state files.
 
@@ -306,7 +348,18 @@ EnemyTraceActor
 EnemyTraceGateState
 ```
 
-Depending on the locally applied patches, compatibility classes for older sample JSON traces may also exist.
+Current `EnemyTraceActor` fields include:
+
+```text
+slot
+raw
+x
+y
+turnTargetX
+turnTargetY
+dir
+active
+```
 
 This is acceptable for the current prototype, but these classes should be moved into separate files soon.
 
@@ -344,7 +397,7 @@ When **Charger trace** is pressed:
 4. frame data is stored in memory;
 5. frame 0 is displayed on both boards;
 6. the status label is updated;
-7. the console reports the frame count and gate count.
+7. the console reports the frame count, gate count, and first player position when available.
 
 ### 8.4 Playback
 
@@ -362,6 +415,25 @@ When **▶|** is pressed:
 
 - playback pauses;
 - one frame is advanced manually.
+
+### 8.5 Player debug workflow
+
+By default, the board stays visually clean.
+
+Use `Ctrl + D` to show or hide player debug markers:
+
+```text
+P = raw MAME player x/y
+T = turnTargetX / turnTargetY
+```
+
+Use `Ctrl + arrows` to tune only the visual sprite offset. This is useful when comparing screenshots against MAME. The current default is:
+
+```text
+(0, -7)
+```
+
+Use `Ctrl + Home` to restore that default.
 
 ## 9. Implemented now
 
@@ -381,7 +453,9 @@ When **▶|** is pressed:
 - Manual tick/frame stepping.
 - Logical maze rendering.
 - Rotating gate debug rendering.
-- Player and enemy debug rendering.
+- Player sprite rendering with optional debug markers.
+- Runtime sprite offset tuning.
+- Enemy debug rendering.
 - `.gitignore` rules for generated and local-only files.
 
 ## 10. Not implemented yet
@@ -394,7 +468,8 @@ When **▶|** is pressed:
 - Highlighting mismatches in the board views.
 - Export of comparison logs.
 - Exact final actor coordinate mapping.
-- Original sprite rendering for players, enemies, and gates.
+- Original enemy sprite rendering.
+- Original gate sprite rendering.
 - UI for editing MAME settings directly inside Godot.
 - Deterministic handling and replay of random arcade decisions on the C# side.
 
@@ -414,19 +489,37 @@ The current implementation applies a temporary vertical offset for actors. This 
 
 This should be replaced by an explicit, verified coordinate conversion.
 
-### 11.3 Trace schema is still evolving
+### 11.3 Player sprite offset is visual only
+
+The current player sprite offset `(0, -7)` was chosen by visual comparison with MAME screenshots.
+
+It is useful for readability, but it is not a gameplay coordinate. The raw MAME coordinate remains the source of truth.
+
+### 11.4 Trace schema is still evolving
 
 The JSONL trace schema is practical enough for the current viewer, but it is not final.
 
 The parser is intentionally tolerant, but the project should eventually define one canonical trace schema.
 
-### 11.4 Trace model classes need extraction
+### 11.5 Trace model classes need extraction
 
 The trace DTOs currently live in `EnemyTraceSimulatorWindow.cs`.
 
 They should move into separate files before the comparison logic grows.
 
-### 11.5 No collectibles
+### 11.6 Godot .NET rebuild behavior
+
+After replacing C# files, Godot can keep running an older compiled assembly.
+
+When the UI does not reflect the expected patch, use:
+
+```text
+MSBuild > Rebuild
+```
+
+then relaunch the scene.
+
+### 11.7 No collectibles
 
 Collectibles are intentionally absent from the simulator view. The validation target is enemy movement, not scoring or item collection.
 
