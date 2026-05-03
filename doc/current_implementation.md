@@ -1,15 +1,15 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.1.2  
+**Current package version:** v0.2.5  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
 ## Purpose of this document
 
-This document describes only what is currently implemented in this repository.
+This document describes what is currently implemented in this repository.
 
-It intentionally avoids describing future systems as if they already existed. Planned work is listed in the final section.
+It intentionally separates implemented behavior from planned behavior. Future systems are listed only in the final roadmap section.
 
 ## 1. Project goal
 
@@ -18,17 +18,20 @@ Enemy Trace Simulator is a standalone Godot/.NET diagnostic tool for validating 
 The intended final workflow is:
 
 1. run Lady Bug in MAME;
-2. export a deterministic trace with a Lua script;
-3. load that trace in Godot;
-4. run the C# enemy simulation from the same starting state;
-5. compare the C# simulation against the MAME trace frame by frame.
+2. load a known MAME save-state;
+3. export a deterministic trace with a Lua script;
+4. load that trace in Godot;
+5. initialize the C# enemy simulation from the same state;
+6. compare the C# simulation against the MAME trace frame by frame.
 
-The current version does not yet perform the real comparison. It provides the first UI and playback shell.
+The current implementation covers steps 1 to 4 partially. It can launch MAME from Godot, use a Lua script to generate a trace, load the generated trace, and replay it visually. It does not yet run the real C# simulation or perform mismatch detection.
 
 ## 2. Current repository structure
 
 ```text
 .
+├─ config/
+│  └─ mame_trace_settings.json
 ├─ data/
 │  └─ maze.json
 ├─ doc/
@@ -39,12 +42,19 @@ The current version does not yet perform the real comparison. It provides the fi
 ├─ scripts/
 │  └─ tools/
 │     ├─ EnemyTraceBoardView.cs
-│     └─ EnemyTraceSimulatorWindow.cs
+│     ├─ EnemyTraceSimulatorWindow.cs
+│     ├─ MameTraceLauncher.cs
+│     └─ MameTraceSettings.cs
 ├─ tools/
-│  ├─ mame/
-│  │  └─ ladybug_enemy_trace_v0.lua
-│  └─ simulator/
-│     └─ sample_enemy_trace.json
+│  └─ mame/
+│     ├─ lua/
+│     │  └─ ladybug_sequence_trace.lua
+│     └─ states/
+│        └─ ladybug/
+│           └─ .gitkeep
+├─ traces/
+│  └─ mame/
+│     └─ .gitkeep
 ├─ EnemyTraceSimulator.csproj
 ├─ project.godot
 ├─ .gitignore
@@ -59,22 +69,13 @@ The Godot project starts from:
 scenes/tools/EnemyTraceSimulator.tscn
 ```
 
-In `project.godot`:
-
-```text
-run/main_scene="res://scenes/tools/EnemyTraceSimulator.tscn"
-```
-
-The current viewport is configured as:
-
-```text
-window/size/viewport_width=1152
-window/size/viewport_height=648
-```
+The scene is intended to be launched directly from Godot while developing the tool.
 
 ## 4. Scene structure
 
 ### 4.1 EnemyTraceSimulator.tscn
+
+The UI is authored directly in the `.tscn` scene instead of being fully created from C# at runtime. This is intentional: the window remains visible even if the C# assembly has not been rebuilt yet.
 
 Current scene tree:
 
@@ -83,15 +84,9 @@ EnemyTraceSimulator (Control)
 └─ Root (MarginContainer)
    └─ MainLayout (VBoxContainer)
       ├─ Title (Label)
-      ├─ LuaPathRow (HBoxContainer)
-      │  ├─ LuaScriptLabel (Label)
-      │  ├─ LuaScriptPath (LineEdit)
-      │  └─ LaunchMameLuaButton (Button)
-      ├─ TracePathRow (HBoxContainer)
-      │  ├─ TracePathLabel (Label)
-      │  ├─ TracePath (LineEdit)
-      │  └─ LoadTraceButton (Button)
-      ├─ PlaybackControls (HBoxContainer)
+      ├─ Toolbar / PlaybackControls (HBoxContainer)
+      │  ├─ LaunchMameLuaButton (Button)
+      │  ├─ LoadTraceButton (Button)
       │  ├─ RunSimulationButton (Button)
       │  ├─ PauseResumeButton (Button)
       │  ├─ StepButton (Button)
@@ -102,7 +97,7 @@ EnemyTraceSimulator (Control)
       └─ Console (TextEdit)
 ```
 
-The scene-authored UI is intentional. It means the interface is visible even if the C# assembly has not been rebuilt yet. If the script is missing or fails to compile, the buttons will not work, but the window should not appear empty.
+The previous visible text fields for MAME config and trace path were removed in v0.2.5 to save vertical space. The workflow is now button-driven, with paths coming from configuration and generated trace metadata.
 
 ## 5. Current scripts
 
@@ -113,30 +108,35 @@ Current role:
 - root UI controller;
 - binds scene nodes by path;
 - connects button handlers;
+- configures compact playback buttons;
 - loads the default logical maze into both board views;
-- loads a JSON trace file;
+- launches MAME/Lua through `MameTraceLauncher`;
+- loads JSON or JSONL trace files;
+- parses frame, actor, and gate data;
 - stores loaded frames in memory;
 - manages playback state;
 - advances playback at 60 Hz while running;
 - supports manual single-frame stepping;
 - writes messages to the bottom console and to Godot output.
 
-Current playback constants:
+Current playback constant:
 
 ```csharp
 private const double PlaybackTickSeconds = 1.0 / 60.0;
 ```
 
-Current default paths shown in the UI:
+Current playback buttons:
 
 ```text
-res://tools/mame/ladybug_enemy_trace_v0.lua
-res://tools/simulator/sample_enemy_trace.json
+↺    restart from the first frame
+▶    resume playback
+❚❚   pause playback
+▶|   advance one tick
 ```
 
 Important current limitation:
 
-- the left board and the right board currently display the same loaded trace frame;
+- the left board and the right board currently display the same loaded MAME trace frame;
 - the left board is reserved for the future C# simulation output.
 
 ### 5.2 EnemyTraceBoardView.cs
@@ -148,6 +148,7 @@ Current role:
 - draws a background rectangle;
 - draws a logical grid;
 - draws static maze walls from wall bitmasks;
+- draws rotating gates from the trace;
 - draws the player if present and active;
 - draws active enemies;
 - draws a short direction vector for each actor.
@@ -169,11 +170,91 @@ Left  = 4
 Right = 8
 ```
 
-Actor positions are interpreted as original arcade-pixel coordinates, not Godot scene pixels.
+Gate rendering rules:
 
-## 6. Current data files
+```text
+Horizontal gate = two-cell green horizontal segment centered on the gate pivot
+Vertical gate   = two-cell green vertical segment centered on the gate pivot
+```
 
-### 6.1 data/maze.json
+Actor rendering currently interprets MAME positions as arcade-pixel coordinates. A temporary vertical offset is applied because the arcade coordinate space used by the runtime is larger than the 11 x 11 diagnostic maze currently displayed. This mapping is not final.
+
+### 5.3 MameTraceSettings.cs
+
+Current role:
+
+- represents the JSON configuration stored in `config/mame_trace_settings.json`;
+- stores paths and launch parameters for MAME;
+- stores trace output parameters;
+- supports project-local `res://` paths where appropriate.
+
+Typical settings:
+
+```json
+{
+  "mameExecutable": "C:/Path/To/MAME/mame.exe",
+  "game": "ladybug",
+  "romPath": "C:/Path/To/MAME/roms",
+  "stateDirectory": "C:/Path/To/MAME/sta",
+  "stateSubdir": "ladybug",
+  "saveState": "test1",
+  "luaScriptPath": "res://tools/mame/lua/ladybug_sequence_trace.lua",
+  "outputDirectory": "res://traces/mame",
+  "outputPrefix": "ladybug_sequence_v8",
+  "framesAfterTick0": 600
+}
+```
+
+### 5.4 MameTraceLauncher.cs
+
+Current role:
+
+- loads `config/mame_trace_settings.json`;
+- resolves project paths;
+- creates a runtime Lua configuration file for the MAME script;
+- builds the MAME command-line arguments;
+- starts MAME as an external process;
+- waits for MAME to finish;
+- returns messages and the expected generated trace path to the UI.
+
+The previous `.bat` workflow has been replaced by this C# launcher and the JSON configuration file.
+
+## 6. Current data and configuration files
+
+### 6.1 config/mame_trace_settings.json
+
+This file centralizes local MAME settings.
+
+It is currently the main place to configure:
+
+- MAME executable path;
+- MAME game/driver name;
+- ROM path;
+- state directory;
+- state subdirectory;
+- save-state name;
+- Lua script path;
+- trace output directory;
+- trace output prefix;
+- number of frames to export.
+
+The save-state name should be stored without `.sta`.
+
+Example:
+
+```text
+stateDirectory = C:/Path/To/MAME/sta
+stateSubdir    = ladybug
+saveState      = test1
+```
+
+Expected actual state file:
+
+```text
+C:/Path/To/MAME/sta/ladybug/test1.sta
+```
+
+### 6.2 data/maze.json
 
 The current maze file contains:
 
@@ -185,78 +266,49 @@ cells  = flat array of 121 wall masks
 
 It is used only for drawing the static logical maze in the diagnostic board views.
 
-Rotating gates are not yet rendered from this file.
+### 6.3 tools/mame/lua/ladybug_sequence_trace.lua
 
-### 6.2 tools/simulator/sample_enemy_trace.json
+This is the current MAME Lua trace script.
 
-This is a hand-authored placeholder trace used to validate the UI and playback code.
+Current responsibilities:
 
-Current top-level fields:
+- cooperate with the runtime Lua configuration generated by C#;
+- capture the initial post-load state;
+- export frame data to JSONL;
+- export player state;
+- export enemy slot state;
+- export rotating gate state;
+- use the loaded MAME save-state as the start of the sequence.
 
-```text
-meta
-initial_state
-frames
-```
+The script is still part of the trace-generation pipeline, not a simulation or comparison component.
 
-Current frame fields:
+### 6.4 traces/mame/
 
-```text
-frame
-player
-enemies
-gates
-```
+This directory is used for generated traces.
 
-Current actor fields:
+Trace outputs are intentionally ignored by Git. The directory can be kept in the repository with `.gitkeep`.
 
-```text
-slot
-x
-y
-dir
-active
-```
+### 6.5 tools/mame/states/
 
-Current gate fields:
+This directory exists as an optional project-side location for MAME state files.
 
-```text
-gate_id
-orientation
-```
-
-The sample trace is not exported from MAME. It is only test data.
-
-### 6.3 tools/mame/ladybug_enemy_trace_v0.lua
-
-This file is only a placeholder.
-
-It currently documents the planned direction of the MAME exporter but does not yet export a usable trace.
-
-The comments currently remind the expected important RAM areas:
-
-```text
-Player state begins at 0x6026.
-Enemy slots are five bytes each, starting at 0x602B, 0x6030, 0x6035, 0x603A.
-Enemy direction encoding: 01=left, 02=up, 04=right, 08=down.
-```
+Local `.sta` files are ignored by Git. In practice, the current setup can also point directly to the normal MAME `sta` directory through `config/mame_trace_settings.json`.
 
 ## 7. Current trace model classes
 
 The trace model classes are currently defined at the bottom of `EnemyTraceSimulatorWindow.cs`.
 
-Current classes:
+Current classes include:
 
 ```text
-EnemyTraceFile
-EnemyTraceMeta
-EnemyTraceInitialState
 EnemyTraceFrame
 EnemyTraceActor
 EnemyTraceGateState
 ```
 
-This is acceptable for the initial UI prototype, but these classes should be moved into separate files in the next cleanup step.
+Depending on the locally applied patches, compatibility classes for older sample JSON traces may also exist.
+
+This is acceptable for the current prototype, but these classes should be moved into separate files soon.
 
 ## 8. Current behavior
 
@@ -265,34 +317,48 @@ This is acceptable for the initial UI prototype, but these classes should be mov
 On `_Ready()`:
 
 1. the UI nodes are bound;
-2. button events are connected;
-3. both boards load `res://data/maze.json`;
-4. startup messages are written to the console.
+2. playback buttons are configured;
+3. button events are connected;
+4. both boards load `res://data/maze.json`;
+5. startup messages are written to the console.
 
-### 8.2 Loading a trace
+### 8.2 Launching MAME/Lua
+
+When **Lancer MAME/Lua** is pressed:
+
+1. the simulator reads `res://config/mame_trace_settings.json`;
+2. the launcher resolves paths;
+3. a runtime Lua configuration is generated;
+4. MAME is started with the configured game, ROM path, state directory, save-state, and Lua script;
+5. the UI waits for MAME to terminate;
+6. launcher messages are written to the console;
+7. the expected generated trace path is remembered for loading.
+
+### 8.3 Loading a trace
 
 When **Charger trace** is pressed:
 
-1. the path is read from the trace path field;
-2. the file is checked with `FileAccess.FileExists`;
-3. the JSON is parsed with `System.Text.Json`;
-4. the frame list is stored;
+1. the simulator loads the most recent generated trace path when available;
+2. otherwise it falls back to the configured default trace path;
+3. JSONL is parsed line by line;
+4. frame data is stored in memory;
 5. frame 0 is displayed on both boards;
-6. the status label is updated.
+6. the status label is updated;
+7. the console reports the frame count and gate count.
 
-### 8.3 Playback
+### 8.4 Playback
 
-When **Lancer simulation** is pressed:
+When **↺** is pressed:
 
-- playback starts;
-- `_Process()` accumulates elapsed time;
-- the current frame advances at 60 Hz.
+- playback restarts from the first frame;
+- the state becomes running.
 
-When **Pause / Continuer** is pressed:
+When **▶ / ❚❚** is pressed:
 
-- playback pauses or resumes.
+- playback resumes or pauses;
+- the button text changes according to the current state.
 
-When **Tick suivant** is pressed:
+When **▶|** is pressed:
 
 - playback pauses;
 - one frame is advanced manually.
@@ -300,36 +366,37 @@ When **Tick suivant** is pressed:
 ## 9. Implemented now
 
 - Standalone Godot project skeleton.
-- Main scene with the simulator UI.
+- Main scene with compact simulator UI.
 - Scene-authored controls.
 - C# node binding.
 - C# button handling.
 - Console output area.
-- Logical maze rendering.
-- Sample JSON trace loading.
+- JSON configuration for MAME paths and trace parameters.
+- C# external MAME process launch.
+- Runtime Lua configuration generation.
+- MAME Lua trace script integration.
+- Save-state-based trace start through MAME configuration.
+- JSONL trace loading.
 - Frame playback at 60 Hz.
 - Manual tick/frame stepping.
+- Logical maze rendering.
+- Rotating gate debug rendering.
 - Player and enemy debug rendering.
-- Placeholder MAME Lua path.
+- `.gitignore` rules for generated and local-only files.
 
 ## 10. Not implemented yet
 
-- Real MAME launch command.
-- Real MAME Lua trace generation.
-- Process management for MAME.
-- Save-state loading.
-- Input scripting for MAME.
-- Exact arcade frame sampling point.
-- Export of RAM bytes from the real arcade runtime.
-- Initial rotating-gate extraction from MAME memory.
-- Rendering of rotating gates.
-- Simulation-side enemy movement.
+- Real C# simulation-side enemy movement.
 - Reuse of the current Lady Bug remake enemy classes.
 - Frame-by-frame comparison.
 - Mismatch report.
 - Navigation to first mismatch.
+- Highlighting mismatches in the board views.
 - Export of comparison logs.
-- Deterministic handling of random arcade decisions.
+- Exact final actor coordinate mapping.
+- Original sprite rendering for players, enemies, and gates.
+- UI for editing MAME settings directly inside Godot.
+- Deterministic handling and replay of random arcade decisions on the C# side.
 
 ## 11. Current known limitations
 
@@ -339,45 +406,77 @@ The left board is named `Simulation C# / Godot`, but it currently displays the s
 
 This is a temporary visualization placeholder.
 
-### 11.2 The Lua script is not functional yet
+### 11.2 Actor coordinate mapping is provisional
 
-The current Lua file is only a planning stub. It should not be expected to run in MAME yet.
+The rotating gates are now aligned with the debug maze, but actor placement still needs validation.
 
-### 11.3 The trace schema is provisional
+The current implementation applies a temporary vertical offset for actors. This was added because MAME runtime positions are expressed in the arcade coordinate space, while the current debug view displays only an 11 x 11 logical maze area.
 
-The JSON schema is only the first draft. It will probably need additional fields for useful enemy validation, including raw direction bytes, flags, preferred directions, chase timers, rejection masks, and possibly raw RAM snapshots around important addresses.
+This should be replaced by an explicit, verified coordinate conversion.
 
-### 11.4 Gate state is not used yet
+### 11.3 Trace schema is still evolving
 
-The sample trace already contains `gates`, but the renderer does not display them and no movement logic consumes them.
+The JSONL trace schema is practical enough for the current viewer, but it is not final.
+
+The parser is intentionally tolerant, but the project should eventually define one canonical trace schema.
+
+### 11.4 Trace model classes need extraction
+
+The trace DTOs currently live in `EnemyTraceSimulatorWindow.cs`.
+
+They should move into separate files before the comparison logic grows.
 
 ### 11.5 No collectibles
 
-Collectibles are intentionally absent from the current simulator view. The validation target is enemy movement, not scoring or item collection.
+Collectibles are intentionally absent from the simulator view. The validation target is enemy movement, not scoring or item collection.
 
-## 12. Planned next steps
+## 12. Git ignore policy
 
-### v0.2: trace and comparison architecture
+The repository should keep source files, configuration templates, scripts, and documentation.
+
+It should not keep generated or local machine-specific files such as:
+
+```text
+logs/
+*.log
+traces/**/*.json
+traces/**/*.jsonl
+traces/**/*.txt
+traces/**/*.csv
+tools/mame/states/**/*.sta
+tools/mame/states/**/*.bak
+runtime Lua config files
+```
+
+The `.gitkeep` files under trace/state directories are kept so the folder structure exists after cloning.
+
+If generated files have already been committed, remove them from Git tracking without deleting them locally:
+
+```powershell
+git rm --cached -r traces
+git rm --cached -r tools/mame/states
+git add .gitignore
+```
+
+## 13. Planned next steps
+
+### v0.3: trace model cleanup
 
 - Move trace model classes into separate files.
 - Add `MameTraceLoader`.
-- Add `TracePlaybackState`.
+- Add explicit DTOs for trace frames, actors, gates, and metadata.
+- Define one canonical JSONL trace schema.
+- Make the actor coordinate conversion explicit and testable.
+
+### v0.4: comparison architecture
+
 - Add `SimulationFrame` / `ComparisonFrame` types.
+- Add mismatch types.
 - Add `TraceComparisonRunner`.
-- Add a first mismatch model.
-- Keep simulation output simple until the comparison pipeline is solid.
+- Add a first textual mismatch report.
+- Keep the simulation side simple until the comparison plumbing is stable.
 
-### v0.3: real MAME Lua exporter
-
-- Implement a working Lua script for the current MAME version.
-- Export the player state.
-- Export all four enemy slots.
-- Export active flags and raw direction bytes.
-- Export relevant enemy AI helper RAM when possible.
-- Export initial rotating-gate state.
-- Decide exactly when to sample during the arcade frame.
-
-### v0.4: C# simulation adapter
+### v0.5: C# simulation adapter
 
 - Create a simulation adapter independent of the normal game scene.
 - Reuse or port the existing enemy movement classes from the Lady Bug remake.
@@ -385,15 +484,15 @@ Collectibles are intentionally absent from the current simulator view. The valid
 - Advance one tick at a time.
 - Compare each simulated frame to the MAME frame.
 
-### v0.5: visual and diagnostic improvements
+### v0.6: diagnostic improvements
 
-- Render rotating gates.
-- Highlight mismatching actors.
-- Add frame scrubber.
+- Highlight mismatching actors or gates.
+- Add a frame scrubber.
 - Add first-mismatch jump.
-- Add exportable mismatch report.
+- Add exportable mismatch reports.
+- Add focused test scenarios for center decisions, fallback, door-local rejection, forced reversal, and chase/BFS overrides.
 
-## 13. Design principle
+## 14. Design principle
 
 The simulator should not try to look like the final game.
 

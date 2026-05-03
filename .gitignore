@@ -18,3 +18,35 @@ obj/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Generated MAME / Lua traces
+traces/**/*.json
+traces/**/*.jsonl
+traces/**/*.txt
+traces/**/*.csv
+!traces/**/.gitkeep
+
+# Generated runtime Lua config written by the Godot launcher
+config/*runtime*.lua
+tools/mame/lua/*runtime*.lua
+tools/mame/lua/*_runtime_*.lua
+
+# MAME generated/local data
+# Keep save states local: they are user/session-specific and can be large.
+tools/mame/states/**/*.sta
+tools/mame/states/**/*.bak
+!tools/mame/states/**/.gitkeep
+
+# Optional MAME folders, if they are ever created inside this project
+cfg/
+nvram/
+sta/
+snap/
+diff/
+comments/
+inp/
+memcard/

@@ -1,0 +1,19 @@
+{
+  "mameExecutable": "C:/Users/Philippe-utilisateur/Downloads/Mame/mame.exe",
+  "game": "ladybug",
+  "romPath": "C:/Users/Philippe-utilisateur/Downloads/Mame/roms",
+  "stateDirectory": "C:/Users/Philippe-utilisateur/Downloads/Mame/sta",
+  "stateSubdir": "ladybug",
+  "saveState": "test1",
+  "luaScriptPath": "res://tools/mame/lua/ladybug_sequence_trace.lua",
+  "outputDirectory": "res://traces/mame",
+  "outputPrefix": "ladybug_sequence_v8",
+  "framesAfterTick0": 600,
+  "windowed": true,
+  "autobootDelay": 1,
+  "exitWhenDone": true,
+  "pauseWhenDone": false,
+  "flushEveryTraceLine": true,
+  "includeFullMemoryEachFrame": false,
+  "includeLogicalMazeEachFrame": true
+}

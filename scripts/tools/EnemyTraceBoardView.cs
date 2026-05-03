@@ -1,16 +1,19 @@
 using Godot;
 using System;
-using System.Text.Json;
 
 /// <summary>
 /// Lightweight debug renderer for one side of the enemy trace comparison.
-/// It draws the static logical maze, optional gate markers, the player, and enemies.
+/// It draws the static logical maze, pivoting gates from the trace, the player, and enemies.
 /// </summary>
 public partial class EnemyTraceBoardView : Control
 {
     private const int DefaultMazeWidth = 11;
     private const int DefaultMazeHeight = 11;
     private const float ArcadeCellSize = 16.0f;
+    // The rendered debug maze is the 11-row gameplay maze.
+    // Actor RAM coordinates are in the larger 11 x 16 arcade logical space,
+    // whose visible gameplay area starts 3 cells lower.
+    private const float ActorArcadeYOffset = 0x30;
 
     private int _mazeWidth = DefaultMazeWidth;
     private int _mazeHeight = DefaultMazeHeight;
@@ -44,16 +47,16 @@ public partial class EnemyTraceBoardView : Control
 
         try
         {
-            using JsonDocument document = JsonDocument.Parse(file.GetAsText());
-            JsonElement root = document.RootElement;
+            using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(file.GetAsText());
+            System.Text.Json.JsonElement root = document.RootElement;
             _mazeWidth = root.GetProperty("width").GetInt32();
             _mazeHeight = root.GetProperty("height").GetInt32();
 
-            JsonElement cells = root.GetProperty("cells");
+            System.Text.Json.JsonElement cells = root.GetProperty("cells");
             _wallMasks = new int[_mazeWidth * _mazeHeight];
 
             int index = 0;
-            foreach (JsonElement cell in cells.EnumerateArray())
+            foreach (System.Text.Json.JsonElement cell in cells.EnumerateArray())
             {
                 if (index >= _wallMasks.Length)
                     break;
@@ -94,6 +97,7 @@ public partial class EnemyTraceBoardView : Control
 
         DrawGrid(origin, cell);
         DrawMazeWalls(origin, cell);
+        DrawGates(origin, cell);
         DrawActors(origin, cell);
     }
 
@@ -163,6 +167,42 @@ public partial class EnemyTraceBoardView : Control
         return _wallMasks[index];
     }
 
+    private void DrawGates(Vector2 origin, float cell)
+    {
+        if (_snapshot?.gates == null)
+            return;
+
+        Color gateColor = new(0.20f, 1.0f, 0.20f, 1.0f);
+        Color gateOutline = new(0.02f, 0.18f, 0.02f, 1.0f);
+
+        foreach (EnemyTraceGateState gate in _snapshot.gates)
+        {
+            if (gate.pivot_x < 0 || gate.pivot_y < 0)
+                continue;
+
+            // GatePivot is a logical maze pivot/intersection, not the top-left of a cell.
+            // A Lady Bug gate spans two logical cells and is centered on this pivot.
+            // The previous debug renderer used (pivot + 0.5 cell), which made gates look
+            // one-cell wide and shifted down/right.
+            Vector2 center = origin + new Vector2(gate.pivot_x * cell, gate.pivot_y * cell);
+            bool isHorizontal = string.Equals(gate.orientation, "Horizontal", StringComparison.OrdinalIgnoreCase);
+            bool isVertical = string.Equals(gate.orientation, "Vertical", StringComparison.OrdinalIgnoreCase);
+
+            float thickness = Mathf.Max(4.0f, cell * 0.12f);
+            Vector2 size;
+            if (isHorizontal)
+                size = new Vector2(cell * 2.0f, thickness);
+            else if (isVertical)
+                size = new Vector2(thickness, cell * 2.0f);
+            else
+                size = new Vector2(cell * 0.30f, cell * 0.30f);
+
+            Rect2 rect = new(center - size * 0.5f, size);
+            DrawRect(rect, gateColor, true);
+            DrawRect(rect, gateOutline, false, 1.0f);
+        }
+    }
+
     private void DrawActors(Vector2 origin, float cell)
     {
         if (_snapshot == null)
@@ -188,7 +228,7 @@ public partial class EnemyTraceBoardView : Control
     {
         // Trace positions are expected in arcade pixels. Cell size is 16 arcade pixels.
         float localX = actor.x / ArcadeCellSize * cell;
-        float localY = actor.y / ArcadeCellSize * cell;
+        float localY = (actor.y - ActorArcadeYOffset) / ArcadeCellSize * cell;
         Vector2 center = origin + new Vector2(localX, localY);
 
         float radius = Mathf.Clamp(cell * 0.18f, 5.0f, 12.0f);
