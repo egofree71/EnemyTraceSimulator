@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.2.16**
+Current package version: **v0.2.25**
 
 Implemented now:
 
@@ -28,12 +28,15 @@ Implemented now:
 - JSONL trace loading;
 - debug rendering of the logical 11 x 11 maze from `data/maze.json`;
 - rendering of rotating gates from the loaded trace;
-- rendering of the player from `assets/sprites/player/ladybug_spritesheet.png` when available;
+- rendering of the player from `assets/sprites/player/ladybug_spritesheet.png
+assets/sprites/enemies/enemy_level1.png` when available;
 - nearest-neighbor player sprite rendering at a fixed 32 x 32 debug size;
 - fallback debug rendering when the player sprite is missing;
 - optional player debug markers for raw MAME position and turn target;
 - runtime player sprite visual offset tuning with keyboard shortcuts;
-- active enemy debug rendering from the loaded trace;
+- active enemy rendering from the loaded trace using the level-1 spritesheet when available;
+- inactive enemy slots hidden by default, with an optional diagnostic toggle;
+- MAME-to-Godot actor Y mirroring with `0xDD - mameY`;
 - playback controls: restart, pause/resume, step one tick;
 - two synchronized boards: left for future C# simulation, right for MAME trace;
 - bottom console area for runtime messages;
@@ -46,7 +49,7 @@ Not implemented yet:
 - mismatch highlighting;
 - first-mismatch navigation;
 - exact final actor coordinate mapping;
-- original enemy and gate sprite rendering;
+- original gate sprite rendering and level 2+ enemy sprite selection;
 - integration with the full Lady Bug game codebase.
 
 ## Requirements
@@ -58,13 +61,14 @@ Not implemented yet:
 
 This repository does **not** include Lady Bug ROM files or MAME binaries.
 
-The player sprite renderer expects this optional file if visual player rendering is desired:
+The sprite renderers expect these optional files if visual actor rendering is desired:
 
 ```text
 assets/sprites/player/ladybug_spritesheet.png
+assets/sprites/enemies/enemy_level1.png
 ```
 
-The file can be copied from the main Lady Bug remake repository if needed. If it is missing, the board falls back to a simple debug marker for the player.
+These files can be copied from the main Lady Bug remake repository if needed. If a file is missing, the board falls back to simple debug markers.
 
 ## Running the tool
 
@@ -149,7 +153,10 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 ├─ assets/
 │  └─ sprites/
 │     └─ player/
-│        └─ ladybug_spritesheet.png   optional local asset
+│        ├─ player/
+│        │  └─ ladybug_spritesheet.png   optional local asset
+│        └─ enemies/
+│           └─ enemy_level1.png          optional local asset
 ├─ config/
 │  └─ mame_trace_settings.json
 ├─ data/
@@ -245,8 +252,9 @@ It draws:
 - static maze walls in purple;
 - rotating gates in green;
 - the player with the Lady Bug player sprite when available;
-- active enemies as blue debug markers;
-- a direction vector for active enemies when available.
+- active level-1 enemies with `enemy_level1.png` when available;
+- active enemies as blue debug markers when the spritesheet is missing;
+- inactive enemy slots only when explicitly enabled for diagnostics.
 
 Rotating gates are rendered as two-cell segments centered on their logical pivot:
 
@@ -259,14 +267,15 @@ The player sprite is rendered with nearest-neighbor filtering at a fixed 32 x 32
 (0, -7) arcade pixels
 ```
 
-This offset only affects the sprite drawing. It does **not** change the raw MAME gameplay coordinate.
+These offsets only affect sprite drawing. They do **not** change the raw MAME gameplay coordinates.
 
 Useful debug shortcuts:
 
 ```text
 Ctrl + D       toggle player debug markers
 Ctrl + arrows  adjust player sprite visual offset
-Ctrl + Home    reset player sprite visual offset to (0, -7)
+Ctrl + Home    reset player sprite visual offset to (0, 2)
+Ctrl + E       toggle inactive enemy slots
 ```
 
 When enabled, the player debug markers mean:
@@ -282,7 +291,7 @@ Actor coordinate mapping is still provisional. The current renderer applies a te
 
 The left board is labelled **Simulation C# / Godot**, but it currently displays the loaded MAME trace frame just like the right board. This is intentional for now: the C# simulation side has not been connected yet.
 
-The actor positions are good enough for visual inspection, but the coordinate mapping is not considered final. Gates are currently more reliable than actor placement.
+The actor positions are now converted with the MAME Y mirror and are good enough for visual inspection, but the coordinate mapping is still not considered final. Gates are currently more reliable than actor placement.
 
 The tool does not yet compare states. It only loads, displays, and replays the trace.
 

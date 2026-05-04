@@ -11,10 +11,12 @@ public partial class EnemyTraceBoardView : Control
     private const int DefaultMazeHeight = 11;
     private const float ArcadeCellSize = 16.0f;
 
-    // The rendered debug maze is the 11-row gameplay maze.
-    // Actor RAM coordinates are in the larger 11 x 16 arcade logical space,
-    // whose visible gameplay area starts 3 cells lower.
-    private const float ActorArcadeYOffset = 0x30;
+    // MAME stores actor Y in the arcade hardware coordinate space, where the
+    // top of the maze has a high Y value and the bottom has a low Y value.
+    // Examples observed in MAME: top ~= 0xD6, bottom ~= 0x36.
+    // Godot/debug-board arcade coordinates use the opposite orientation, so
+    // every actor Y read from the trace must be mirrored before drawing.
+    private const int MameYMirror = 0xDD;
 
     private const string PlayerSpriteSheetPath = "res://assets/sprites/player/ladybug_spritesheet.png";
     private static readonly Vector2 PlayerSpriteFrameSize = new(64.0f, 64.0f);
@@ -22,13 +24,26 @@ public partial class EnemyTraceBoardView : Control
     // Debug-render tuning only. This does not change the traced gameplay coordinate.
     // The sprite is deliberately drawn above the raw gameplay anchor, while the white
     // cross keeps showing the exact x/y read from MAME.
-    private static readonly Vector2 DefaultPlayerSpriteVisualOffsetArcade = new(0.0f, -7.0f);
+    private static readonly Vector2 DefaultPlayerSpriteVisualOffsetArcade = new(0.0f, 2.0f);
     private Vector2 _playerSpriteVisualOffsetArcade = DefaultPlayerSpriteVisualOffsetArcade;
 
     // The source player frames are 64x64. For the debug board we intentionally draw
     // them at 32x32 pixels, i.e. an exact 1/2 scale, then snap the destination to
     // whole screen pixels. This avoids Photoshop-visible blur from arbitrary scaling.
     private const float PlayerSpriteDebugDisplaySizePixels = 32.0f;
+
+    private const string EnemyLevel1SpriteSheetPath = "res://assets/sprites/enemies/enemy_level1.png";
+    private static readonly Vector2 EnemySpriteFrameSize = new(64.0f, 64.0f);
+
+    // Level-1 enemy graphics use the same six-frame layout as the main Lady Bug project:
+    // frames 0,1,2 = move_right; frames 3,4,5 = move_up.
+    // Left/down are drawn by mirroring those base rows.
+    private const float EnemySpriteDebugDisplaySizePixels = 32.0f;
+
+    // After converting MAME Y with the 0xDD mirror, the enemy's gameplay anchor is
+    // almost centered in the debug board. A small positive Y visual offset places
+    // the level-1 sprite closer to the middle of horizontal corridors.
+    private static readonly Vector2 EnemySpriteVisualOffsetArcade = new(0.0f, 1.0f);
 
     private int _mazeWidth = DefaultMazeWidth;
     private int _mazeHeight = DefaultMazeHeight;
@@ -37,13 +52,29 @@ public partial class EnemyTraceBoardView : Control
 
     private Texture2D? _playerSpriteSheet;
     private bool _playerSpriteLoadAttempted;
+    private Texture2D? _enemyLevel1SpriteSheet;
+    private bool _enemySpriteLoadAttempted;
     private bool _showPlayerDebugMarkers;
+    private bool _showInactiveEnemySlots;
 
     public string BoardTitle { get; set; } = "Board";
 
     public Vector2 PlayerSpriteVisualOffsetArcade => _playerSpriteVisualOffsetArcade;
 
     public bool ShowPlayerDebugMarkers => _showPlayerDebugMarkers;
+
+    public bool ShowInactiveEnemySlots => _showInactiveEnemySlots;
+
+    public void SetShowInactiveEnemySlots(bool show)
+    {
+        _showInactiveEnemySlots = show;
+        QueueRedraw();
+    }
+
+    public void ToggleInactiveEnemySlots()
+    {
+        SetShowInactiveEnemySlots(!_showInactiveEnemySlots);
+    }
 
     public void SetShowPlayerDebugMarkers(bool show)
     {
@@ -82,6 +113,7 @@ public partial class EnemyTraceBoardView : Control
         TextureFilter = TextureFilterEnum.Nearest;
 
         EnsurePlayerSpriteLoaded();
+        EnsureEnemySpriteLoaded();
         QueueRedraw();
     }
 
@@ -151,6 +183,11 @@ public partial class EnemyTraceBoardView : Control
             DrawString(font, boardRect.Position + new Vector2(8, 18), debugMarkerText, HorizontalAlignment.Left, -1, 12, new Color(0.20f, 0.95f, 1.0f, 1.0f));
         }
 
+        if (_showInactiveEnemySlots)
+        {
+            DrawString(font, boardRect.Position + new Vector2(8, _showPlayerDebugMarkers ? 34 : 18), "debug enemies: inactive known slots visible", HorizontalAlignment.Left, -1, 12, new Color(0.75f, 0.75f, 1.0f, 1.0f));
+        }
+
         if (_mazeWidth <= 0 || _mazeHeight <= 0)
             return;
 
@@ -176,6 +213,19 @@ public partial class EnemyTraceBoardView : Control
             return;
 
         _playerSpriteSheet = ResourceLoader.Load<Texture2D>(PlayerSpriteSheetPath);
+    }
+
+    private void EnsureEnemySpriteLoaded()
+    {
+        if (_enemySpriteLoadAttempted)
+            return;
+
+        _enemySpriteLoadAttempted = true;
+
+        if (!ResourceLoader.Exists(EnemyLevel1SpriteSheetPath))
+            return;
+
+        _enemyLevel1SpriteSheet = ResourceLoader.Load<Texture2D>(EnemyLevel1SpriteSheetPath);
     }
 
     private Rect2 ComputeBoardRect()
@@ -294,11 +344,40 @@ public partial class EnemyTraceBoardView : Control
         foreach (EnemyTraceActor enemy in _snapshot.enemies)
         {
             if (!enemy.active)
-                continue;
+            {
+                if (!_showInactiveEnemySlots || !enemy.HasKnownPosition)
+                    continue;
+            }
 
-            string label = enemy.slot.ToString();
-            DrawDebugActor(origin, cell, enemy, new Color(0.20f, 0.85f, 1.0f, 1.0f), label, false);
+            DrawEnemy(origin, cell, enemy);
         }
+    }
+
+    private void DrawEnemy(Vector2 origin, float cell, EnemyTraceActor actor)
+    {
+        EnsureEnemySpriteLoaded();
+
+        if (_enemyLevel1SpriteSheet == null)
+        {
+            string label = actor.slot.ToString();
+            float alpha = actor.active ? 1.0f : 0.55f;
+            DrawDebugActor(origin, cell, actor, new Color(0.20f, 0.85f, 1.0f, alpha), label, false);
+            return;
+        }
+
+        Vector2 rawCenter = ArcadePointToBoard(origin, cell, actor.x, actor.y);
+        EnemySpriteFrame frame = ResolveEnemyFrame(actor.dir, actor.slot);
+        Vector2 spriteCenter = rawCenter + ArcadeDeltaToBoard(cell, EnemySpriteVisualOffsetArcade);
+
+        float size = EnemySpriteDebugDisplaySizePixels;
+        Vector2 destinationPosition = spriteCenter - new Vector2(size, size) * 0.5f;
+        destinationPosition = new Vector2(Mathf.Round(destinationPosition.X), Mathf.Round(destinationPosition.Y));
+
+        Rect2 destination = new(destinationPosition, new Vector2(size, size));
+        Rect2 source = new(frame.SourcePosition, EnemySpriteFrameSize);
+        Color modulate = actor.active ? Colors.White : new Color(1.0f, 1.0f, 1.0f, 0.55f);
+
+        DrawSpriteRegion(_enemyLevel1SpriteSheet, destination, source, frame.FlipH, frame.FlipV, modulate);
     }
 
     private void DrawPlayer(Vector2 origin, float cell, EnemyTraceActor actor)
@@ -344,7 +423,24 @@ public partial class EnemyTraceBoardView : Control
         Rect2 destination = new(destinationPosition, new Vector2(size, size));
         Rect2 source = new(frame.SourcePosition, PlayerSpriteFrameSize);
 
-        DrawTextureRectRegion(_playerSpriteSheet, destination, source, Colors.White, false, true);
+        DrawSpriteRegion(_playerSpriteSheet, destination, source, false, false, Colors.White);
+    }
+
+    private void DrawSpriteRegion(Texture2D texture, Rect2 destination, Rect2 source, bool flipH, bool flipV, Color modulate)
+    {
+        if (!flipH && !flipV)
+        {
+            DrawTextureRectRegion(texture, destination, source, modulate, false, true);
+            return;
+        }
+
+        Vector2 center = destination.GetCenter();
+        Vector2 size = destination.Size;
+        Rect2 localDestination = new(-size * 0.5f, size);
+
+        DrawSetTransform(center, 0.0f, new Vector2(flipH ? -1.0f : 1.0f, flipV ? -1.0f : 1.0f));
+        DrawTextureRectRegion(texture, localDestination, source, modulate, false, true);
+        DrawSetTransform(Vector2.Zero, 0.0f, Vector2.One);
     }
 
     private void DrawDebugActor(
@@ -369,15 +465,29 @@ public partial class EnemyTraceBoardView : Control
             DrawLine(center, center + direction * radius * 1.6f, Colors.White, 2.0f);
     }
 
-    private Vector2 ArcadePointToBoard(Vector2 origin, float cell, int arcadeX, int arcadeY)
+    private Vector2 ArcadePointToBoard(Vector2 origin, float cell, int mameX, int mameY)
     {
-        float localX = arcadeX / ArcadeCellSize * cell;
-        float localY = (arcadeY - ActorArcadeYOffset) / ArcadeCellSize * cell;
+        int godotArcadeY = MameToGodotArcadeY(mameY);
+
+        float localX = mameX / ArcadeCellSize * cell;
+        float localY = godotArcadeY / ArcadeCellSize * cell;
         return origin + new Vector2(localX, localY);
+    }
+
+    private static int MameToGodotArcadeY(int mameY)
+    {
+        return MameYMirror - mameY;
+    }
+
+    private static int GodotToMameArcadeY(int godotArcadeY)
+    {
+        return MameYMirror - godotArcadeY;
     }
 
     private static Vector2 ArcadeDeltaToBoard(float cell, Vector2 arcadeDelta)
     {
+        // Sprite visual offsets are authored in Godot-style arcade pixels.
+        // They are not MAME RAM coordinates, so they are not mirrored here.
         return arcadeDelta / ArcadeCellSize * cell;
     }
 
@@ -415,6 +525,31 @@ public partial class EnemyTraceBoardView : Control
         };
     }
 
+    private EnemySpriteFrame ResolveEnemyFrame(string? dir, int slot)
+    {
+        int frameInAnimation = GetEnemyAnimationFrame(slot);
+        float rightFrameX = frameInAnimation * EnemySpriteFrameSize.X;
+        float upFrameX = (3 + frameInAnimation) * EnemySpriteFrameSize.X;
+
+        // Raw vertical movement in the MAME trace is expressed in mirrored MAME Y.
+        // Therefore 08 increases MAME Y and appears upward on the debug board,
+        // while 02 decreases MAME Y and appears downward.
+        return dir?.ToLowerInvariant() switch
+        {
+            "left" or "01" or "1" => new EnemySpriteFrame(new Vector2(rightFrameX, 0), true, false),
+            "down" or "02" or "2" => new EnemySpriteFrame(new Vector2(upFrameX, 0), false, true),
+            "right" or "04" or "4" => new EnemySpriteFrame(new Vector2(rightFrameX, 0), false, false),
+            "up" or "08" or "8" => new EnemySpriteFrame(new Vector2(upFrameX, 0), false, false),
+            _ => new EnemySpriteFrame(new Vector2(rightFrameX, 0), false, false)
+        };
+    }
+
+    private int GetEnemyAnimationFrame(int slot)
+    {
+        int tick = _snapshot?.frame ?? 0;
+        return Mathf.PosMod((tick / 8) + Mathf.Max(slot, 0), 3);
+    }
+
     private static Vector2 PlayerDirectionToVector(string? dir)
     {
         // Player RAM direction encoding.
@@ -430,16 +565,17 @@ public partial class EnemyTraceBoardView : Control
 
     private static Vector2 EnemyDirectionToVector(string? dir)
     {
-        // Enemy direction encoding from the reverse-engineering notes.
+        // Direction vector for the raw MAME trace after Y mirroring.
         return dir?.ToLowerInvariant() switch
         {
             "left" or "01" or "1" => Vector2.Left,
-            "up" or "02" or "2" => Vector2.Up,
+            "down" or "02" or "2" => Vector2.Down,
             "right" or "04" or "4" => Vector2.Right,
-            "down" or "08" or "8" => Vector2.Down,
+            "up" or "08" or "8" => Vector2.Up,
             _ => Vector2.Zero
         };
     }
 
     private readonly record struct PlayerSpriteFrame(Vector2 SourcePosition);
+    private readonly record struct EnemySpriteFrame(Vector2 SourcePosition, bool FlipH, bool FlipV);
 }

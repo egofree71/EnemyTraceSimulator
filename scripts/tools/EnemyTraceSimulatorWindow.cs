@@ -52,7 +52,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.2.16: clean view by default. Use Ctrl+D to toggle player debug markers; Ctrl+arrows adjust sprite offset.");
+        Log("v0.2.21: MAME Y mirror applied to actor rendering. Ctrl+E toggles inactive enemy slots for diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -68,6 +68,13 @@ public partial class EnemyTraceSimulatorWindow : Control
         if (keyEvent.Keycode == Key.D)
         {
             TogglePlayerDebugMarkers();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+
+        if (keyEvent.Keycode == Key.E)
+        {
+            ToggleInactiveEnemySlots();
             GetViewport().SetInputAsHandled();
             return;
         }
@@ -234,6 +241,81 @@ public partial class EnemyTraceSimulatorWindow : Control
             : "Player debug markers hidden.");
     }
 
+    private void ToggleInactiveEnemySlots()
+    {
+        bool show = !(_mameBoard?.ShowInactiveEnemySlots
+                      ?? _simulationBoard?.ShowInactiveEnemySlots
+                      ?? false);
+
+        _simulationBoard?.SetShowInactiveEnemySlots(show);
+        _mameBoard?.SetShowInactiveEnemySlots(show);
+
+        Log(show
+            ? "Inactive enemy slots visible. These are diagnostic only."
+            : "Inactive enemy slots hidden.");
+    }
+
+    private static int CountActiveEnemies(EnemyTraceFrame frame)
+    {
+        if (frame.enemies == null)
+            return 0;
+
+        int count = 0;
+        foreach (EnemyTraceActor enemy in frame.enemies)
+        {
+            if (enemy.active)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountKnownEnemies(EnemyTraceFrame frame)
+    {
+        if (frame.enemies == null)
+            return 0;
+
+        int count = 0;
+        foreach (EnemyTraceActor enemy in frame.enemies)
+        {
+            if (enemy.HasKnownPosition)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int MameToGodotArcadeY(int mameY)
+    {
+        return 0xDD - mameY;
+    }
+
+    private void LogEnemyScan(int maxFrames)
+    {
+        int count = Math.Min(maxFrames, _frames.Count);
+        Log($"Enemy scan, first {count} frames:");
+
+        for (int i = 0; i < count; i++)
+        {
+            EnemyTraceFrame frame = _frames[i];
+            if (frame.enemies == null || frame.enemies.Count == 0)
+            {
+                Log($"  idx={i} tick={frame.frame}: no enemy records");
+                continue;
+            }
+
+            var parts = new List<string>();
+            foreach (EnemyTraceActor enemy in frame.enemies)
+            {
+                string activeFlag = enemy.active ? "A" : "-";
+                string knownFlag = enemy.HasKnownPosition ? "K" : "-";
+                parts.Add($"E{enemy.slot}:{activeFlag}{knownFlag} raw={enemy.raw:X2} mame=({enemy.x:X2},{enemy.y:X2}) godot=({enemy.x:X2},{MameToGodotArcadeY(enemy.y):X2}) dir={enemy.dir}");
+            }
+
+            Log($"  idx={i} tick={frame.frame}: {string.Join(" | ", parts)}");
+        }
+    }
+
     private async void OnLaunchMameLuaPressed()
     {
         if (_isLaunchingMame)
@@ -322,11 +404,14 @@ public partial class EnemyTraceSimulatorWindow : Control
         Log($"Trace loaded: {path}");
         Log($"Frames: {_frames.Count}");
         Log($"Gates in first frame: {_frames[0].gates?.Count ?? 0}");
+        Log($"Active enemies in frame 0: {CountActiveEnemies(_frames[0])}");
+        Log($"Known enemy slots in frame 0: {CountKnownEnemies(_frames[0])}");
 
         EnemyTraceActor? player = _frames[0].player;
         if (player != null)
-            Log($"Player first frame: x={player.x:X2} y={player.y:X2} target=({player.turnTargetX:X2},{player.turnTargetY:X2}) dir={player.dir}");
+            Log($"Player frame 0: mame=({player.x:X2},{player.y:X2}) godot=({player.x:X2},{MameToGodotArcadeY(player.y):X2}) target=({player.turnTargetX:X2},{player.turnTargetY:X2}) dir={player.dir}");
 
+        LogEnemyScan(10);
         UpdateStatus();
     }
 
@@ -417,6 +502,8 @@ public partial class EnemyTraceSimulatorWindow : Control
             raw = raw,
             x = ReadInt(element, "x", 0),
             y = ReadInt(element, "y", 0),
+            sprite = ReadInt(element, "sprite", -1),
+            attr = ReadInt(element, "attr", -1),
             turnTargetX = turnTargetX,
             turnTargetY = turnTargetY,
             dir = ReadString(element, "dir", ReadString(element, "currentDir", string.Empty)),
@@ -622,7 +709,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         EnemyTraceFrame frame = _frames[_currentFrameIndex];
         string state = _isRunning && !_isPaused ? "lecture" : "pause";
-        _statusLabel.Text = $"Frame {_currentFrameIndex + 1}/{_frames.Count} | tick={frame.frame} | {state}";
+        _statusLabel.Text = $"Frame {_currentFrameIndex + 1}/{_frames.Count} | tick={frame.frame} | active enemies={CountActiveEnemies(frame)} | {state}";
     }
 
     private void Log(string message)
@@ -652,9 +739,12 @@ public sealed class EnemyTraceActor
     public int raw { get; set; } = -1;
     public int x { get; set; }
     public int y { get; set; }
+    public int sprite { get; set; } = -1;
+    public int attr { get; set; } = -1;
     public int turnTargetX { get; set; } = -1;
     public int turnTargetY { get; set; } = -1;
     public bool HasTurnTarget => turnTargetX >= 0 && turnTargetY >= 0;
+    public bool HasKnownPosition => x != 0 || y != 0;
     public string? dir { get; set; }
     public bool active { get; set; } = true;
 }

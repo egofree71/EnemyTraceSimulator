@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.2.16  
+**Current package version:** v0.2.25  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -33,7 +33,10 @@ The current implementation covers steps 1 to 4 partially. It can launch MAME fro
 ├─ assets/
 │  └─ sprites/
 │     └─ player/
-│        └─ ladybug_spritesheet.png   optional local asset
+│        ├─ player/
+│        │  └─ ladybug_spritesheet.png   optional local asset
+│        └─ enemies/
+│           └─ enemy_level1.png          optional local asset
 ├─ config/
 │  └─ mame_trace_settings.json
 ├─ data/
@@ -122,6 +125,7 @@ Current role:
 - advances playback at 60 Hz while running;
 - supports manual single-frame stepping;
 - supports runtime player debug controls;
+- supports inactive enemy slot diagnostic toggling;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -144,7 +148,8 @@ Current debug shortcuts:
 ```text
 Ctrl + D       toggle player debug markers
 Ctrl + arrows  adjust player sprite visual offset
-Ctrl + Home    reset player sprite visual offset to (0, -7)
+Ctrl + Home    reset player sprite visual offset to (0, 2)
+Ctrl + E       toggle inactive enemy slots
 ```
 
 Important current limitation:
@@ -167,8 +172,10 @@ Current role:
 - falls back to a simple player debug marker when the sprite is missing;
 - renders the player sprite with nearest-neighbor filtering at a fixed 32 x 32 debug size;
 - supports optional player debug markers for raw MAME position and turn target;
-- draws active enemies;
-- draws a short direction vector for each enemy when available.
+- draws active level-1 enemies using `enemy_level1.png` when available;
+- falls back to simple blue debug markers when the enemy spritesheet is absent;
+- hides inactive enemy slots by default;
+- can show inactive enemy slots for diagnostics with `Ctrl + E`.
 
 Current maze assumptions:
 
@@ -200,10 +207,27 @@ Player rendering rules:
 source sprite frame size = 64 x 64
 debug display size       = 32 x 32
 texture filtering        = nearest
-default sprite offset    = (0, -7) arcade pixels
+default sprite offset    = (0, 2) arcade pixels
 ```
 
-The player offset only changes the visual sprite position. It does not alter the raw MAME coordinate used for trace validation.
+Level-1 enemy rendering rules:
+
+```text
+source sprite frame size = 64 x 64
+debug display size       = 32 x 32
+texture filtering        = nearest
+default sprite offset    = (0, 1) arcade pixels
+frames 0,1,2             = right/left animation
+frames 3,4,5             = up/down animation
+```
+
+MAME-to-debug-board actor Y conversion:
+
+```text
+godotArcadeY = 0xDD - mameY
+```
+
+The player and enemy sprite offsets only change the visual sprite position. They do not alter the raw MAME coordinates used for trace validation.
 
 When enabled with `Ctrl + D`, player debug markers mean:
 
@@ -324,13 +348,26 @@ Optional local asset used for player rendering.
 
 If the texture is present, the board renders the player with the sprite. If it is absent, the board falls back to a simple debug marker.
 
-### 6.5 traces/mame/
+### 6.5 assets/sprites/enemies/enemy_level1.png
+
+Optional local asset used for level-1 enemy rendering.
+
+The current viewer supports only level-1 enemy graphics. The sheet is expected to contain six 64 x 64 frames:
+
+```text
+0,1,2 = move right / move left through horizontal flip
+3,4,5 = move up / move down through vertical flip
+```
+
+If the texture is absent, the board falls back to simple blue debug markers.
+
+### 6.6 traces/mame/
 
 This directory is used for generated traces.
 
 Trace outputs are intentionally ignored by Git. The directory can be kept in the repository with `.gitkeep`.
 
-### 6.6 tools/mame/states/
+### 6.7 tools/mame/states/
 
 This directory exists as an optional project-side location for MAME state files.
 
@@ -427,11 +464,13 @@ P = raw MAME player x/y
 T = turnTargetX / turnTargetY
 ```
 
-Use `Ctrl + arrows` to tune only the visual sprite offset. This is useful when comparing screenshots against MAME. The current default is:
+Use `Ctrl + arrows` to tune only the visual player sprite offset. This is useful when comparing screenshots against MAME. The current default is:
 
 ```text
-(0, -7)
+(0, 2)
 ```
+
+Use `Ctrl + E` to show or hide inactive enemy slots. Inactive slots are hidden by default because they can contain stale or diagnostic RAM positions that should not be treated as visible monsters.
 
 Use `Ctrl + Home` to restore that default.
 
@@ -454,8 +493,10 @@ Use `Ctrl + Home` to restore that default.
 - Logical maze rendering.
 - Rotating gate debug rendering.
 - Player sprite rendering with optional debug markers.
-- Runtime sprite offset tuning.
-- Enemy debug rendering.
+- Runtime player sprite offset tuning.
+- Level-1 enemy sprite rendering.
+- Inactive enemy slot diagnostic toggle.
+- MAME Y mirror conversion for actor rendering.
 - `.gitignore` rules for generated and local-only files.
 
 ## 10. Not implemented yet
@@ -468,7 +509,7 @@ Use `Ctrl + Home` to restore that default.
 - Highlighting mismatches in the board views.
 - Export of comparison logs.
 - Exact final actor coordinate mapping.
-- Original enemy sprite rendering.
+- Level 2+ enemy sprite selection.
 - Original gate sprite rendering.
 - UI for editing MAME settings directly inside Godot.
 - Deterministic handling and replay of random arcade decisions on the C# side.
@@ -483,31 +524,33 @@ This is a temporary visualization placeholder.
 
 ### 11.2 Actor coordinate mapping is provisional
 
-The rotating gates are now aligned with the debug maze, but actor placement still needs validation.
+The rotating gates are now aligned with the debug maze, and actor Y positions are now mirrored from MAME space into the debug-board space with `0xDD - mameY`.
 
-The current implementation applies a temporary vertical offset for actors. This was added because MAME runtime positions are expressed in the arcade coordinate space, while the current debug view displays only an 11 x 11 logical maze area.
+Actor placement is much closer to the MAME screenshots, but it is still considered provisional until the conversion is fully documented and tested against more scenarios.
 
-This should be replaced by an explicit, verified coordinate conversion.
+### 11.3 Actor sprite offsets are visual only
 
-### 11.3 Player sprite offset is visual only
+The current player sprite offset `(0, 2)` and enemy sprite offset `(0, 1)` were chosen by visual comparison with MAME screenshots.
 
-The current player sprite offset `(0, -7)` was chosen by visual comparison with MAME screenshots.
+They are useful for readability, but they are not gameplay coordinates. The raw MAME coordinates remain the source of truth.
 
-It is useful for readability, but it is not a gameplay coordinate. The raw MAME coordinate remains the source of truth.
+### 11.4 Enemy rendering is level-1 only
 
-### 11.4 Trace schema is still evolving
+The viewer currently renders enemies with the level-1 spritesheet only. Later versions should select the enemy spritesheet from trace metadata or simulator configuration.
+
+### 11.5 Trace schema is still evolving
 
 The JSONL trace schema is practical enough for the current viewer, but it is not final.
 
 The parser is intentionally tolerant, but the project should eventually define one canonical trace schema.
 
-### 11.5 Trace model classes need extraction
+### 11.6 Trace model classes need extraction
 
 The trace DTOs currently live in `EnemyTraceSimulatorWindow.cs`.
 
 They should move into separate files before the comparison logic grows.
 
-### 11.6 Godot .NET rebuild behavior
+### 11.7 Godot .NET rebuild behavior
 
 After replacing C# files, Godot can keep running an older compiled assembly.
 
@@ -519,7 +562,7 @@ MSBuild > Rebuild
 
 then relaunch the scene.
 
-### 11.7 No collectibles
+### 11.8 No collectibles
 
 Collectibles are intentionally absent from the simulator view. The validation target is enemy movement, not scoring or item collection.
 
