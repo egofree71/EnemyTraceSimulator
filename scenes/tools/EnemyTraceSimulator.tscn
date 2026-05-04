@@ -83,6 +83,23 @@ theme_override_font_sizes/font_size = 23
 text = "▶|"
 tooltip_text = "Avancer d’un tick"
 
+[node name="TickLabel" type="Label" parent="Root/MainLayout/PlaybackControls"]
+custom_minimum_size = Vector2(36, 38)
+layout_mode = 2
+text = "Tick"
+vertical_alignment = 1
+
+[node name="TickSpinBox" type="SpinBox" parent="Root/MainLayout/PlaybackControls"]
+custom_minimum_size = Vector2(110, 38)
+layout_mode = 2
+tooltip_text = "Entrer un tick et appuyer sur Entrée pour afficher la frame correspondante"
+min_value = 0.0
+max_value = 0.0
+step = 1.0
+allow_greater = true
+rounded = true
+editable = false
+
 [node name="StatusLabel" type="Label" parent="Root/MainLayout/PlaybackControls"]
 layout_mode = 2
 size_flags_horizontal = 3

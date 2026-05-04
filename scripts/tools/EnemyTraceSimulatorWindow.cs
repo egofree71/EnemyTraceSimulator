@@ -32,6 +32,7 @@ public partial class EnemyTraceSimulatorWindow : Control
     private Button? _runSimulationButton;
     private Button? _pauseResumeButton;
     private Button? _stepButton;
+    private SpinBox? _tickSpinBox;
 
     private static readonly JsonDocumentOptions TraceJsonDocumentOptions = new()
     {
@@ -52,6 +53,7 @@ public partial class EnemyTraceSimulatorWindow : Control
     private bool _isRunning;
     private bool _isPaused = true;
     private bool _isLaunchingMame;
+    private bool _isUpdatingTickSpinBox;
     private double _playbackAccumulator;
 
     public override void _Ready()
@@ -61,7 +63,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.2.27: MAME settings dialog added. Ctrl+E toggles inactive enemy slots for diagnostics.");
+        Log("v0.2.34: tick jump field added. Ctrl+E toggles inactive enemy slots for diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -139,6 +141,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _runSimulationButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/RunSimulationButton");
         _pauseResumeButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/PauseResumeButton");
         _stepButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/StepButton");
+        _tickSpinBox = GetNodeOrNull<SpinBox>("Root/MainLayout/PlaybackControls/TickSpinBox");
 
         if (_simulationBoard != null)
             _simulationBoard.BoardTitle = "Simulation C# / Godot";
@@ -171,6 +174,7 @@ public partial class EnemyTraceSimulatorWindow : Control
             StepButtonText,
             "Avancer d’un tick");
 
+        ConfigureTickSpinBox();
         UpdatePauseResumeButtonText();
     }
 
@@ -183,6 +187,21 @@ public partial class EnemyTraceSimulatorWindow : Control
         button.TooltipText = tooltipText;
         button.CustomMinimumSize = PlaybackButtonSize;
         button.AddThemeFontSizeOverride("font_size", PlaybackButtonFontSize);
+    }
+
+    private void ConfigureTickSpinBox()
+    {
+        if (_tickSpinBox == null)
+            return;
+
+        _tickSpinBox.MinValue = 0;
+        _tickSpinBox.MaxValue = 0;
+        _tickSpinBox.Step = 1;
+        _tickSpinBox.AllowGreater = true;
+        _tickSpinBox.Rounded = true;
+        _tickSpinBox.Editable = false;
+        _tickSpinBox.TooltipText = "Entrer un tick et appuyer sur Entrée pour afficher la frame correspondante.";
+        _tickSpinBox.CustomMinimumSize = new Vector2(110, 38);
     }
 
     private void UpdatePauseResumeButtonText()
@@ -201,6 +220,9 @@ public partial class EnemyTraceSimulatorWindow : Control
         ConnectButton("Root/MainLayout/PlaybackControls/RunSimulationButton", OnRunSimulationPressed);
         ConnectButton("Root/MainLayout/PlaybackControls/PauseResumeButton", OnPauseResumePressed);
         ConnectButton("Root/MainLayout/PlaybackControls/StepButton", OnStepPressed);
+
+        if (_tickSpinBox != null)
+            _tickSpinBox.ValueChanged += OnTickSpinBoxValueChanged;
     }
 
     private void ConnectButton(string path, Action handler)
@@ -662,11 +684,13 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         if (_frames.Count == 0)
         {
+            ConfigureTickSpinBoxForLoadedTrace();
             Log($"Trace loaded but contains no frame: {path}");
             UpdateStatus();
             return;
         }
 
+        ConfigureTickSpinBoxForLoadedTrace();
         ApplyCurrentFrame();
         Log($"Trace loaded: {path}");
         Log($"Frames: {_frames.Count}");
@@ -885,6 +909,113 @@ public partial class EnemyTraceSimulatorWindow : Control
         return ParseIntString(text, fallback ? 1 : 0) != 0;
     }
 
+    private void OnTickSpinBoxValueChanged(double value)
+    {
+        if (_isUpdatingTickSpinBox)
+            return;
+
+        if (_frames.Count == 0)
+            return;
+
+        int requestedTick = (int)Math.Round(value);
+        JumpToTick(requestedTick, true);
+    }
+
+    private void JumpToTick(int requestedTick, bool logNearest)
+    {
+        if (_frames.Count == 0)
+            return;
+
+        int index = FindFrameIndexForTick(requestedTick, out bool exact);
+        _currentFrameIndex = index;
+        _isRunning = true;
+        _isPaused = true;
+        _playbackAccumulator = 0;
+
+        ApplyCurrentFrame();
+        UpdateStatus();
+
+        if (!exact && logNearest)
+        {
+            EnemyTraceFrame frame = _frames[_currentFrameIndex];
+            Log($"Tick {requestedTick} not found. Showing nearest tick {frame.frame} at frame index {_currentFrameIndex}.");
+        }
+    }
+
+    private int FindFrameIndexForTick(int requestedTick, out bool exact)
+    {
+        exact = false;
+
+        if (_frames.Count == 0)
+            return 0;
+
+        int bestIndex = 0;
+        int bestDistance = Math.Abs(_frames[0].frame - requestedTick);
+
+        for (int i = 0; i < _frames.Count; i++)
+        {
+            int distance = Math.Abs(_frames[i].frame - requestedTick);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestIndex = i;
+            }
+
+            if (_frames[i].frame == requestedTick)
+            {
+                exact = true;
+                return i;
+            }
+        }
+
+        return bestIndex;
+    }
+
+    private void ConfigureTickSpinBoxForLoadedTrace()
+    {
+        if (_tickSpinBox == null)
+            return;
+
+        _isUpdatingTickSpinBox = true;
+
+        if (_frames.Count == 0)
+        {
+            _tickSpinBox.MinValue = 0;
+            _tickSpinBox.MaxValue = 0;
+            _tickSpinBox.Value = 0;
+            _tickSpinBox.Editable = false;
+            _isUpdatingTickSpinBox = false;
+            return;
+        }
+
+        int minTick = _frames[0].frame;
+        int maxTick = _frames[0].frame;
+
+        foreach (EnemyTraceFrame frame in _frames)
+        {
+            minTick = Math.Min(minTick, frame.frame);
+            maxTick = Math.Max(maxTick, frame.frame);
+        }
+
+        _tickSpinBox.MinValue = minTick;
+        _tickSpinBox.MaxValue = maxTick;
+        _tickSpinBox.AllowGreater = true;
+        _tickSpinBox.Editable = true;
+        _tickSpinBox.Value = _frames[_currentFrameIndex].frame;
+
+        _isUpdatingTickSpinBox = false;
+    }
+
+    private void SyncTickSpinBoxToCurrentFrame()
+    {
+        if (_tickSpinBox == null || _frames.Count == 0)
+            return;
+
+        _isUpdatingTickSpinBox = true;
+        _tickSpinBox.Value = _frames[_currentFrameIndex].frame;
+        _isUpdatingTickSpinBox = false;
+    }
+
     private void OnRunSimulationPressed()
     {
         if (_frames.Count == 0)
@@ -959,6 +1090,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         // The left side becomes the output of the C# simulation in a later package.
         _simulationBoard?.SetSnapshot(frame);
         _mameBoard?.SetSnapshot(frame);
+        SyncTickSpinBoxToCurrentFrame();
     }
 
     private void UpdateStatus()
