@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.5.2: explicit status labels restored below boards.");
+        Log("v0.5.4: comparison test window added.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -901,16 +901,100 @@ public partial class EnemyTraceSimulatorWindow : Control
             return;
         }
 
-        // v0.5.0 validates the comparison pipeline with an identity simulation source.
-        // The real C# enemy simulation adapter will replace this source in v0.6.
-        List<SimulationFrame> simulationFrames = TraceSimulationStub.CreateIdentitySimulation(_frames);
+        ShowComparisonWindow();
+    }
+
+    private void ShowComparisonWindow()
+    {
+        var compareWindow = new Window
+        {
+            Title = "Trace comparison",
+            Transient = false,
+            Exclusive = false,
+            Unresizable = false,
+            MinSize = new Vector2I(480, 260)
+        };
+
+        var margin = new MarginContainer();
+        margin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        margin.AddThemeConstantOverride("margin_left", 12);
+        margin.AddThemeConstantOverride("margin_top", 12);
+        margin.AddThemeConstantOverride("margin_right", 12);
+        margin.AddThemeConstantOverride("margin_bottom", 12);
+        compareWindow.AddChild(margin);
+
+        var root = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        root.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(root);
+
+        var explanation = new Label
+        {
+            Text = "v0.5 validates the comparison pipeline before the real C# enemy simulation adapter is connected.",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart
+        };
+        root.AddChild(explanation);
+
+        var identityButton = new Button
+        {
+            Text = "Run identity comparison",
+            CustomMinimumSize = new Vector2(240, 38),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        identityButton.Pressed += () =>
+            RunComparison(
+                "identity comparison",
+                TraceSimulationStub.CreateIdentitySimulation(_frames),
+                expectMismatch: false);
+        root.AddChild(identityButton);
+
+        var injectedMismatchButton = new Button
+        {
+            Text = "Run injected mismatch test",
+            CustomMinimumSize = new Vector2(240, 38),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        injectedMismatchButton.Pressed += () =>
+            RunComparison(
+                "injected mismatch test",
+                TraceSimulationStub.CreateFirstActiveEnemyXMismatchSimulation(_frames),
+                expectMismatch: true);
+        root.AddChild(injectedMismatchButton);
+
+        var closeRow = new HBoxContainer
+        {
+            Alignment = BoxContainer.AlignmentMode.End,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        root.AddChild(closeRow);
+
+        var closeButton = new Button
+        {
+            Text = "Close",
+            CustomMinimumSize = new Vector2(90, 34)
+        };
+        closeButton.Pressed += compareWindow.QueueFree;
+        compareWindow.CloseRequested += compareWindow.QueueFree;
+        closeRow.AddChild(closeButton);
+
+        AddChild(compareWindow);
+        compareWindow.PopupCentered(new Vector2I(540, 300));
+    }
+
+    private void RunComparison(string label, List<SimulationFrame> simulationFrames, bool expectMismatch)
+    {
         TraceComparisonResult result = TraceComparisonRunner.Compare(_frames, simulationFrames);
 
-        Log($"Comparison complete: comparedFrames={result.ComparedFrameCount}, mismatches={result.MismatchCount}");
+        Log($"Comparison [{label}]: comparedFrames={result.ComparedFrameCount}, mismatches={result.MismatchCount}");
 
         if (!result.HasMismatch || result.FirstMismatch == null)
         {
-            Log("Comparison result: no mismatch. Identity simulation pipeline is valid.");
+            Log(expectMismatch
+                ? "Comparison result: no mismatch found, but this test expected one."
+                : "Comparison result: no mismatch. Pipeline is valid.");
             return;
         }
 

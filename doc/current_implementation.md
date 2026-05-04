@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.5.2  
+**Current package version:** v0.5.4  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -160,6 +160,7 @@ Current role:
 - reports gate orientation changes between the selected frame and the previous frame;
 - supports condition-based trace search from the Find window;
 - runs an initial comparison pipeline through the Compare button;
+- opens a comparison test window with identity and injected-mismatch checks;
 - displays the status line below the two boards to avoid toolbar overflow;
 - writes messages to the bottom console and to Godot output.
 
@@ -571,9 +572,11 @@ When **Find** is pressed:
 
 When **Compare** is pressed:
 
-- the current v0.5 comparison pipeline runs;
-- the loaded MAME trace is compared against an identity simulation generated from the same trace;
-- the expected result is zero mismatches;
+- a separate **Trace comparison** window opens;
+- **Run identity comparison** compares the loaded MAME trace against an identity simulation generated from the same trace;
+- the expected identity result is zero mismatches;
+- **Run injected mismatch test** deliberately alters the first active enemy X coordinate by one pixel;
+- the injected test is expected to report a mismatch;
 - the console reports compared frame count and mismatch count;
 - if a mismatch is found, the first mismatch is reported and the viewer jumps to that frame.
 
@@ -625,6 +628,7 @@ Use `Ctrl + Home` to restore that default.
 - Condition-based trace search.
 - Initial comparison data model.
 - Identity trace comparison through the Compare button.
+- Injected mismatch comparison test.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -801,7 +805,7 @@ Remaining v0.4 work:
 
 ### v0.5: comparison data model
 
-Status after v0.5.2: initial comparison model and identity comparison pipeline implemented.
+Status after v0.5.4: initial comparison model, identity comparison, and injected mismatch test implemented.
 
 Implemented:
 
@@ -813,14 +817,16 @@ Implemented:
 - `TraceComparisonResult`;
 - `TraceComparisonRunner`;
 - `TraceSimulationStub` identity source;
+- injected mismatch source that alters the first active enemy X coordinate;
 - toolbar **Compare** button;
+- comparison test window;
 - console report with compared frame count, mismatch count, and first mismatch when present;
+- automatic jump to the first mismatch frame;
 - status label moved below the board views.
 
 Remaining v0.5 work:
 
 - add richer mismatch categories for timers and metadata if needed;
-- optionally add a deliberate mismatch source to test mismatch reporting;
 - keep the left board trace-driven until the comparison model is stable.
 
 ### v0.6: C# enemy simulation adapter

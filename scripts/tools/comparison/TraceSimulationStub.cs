@@ -16,6 +16,34 @@ public static class TraceSimulationStub
         return simulation;
     }
 
+    public static List<SimulationFrame> CreateFirstActiveEnemyXMismatchSimulation(IReadOnlyList<EnemyTraceFrame> referenceFrames)
+    {
+        List<SimulationFrame> simulation = CreateIdentitySimulation(referenceFrames);
+
+        foreach (SimulationFrame frame in simulation)
+        {
+            foreach (SimulationActorState enemy in frame.Enemies)
+            {
+                if (!enemy.Active)
+                    continue;
+
+                enemy.X = (enemy.X + 1) & 0xFF;
+                return simulation;
+            }
+        }
+
+        foreach (SimulationFrame frame in simulation)
+        {
+            if (frame.Player == null)
+                continue;
+
+            frame.Player.X = (frame.Player.X + 1) & 0xFF;
+            return simulation;
+        }
+
+        return simulation;
+    }
+
     private static SimulationFrame ConvertReferenceFrame(int index, EnemyTraceFrame referenceFrame)
     {
         var frame = new SimulationFrame

@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.5.2**
+Current package version: **v0.5.4**
 
 Implemented now:
 
@@ -157,7 +157,7 @@ The **Find** button opens a separate navigation helper window. It can jump to th
 
 The same window also includes a condition search area with **Find condition** and **Find next**. Current supported conditions include `enemyWork rejectedMask != 0`, `enemyWork fallbackMask != 0`, `enemyWork tempDir == value`, enemy direction checks, slot direction checks, and player direction checks.
 
-The **Compare** button runs the v0.5 comparison pipeline. For now it compares the MAME trace against an identity simulation generated from the same trace, so the expected result is zero mismatches. This validates the comparison plumbing before the real C# enemy simulation adapter is connected.
+The **Compare** button opens a comparison test window. For now, it can run two checks: an identity comparison, where the MAME trace is compared against a simulation generated from the same trace and should produce zero mismatches; and an injected mismatch test, where the first active enemy has its X coordinate altered by one pixel so the mismatch reporting path can be validated.
 
 The status line is displayed below the two board views, not inside the toolbar. This keeps the toolbar stable even after a large trace is loaded.
 
@@ -399,7 +399,9 @@ Implemented:
 - console summary of the gates that changed when using **Find → First gate change**;
 - condition-based search in the **Find** window;
 - initial comparison data model under `scripts/tools/comparison/`;
-- toolbar **Compare** button using a temporary identity simulation source;
+- toolbar **Compare** button opening a comparison test window;
+- temporary identity simulation source;
+- injected mismatch test source for validating mismatch detection;
 - status line moved below the two boards to avoid toolbar overflow.
 
 Remaining v0.4 work:
@@ -410,7 +412,7 @@ Remaining v0.4 work:
 
 ### v0.5: comparison data model
 
-Status after v0.5.2: initial comparison model and identity comparison pipeline implemented.
+Status after v0.5.4: initial comparison model, identity comparison, and injected mismatch test implemented.
 
 Implemented:
 
@@ -418,14 +420,16 @@ Implemented:
 - `ComparisonFrame`, `TraceMismatch`, and `TraceComparisonResult`;
 - `TraceComparisonRunner`;
 - temporary `TraceSimulationStub` identity source;
-- toolbar **Compare** button;
+- toolbar **Compare** button opening a comparison test window;
+- identity comparison test;
+- injected mismatch test that alters the first active enemy X coordinate;
 - first mismatch report in the console;
+- automatic jump to the first mismatch frame;
 - status line moved below the boards to avoid toolbar overflow.
 
 Remaining v0.5 work:
 
 - add richer mismatch categories for timers and metadata if needed;
-- optionally add a deliberate mismatch test source to validate mismatch reporting;
 - keep the left board trace-driven until the comparison model is stable.
 
 ### v0.6: C# enemy simulation adapter
