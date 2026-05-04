@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.2.25  
+**Current package version:** v0.2.32  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -92,6 +92,7 @@ EnemyTraceSimulator (Control)
    └─ MainLayout (VBoxContainer)
       ├─ Title (Label)
       ├─ Toolbar / PlaybackControls (HBoxContainer)
+      │  ├─ SettingsButton (Button)
       │  ├─ LaunchMameLuaButton (Button)
       │  ├─ LoadTraceButton (Button)
       │  ├─ RunSimulationButton (Button)
@@ -104,7 +105,7 @@ EnemyTraceSimulator (Control)
       └─ Console (TextEdit)
 ```
 
-The previous visible text fields for MAME config and trace path were removed in v0.2.5 to save vertical space. The workflow is now button-driven, with paths coming from configuration and generated trace metadata.
+The previous visible text fields for MAME config and trace path were removed in v0.2.5 to save vertical space. The workflow is now button-driven, with paths coming from configuration and generated trace metadata. The toolbar now includes a **⚙** settings button that opens a modal editor for `config/mame_trace_settings.json`.
 
 ## 5. Current scripts
 
@@ -114,6 +115,7 @@ Current role:
 
 - root UI controller;
 - binds scene nodes by path;
+- opens and saves the MAME trace settings dialog;
 - connects button handlers;
 - configures compact playback buttons;
 - loads the default logical maze into both board views;
@@ -134,9 +136,10 @@ Current playback constant:
 private const double PlaybackTickSeconds = 1.0 / 60.0;
 ```
 
-Current playback buttons:
+Current toolbar / playback buttons:
 
 ```text
+⚙    edit MAME trace settings
 ↺    restart from the first frame
 ▶    resume playback
 ❚❚   pause playback
@@ -284,6 +287,8 @@ The previous `.bat` workflow has been replaced by this C# launcher and the JSON 
 
 This file centralizes local MAME settings.
 
+It can be edited directly from the simulator through the **⚙** toolbar button. The settings dialog loads this JSON file, displays one field per setting, and saves the file when **OK** is pressed. **Cancel** closes the dialog without writing changes.
+
 It is currently the main place to configure:
 
 - MAME executable path;
@@ -412,7 +417,19 @@ On `_Ready()`:
 4. both boards load `res://data/maze.json`;
 5. startup messages are written to the console.
 
-### 8.2 Launching MAME/Lua
+### 8.2 Editing MAME settings
+
+When **⚙** is pressed:
+
+1. the simulator loads `res://config/mame_trace_settings.json`;
+2. a modal settings window is opened;
+3. string, integer, and boolean fields are displayed;
+4. **OK** writes the edited JSON back to disk;
+5. **Cancel** closes the window without saving.
+
+The settings window is custom-built rather than using the native `ConfirmationDialog`, so the OK / Cancel buttons remain visible inside the simulator viewport.
+
+### 8.3 Launching MAME/Lua
 
 When **Lancer MAME/Lua** is pressed:
 
@@ -424,7 +441,7 @@ When **Lancer MAME/Lua** is pressed:
 6. launcher messages are written to the console;
 7. the expected generated trace path is remembered for loading.
 
-### 8.3 Loading a trace
+### 8.4 Loading a trace
 
 When **Charger trace** is pressed:
 
@@ -436,7 +453,7 @@ When **Charger trace** is pressed:
 6. the status label is updated;
 7. the console reports the frame count, gate count, and first player position when available.
 
-### 8.4 Playback
+### 8.5 Playback
 
 When **↺** is pressed:
 
@@ -453,7 +470,7 @@ When **▶|** is pressed:
 - playback pauses;
 - one frame is advanced manually.
 
-### 8.5 Player debug workflow
+### 8.6 Player debug workflow
 
 By default, the board stays visually clean.
 
@@ -478,6 +495,7 @@ Use `Ctrl + Home` to restore that default.
 
 - Standalone Godot project skeleton.
 - Main scene with compact simulator UI.
+- Settings dialog for `config/mame_trace_settings.json`.
 - Scene-authored controls.
 - C# node binding.
 - C# button handling.
@@ -511,7 +529,7 @@ Use `Ctrl + Home` to restore that default.
 - Exact final actor coordinate mapping.
 - Level 2+ enemy sprite selection.
 - Original gate sprite rendering.
-- UI for editing MAME settings directly inside Godot.
+- Advanced validation in the MAME settings dialog, such as path existence checks or browse buttons.
 - Deterministic handling and replay of random arcade decisions on the C# side.
 
 ## 11. Current known limitations
@@ -550,7 +568,13 @@ The trace DTOs currently live in `EnemyTraceSimulatorWindow.cs`.
 
 They should move into separate files before the comparison logic grows.
 
-### 11.7 Godot .NET rebuild behavior
+### 11.7 Settings dialog limitations
+
+The settings dialog currently supports manual text editing and basic integer / boolean fields only.
+
+It does not yet provide file or directory picker buttons, path validation, or per-field error messages.
+
+### 11.8 Godot .NET rebuild behavior
 
 After replacing C# files, Godot can keep running an older compiled assembly.
 
@@ -562,7 +586,7 @@ MSBuild > Rebuild
 
 then relaunch the scene.
 
-### 11.8 No collectibles
+### 11.9 No collectibles
 
 Collectibles are intentionally absent from the simulator view. The validation target is enemy movement, not scoring or item collection.
 

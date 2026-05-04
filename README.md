@@ -13,13 +13,14 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.2.25**
+Current package version: **v0.2.32**
 
 Implemented now:
 
 - standalone Godot 4.6.2 .NET project;
 - main scene: `scenes/tools/EnemyTraceSimulator.tscn`;
 - compact toolbar with the main workflow buttons;
+- settings button and dialog for editing `config/mame_trace_settings.json`;
 - configurable MAME launch through `config/mame_trace_settings.json`;
 - C# MAME process launcher;
 - Lua runtime configuration generation;
@@ -85,7 +86,11 @@ dotnet build
 scenes/tools/EnemyTraceSimulator.tscn
 ```
 
-4. Edit the local MAME configuration file:
+4. Edit the local MAME configuration.
+
+You can click the **⚙** button in the simulator toolbar to edit the settings directly from Godot.
+
+The settings are saved to:
 
 ```text
 config/mame_trace_settings.json
@@ -128,6 +133,7 @@ to load the generated trace.
 7. Use the playback buttons:
 
 ```text
+⚙    edit MAME trace settings
 ↺    restart from the first frame
 ▶    resume playback
 ❚❚   pause playback
@@ -198,7 +204,7 @@ config/mame_trace_settings.json
 
 The C# launcher reads this file, resolves `res://` paths to project-local paths, generates a Lua runtime configuration, and starts MAME with the configured script and save-state parameters.
 
-Generated files such as traces, logs, runtime Lua configs, and `.sta` files are ignored by Git.
+The toolbar **⚙** button opens a settings window that reads and writes this JSON file. Generated files such as traces, logs, runtime Lua configs, and `.sta` files are ignored by Git.
 
 ## Trace format
 

@@ -27,6 +27,7 @@ public partial class EnemyTraceSimulatorWindow : Control
     private EnemyTraceBoardView? _mameBoard;
     private TextEdit? _console;
     private Label? _statusLabel;
+    private Button? _settingsButton;
     private Button? _launchMameLuaButton;
     private Button? _runSimulationButton;
     private Button? _pauseResumeButton;
@@ -36,6 +37,14 @@ public partial class EnemyTraceSimulatorWindow : Control
     {
         AllowTrailingCommas = true,
         CommentHandling = JsonCommentHandling.Skip
+    };
+
+    private static readonly JsonSerializerOptions SettingsJsonOptions = new()
+    {
+        AllowTrailingCommas = true,
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        WriteIndented = true
     };
 
     private List<EnemyTraceFrame> _frames = new();
@@ -52,7 +61,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.2.21: MAME Y mirror applied to actor rendering. Ctrl+E toggles inactive enemy slots for diagnostics.");
+        Log("v0.2.27: MAME settings dialog added. Ctrl+E toggles inactive enemy slots for diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -125,6 +134,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _mameBoard = GetNodeOrNull<EnemyTraceBoardView>("Root/MainLayout/BoardComparison/MameTraceBoard");
         _console = GetNodeOrNull<TextEdit>("Root/MainLayout/Console");
         _statusLabel = GetNodeOrNull<Label>("Root/MainLayout/PlaybackControls/StatusLabel");
+        _settingsButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/SettingsButton");
         _launchMameLuaButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/LaunchMameLuaButton");
         _runSimulationButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/RunSimulationButton");
         _pauseResumeButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/PauseResumeButton");
@@ -141,6 +151,11 @@ public partial class EnemyTraceSimulatorWindow : Control
 
     private void ConfigurePlaybackButtons()
     {
+        ConfigurePlaybackButton(
+            _settingsButton,
+            "⚙",
+            "Éditer config/mame_trace_settings.json");
+
         ConfigurePlaybackButton(
             _runSimulationButton,
             RestartButtonText,
@@ -180,6 +195,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
     private void ConnectButtons()
     {
+        ConnectButton("Root/MainLayout/PlaybackControls/SettingsButton", OnSettingsPressed);
         ConnectButton("Root/MainLayout/PlaybackControls/LaunchMameLuaButton", OnLaunchMameLuaPressed);
         ConnectButton("Root/MainLayout/PlaybackControls/LoadTraceButton", OnLoadTracePressed);
         ConnectButton("Root/MainLayout/PlaybackControls/RunSimulationButton", OnRunSimulationPressed);
@@ -314,6 +330,257 @@ public partial class EnemyTraceSimulatorWindow : Control
 
             Log($"  idx={i} tick={frame.frame}: {string.Join(" | ", parts)}");
         }
+    }
+
+    private void OnSettingsPressed()
+    {
+        try
+        {
+            MameTraceSettings settings = LoadMameTraceSettings();
+            ShowMameSettingsDialog(settings);
+        }
+        catch (Exception ex)
+        {
+            Log($"Could not open MAME settings dialog: {ex.Message}");
+        }
+    }
+
+    private MameTraceSettings LoadMameTraceSettings()
+    {
+        string configAbsolutePath = ResolveProjectPath(DefaultMameConfigPath);
+
+        if (!System.IO.File.Exists(configAbsolutePath))
+        {
+            Log($"Settings file not found. A new one will be created: {DefaultMameConfigPath}");
+            return new MameTraceSettings();
+        }
+
+        string json = System.IO.File.ReadAllText(configAbsolutePath);
+        return JsonSerializer.Deserialize<MameTraceSettings>(json, SettingsJsonOptions)
+               ?? new MameTraceSettings();
+    }
+
+    private void SaveMameTraceSettings(MameTraceSettings settings)
+    {
+        string configAbsolutePath = ResolveProjectPath(DefaultMameConfigPath);
+        string? directory = System.IO.Path.GetDirectoryName(configAbsolutePath);
+
+        if (!string.IsNullOrWhiteSpace(directory))
+            System.IO.Directory.CreateDirectory(directory);
+
+        string json = JsonSerializer.Serialize(settings, SettingsJsonOptions);
+        System.IO.File.WriteAllText(configAbsolutePath, json + System.Environment.NewLine);
+
+        Log($"MAME settings saved: {DefaultMameConfigPath}");
+    }
+
+    private static string ResolveProjectPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        if (path.StartsWith("res://", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("user://", StringComparison.OrdinalIgnoreCase))
+        {
+            return ProjectSettings.GlobalizePath(path);
+        }
+
+        if (System.IO.Path.IsPathRooted(path))
+            return System.IO.Path.GetFullPath(path);
+
+        return System.IO.Path.GetFullPath(
+            System.IO.Path.Combine(ProjectSettings.GlobalizePath("res://"), path));
+    }
+
+    private void ShowMameSettingsDialog(MameTraceSettings settings)
+    {
+        var dialog = new Window
+        {
+            Title = "MAME trace settings",
+            Transient = true,
+            Exclusive = true,
+            Unresizable = false,
+            MinSize = new Vector2I(560, 420)
+        };
+
+        var margin = new MarginContainer();
+        margin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        margin.AddThemeConstantOverride("margin_left", 14);
+        margin.AddThemeConstantOverride("margin_top", 12);
+        margin.AddThemeConstantOverride("margin_right", 14);
+        margin.AddThemeConstantOverride("margin_bottom", 14);
+        dialog.AddChild(margin);
+
+        var root = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        root.AddThemeConstantOverride("separation", 12);
+        margin.AddChild(root);
+
+        var scroll = new ScrollContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+
+        var grid = new GridContainer
+        {
+            Columns = 2,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+
+        scroll.AddChild(grid);
+        root.AddChild(scroll);
+
+        var fields = new MameSettingsEditorFields
+        {
+            MameExecutable = AddLineSetting(grid, "MAME executable", settings.MameExecutable),
+            Game = AddLineSetting(grid, "Game / driver", settings.Game),
+            RomPath = AddLineSetting(grid, "ROM path", settings.RomPath),
+            StateDirectory = AddLineSetting(grid, "State directory", settings.StateDirectory),
+            StateSubdir = AddLineSetting(grid, "State subdir / statename", settings.StateSubdir),
+            SaveState = AddLineSetting(grid, "Save-state", settings.SaveState),
+            LuaScriptPath = AddLineSetting(grid, "Lua script path", settings.LuaScriptPath),
+            OutputDirectory = AddLineSetting(grid, "Trace output directory", settings.OutputDirectory),
+            OutputPrefix = AddLineSetting(grid, "Trace output prefix", settings.OutputPrefix),
+            FramesAfterTick0 = AddIntSetting(grid, "Frames after tick 0", settings.FramesAfterTick0, 0, 100000),
+            AutobootDelay = AddIntSetting(grid, "Autoboot delay", settings.AutobootDelay, 0, 60),
+            Windowed = AddBoolSetting(grid, "Windowed", settings.Windowed),
+            ExitWhenDone = AddBoolSetting(grid, "Exit when done", settings.ExitWhenDone),
+            PauseWhenDone = AddBoolSetting(grid, "Pause when done", settings.PauseWhenDone),
+            FlushEveryTraceLine = AddBoolSetting(grid, "Flush every trace line", settings.FlushEveryTraceLine),
+            IncludeFullMemoryEachFrame = AddBoolSetting(grid, "Include full memory each frame", settings.IncludeFullMemoryEachFrame),
+            IncludeLogicalMazeEachFrame = AddBoolSetting(grid, "Include logical maze each frame", settings.IncludeLogicalMazeEachFrame)
+        };
+
+        var buttonRow = new HBoxContainer
+        {
+            Alignment = BoxContainer.AlignmentMode.End,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        buttonRow.AddThemeConstantOverride("separation", 12);
+        root.AddChild(buttonRow);
+
+        var okButton = new Button
+        {
+            Text = "OK",
+            CustomMinimumSize = new Vector2(90, 34)
+        };
+
+        var cancelButton = new Button
+        {
+            Text = "Cancel",
+            CustomMinimumSize = new Vector2(90, 34)
+        };
+
+        okButton.Pressed += () =>
+        {
+            try
+            {
+                MameTraceSettings edited = BuildSettingsFromFields(fields);
+                SaveMameTraceSettings(edited);
+                dialog.QueueFree();
+            }
+            catch (Exception ex)
+            {
+                Log($"Could not save MAME settings: {ex.Message}");
+            }
+        };
+
+        cancelButton.Pressed += dialog.QueueFree;
+        dialog.CloseRequested += dialog.QueueFree;
+
+        buttonRow.AddChild(okButton);
+        buttonRow.AddChild(cancelButton);
+
+        AddChild(dialog);
+
+        Vector2 viewportSize = GetViewportRect().Size;
+        int width = Math.Clamp((int)viewportSize.X - 40, 560, 780);
+        int height = Math.Clamp((int)viewportSize.Y - 80, 420, 560);
+
+        dialog.PopupCentered(new Vector2I(width, height));
+    }
+
+    private static MameTraceSettings BuildSettingsFromFields(MameSettingsEditorFields fields)
+    {
+        return new MameTraceSettings
+        {
+            MameExecutable = fields.MameExecutable.Text.Trim(),
+            Game = fields.Game.Text.Trim(),
+            RomPath = fields.RomPath.Text.Trim(),
+            StateDirectory = fields.StateDirectory.Text.Trim(),
+            StateSubdir = fields.StateSubdir.Text.Trim(),
+            SaveState = fields.SaveState.Text.Trim(),
+            LuaScriptPath = fields.LuaScriptPath.Text.Trim(),
+            OutputDirectory = fields.OutputDirectory.Text.Trim(),
+            OutputPrefix = fields.OutputPrefix.Text.Trim(),
+            FramesAfterTick0 = (int)Math.Round(fields.FramesAfterTick0.Value),
+            AutobootDelay = (int)Math.Round(fields.AutobootDelay.Value),
+            Windowed = fields.Windowed.ButtonPressed,
+            ExitWhenDone = fields.ExitWhenDone.ButtonPressed,
+            PauseWhenDone = fields.PauseWhenDone.ButtonPressed,
+            FlushEveryTraceLine = fields.FlushEveryTraceLine.ButtonPressed,
+            IncludeFullMemoryEachFrame = fields.IncludeFullMemoryEachFrame.ButtonPressed,
+            IncludeLogicalMazeEachFrame = fields.IncludeLogicalMazeEachFrame.ButtonPressed
+        };
+    }
+
+    private static LineEdit AddLineSetting(GridContainer grid, string labelText, string value)
+    {
+        grid.AddChild(MakeSettingsLabel(labelText));
+
+        var lineEdit = new LineEdit
+        {
+            Text = value,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+
+        grid.AddChild(lineEdit);
+        return lineEdit;
+    }
+
+    private static SpinBox AddIntSetting(GridContainer grid, string labelText, int value, int minValue, int maxValue)
+    {
+        grid.AddChild(MakeSettingsLabel(labelText));
+
+        var spinBox = new SpinBox
+        {
+            MinValue = minValue,
+            MaxValue = maxValue,
+            Step = 1,
+            Value = value,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+
+        grid.AddChild(spinBox);
+        return spinBox;
+    }
+
+    private static CheckBox AddBoolSetting(GridContainer grid, string labelText, bool value)
+    {
+        grid.AddChild(MakeSettingsLabel(labelText));
+
+        var checkBox = new CheckBox
+        {
+            ButtonPressed = value,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+
+        grid.AddChild(checkBox);
+        return checkBox;
+    }
+
+    private static Label MakeSettingsLabel(string text)
+    {
+        return new Label
+        {
+            Text = text,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(210, 0)
+        };
     }
 
     private async void OnLaunchMameLuaPressed()
@@ -723,6 +990,27 @@ public partial class EnemyTraceSimulatorWindow : Control
         _console.Text += line + "\n";
         _console.ScrollVertical = _console.GetLineCount();
     }
+}
+
+internal sealed class MameSettingsEditorFields
+{
+    public LineEdit MameExecutable { get; init; } = null!;
+    public LineEdit Game { get; init; } = null!;
+    public LineEdit RomPath { get; init; } = null!;
+    public LineEdit StateDirectory { get; init; } = null!;
+    public LineEdit StateSubdir { get; init; } = null!;
+    public LineEdit SaveState { get; init; } = null!;
+    public LineEdit LuaScriptPath { get; init; } = null!;
+    public LineEdit OutputDirectory { get; init; } = null!;
+    public LineEdit OutputPrefix { get; init; } = null!;
+    public SpinBox FramesAfterTick0 { get; init; } = null!;
+    public SpinBox AutobootDelay { get; init; } = null!;
+    public CheckBox Windowed { get; init; } = null!;
+    public CheckBox ExitWhenDone { get; init; } = null!;
+    public CheckBox PauseWhenDone { get; init; } = null!;
+    public CheckBox FlushEveryTraceLine { get; init; } = null!;
+    public CheckBox IncludeFullMemoryEachFrame { get; init; } = null!;
+    public CheckBox IncludeLogicalMazeEachFrame { get; init; } = null!;
 }
 
 public sealed class EnemyTraceFrame
