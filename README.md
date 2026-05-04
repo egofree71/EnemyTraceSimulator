@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.6.14**
+Current package version: **v0.6.17**
 
 Implemented now:
 
@@ -173,6 +173,8 @@ After v0.6.10, `AdvanceOneTick()` also synchronizes gates and timers from the MA
 
 After v0.6.14, active enemies are advanced by one pixel using the direction observed in the MAME trace. This is not yet the real enemy decision logic, but it validates the low-level coordinate movement convention. The expected first divergence now moves from enemy position to `enemyWork` or later decision-state fields.
 
+After v0.6.17, the comparison window includes an **Ignore EnemyWork mismatches** option. This makes it possible to validate movement and environment alignment while `enemyWork` is still pending. In the current reference trace, enabling this filter leaves no remaining mismatches, which confirms that the reference-direction stepping matches MAME for the compared fields.
+
 The status line is displayed below the two board views, not inside the toolbar. This keeps the toolbar stable even after a large trace is loaded.
 
 ## Important Godot .NET rebuild note
@@ -233,6 +235,7 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │     │  ├─ ComparisonFrame.cs
 │     │  ├─ TraceMismatch.cs
 │     │  ├─ TraceComparisonResult.cs
+│     │  ├─ TraceComparisonOptions.cs
 │     │  ├─ TraceSimulationStub.cs
 │     │  └─ TraceComparisonRunner.cs
 │     └─ simulation/
@@ -295,30 +298,30 @@ A typical frame contains:
   "phase": "post_load_tick0",
   "mameFrame": 5,
   "player": {
-    "raw": "82",
-    "x": "78",
-    "y": "8B",
-    "sprite": "00",
-    "attr": "00",
-    "turnTargetX": "78",
-    "turnTargetY": "86",
-    "currentDir": "08"
+	"raw": "82",
+	"x": "78",
+	"y": "8B",
+	"sprite": "00",
+	"attr": "00",
+	"turnTargetX": "78",
+	"turnTargetY": "86",
+	"currentDir": "08"
   },
   "enemies": [
-    {
-      "slot": 0,
-      "raw": "82",
-      "x": "58",
-      "y": "86",
-      "currentDir": "08"
-    }
+	{
+	  "slot": 0,
+	  "raw": "82",
+	  "x": "58",
+	  "y": "86",
+	  "currentDir": "08"
+	}
   ],
   "gates": [
-    {
-      "gate_id": 0,
-      "pivot": { "x": 3, "y": 2 },
-      "currentOrientation": "Horizontal"
-    }
+	{
+	  "gate_id": 0,
+	  "pivot": { "x": 3, "y": 2 },
+	  "currentOrientation": "Horizontal"
+	}
   ]
 }
 ```
@@ -473,7 +476,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.14: simulation adapter interface, Lady Bug adapter skeleton, simulation state, reference environment sync, and reference-direction enemy stepping added.
+Status after v0.6.17: simulation adapter interface, Lady Bug adapter skeleton, simulation state, reference environment sync, reference-direction enemy stepping, and comparison filtering added.
 
 Implemented:
 
@@ -491,12 +494,14 @@ Implemented:
 - the tick hook currently syncs player, input ports, gates, and timers from MAME as reference state;
 - active enemies move one pixel using the MAME direction;
 - the comparison source summary now reports `Lady Bug reference-direction step`;
-- the current expected first mismatch is now typically in `EnemyWork`, not in basic enemy position.
+- the current expected first mismatch is now typically in `EnemyWork`, not in basic enemy position;
+- `EnemyWork` mismatches can be ignored temporarily through the comparison window;
+- when this filter removes all mismatches, the console reports that no remaining mismatch exists after applying filters.
 
 Remaining v0.6 work:
 
+- start reproducing `enemyWork`, beginning with `tempDir`;
 - replace the reference direction with real enemy direction decision logic;
-- replace placeholder enemyWork logic with real state advancement;
 - reuse or port the enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize gates, maze, player position, enemies, timers, chase state, and enemy work state from the MAME trace;

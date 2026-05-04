@@ -11,6 +11,14 @@ public static class TraceComparisonRunner
         IReadOnlyList<EnemyTraceFrame> referenceFrames,
         IReadOnlyList<SimulationFrame> simulationFrames)
     {
+        return Compare(referenceFrames, simulationFrames, new TraceComparisonOptions());
+    }
+
+    public static TraceComparisonResult Compare(
+        IReadOnlyList<EnemyTraceFrame> referenceFrames,
+        IReadOnlyList<SimulationFrame> simulationFrames,
+        TraceComparisonOptions options)
+    {
         var result = new TraceComparisonResult();
         int count = Math.Min(referenceFrames.Count, simulationFrames.Count);
         result.ComparedFrameCount = count;
@@ -60,7 +68,28 @@ public static class TraceComparisonRunner
                 result.Frames.Add(comparisonFrame);
         }
 
+        ApplyOptions(result, options);
         return result;
+    }
+
+    private static void ApplyOptions(TraceComparisonResult result, TraceComparisonOptions options)
+    {
+        if (!options.HasActiveFilters)
+            return;
+
+        for (int i = result.Frames.Count - 1; i >= 0; i--)
+        {
+            ComparisonFrame frame = result.Frames[i];
+
+            for (int j = frame.Mismatches.Count - 1; j >= 0; j--)
+            {
+                if (options.ShouldIgnore(frame.Mismatches[j]))
+                    frame.Mismatches.RemoveAt(j);
+            }
+
+            if (frame.Mismatches.Count == 0)
+                result.Frames.RemoveAt(i);
+        }
     }
 
     private static void CompareFrameHeader(EnemyTraceFrame reference, SimulationFrame simulation, ComparisonFrame comparison)

@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.13: Lady Bug adapter advances active enemies with reference direction; enemyWork is still pending.");
+        Log("v0.6.17: filtered comparison result message adjusted.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -912,7 +912,7 @@ public partial class EnemyTraceSimulatorWindow : Control
             Transient = false,
             Exclusive = false,
             Unresizable = false,
-            MinSize = new Vector2I(520, 310)
+            MinSize = new Vector2I(560, 350)
         };
 
         var margin = new MarginContainer();
@@ -938,9 +938,17 @@ public partial class EnemyTraceSimulatorWindow : Control
         };
         root.AddChild(explanation);
 
-        AddSimulationAdapterButton(root, new IdentityTraceSimulationAdapter(), "Run identity comparison");
-        AddSimulationAdapterButton(root, new InjectedMismatchSimulationAdapter(), "Run injected mismatch test");
-        AddSimulationAdapterButton(root, new LadyBugEnemySimulationAdapter(), "Run Lady Bug adapter skeleton");
+        var ignoreEnemyWorkCheckBox = new CheckBox
+        {
+            Text = "Ignore EnemyWork mismatches",
+            TooltipText = "Useful for validating movement while enemyWork/decision-state simulation is still pending.",
+            ButtonPressed = false
+        };
+        root.AddChild(ignoreEnemyWorkCheckBox);
+
+        AddSimulationAdapterButton(root, new IdentityTraceSimulationAdapter(), "Run identity comparison", ignoreEnemyWorkCheckBox);
+        AddSimulationAdapterButton(root, new InjectedMismatchSimulationAdapter(), "Run injected mismatch test", ignoreEnemyWorkCheckBox);
+        AddSimulationAdapterButton(root, new LadyBugEnemySimulationAdapter(), "Run Lady Bug adapter skeleton", ignoreEnemyWorkCheckBox);
 
         var closeRow = new HBoxContainer
         {
@@ -959,10 +967,10 @@ public partial class EnemyTraceSimulatorWindow : Control
         closeRow.AddChild(closeButton);
 
         AddChild(compareWindow);
-        compareWindow.PopupCentered(new Vector2I(600, 360));
+        compareWindow.PopupCentered(new Vector2I(640, 400));
     }
 
-    private void AddSimulationAdapterButton(VBoxContainer root, IEnemySimulationAdapter adapter, string text)
+    private void AddSimulationAdapterButton(VBoxContainer root, IEnemySimulationAdapter adapter, string text, CheckBox ignoreEnemyWorkCheckBox)
     {
         var button = new Button
         {
@@ -972,25 +980,44 @@ public partial class EnemyTraceSimulatorWindow : Control
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
 
-        button.Pressed += () => RunComparison(adapter);
+        button.Pressed += () => RunComparison(adapter, CreateComparisonOptions(ignoreEnemyWorkCheckBox));
         root.AddChild(button);
     }
 
-    private void RunComparison(IEnemySimulationAdapter adapter)
+    private static TraceComparisonOptions CreateComparisonOptions(CheckBox ignoreEnemyWorkCheckBox)
+    {
+        return new TraceComparisonOptions
+        {
+            IgnoreEnemyWork = ignoreEnemyWorkCheckBox.ButtonPressed
+        };
+    }
+
+    private void RunComparison(IEnemySimulationAdapter adapter, TraceComparisonOptions options)
     {
         SimulationAdapterResult simulationResult = adapter.Run(_frames);
-        TraceComparisonResult result = TraceComparisonRunner.Compare(_frames, simulationResult.Frames);
+        TraceComparisonResult result = TraceComparisonRunner.Compare(_frames, simulationResult.Frames, options);
 
         Log($"Comparison [{adapter.Name}]: comparedFrames={result.ComparedFrameCount}, mismatches={result.MismatchCount}");
 
         if (!string.IsNullOrWhiteSpace(simulationResult.Summary))
             Log($"Simulation source: {simulationResult.Summary}");
 
+        if (!string.IsNullOrWhiteSpace(options.Summary))
+            Log($"Comparison options: {options.Summary}");
+
         if (!result.HasMismatch || result.FirstMismatch == null)
         {
-            Log(adapter.ExpectedToMismatch
-                ? "Comparison result: no mismatch found, but this adapter expected one."
-                : "Comparison result: no mismatch. Pipeline is valid.");
+            if (options.HasActiveFilters)
+            {
+                Log("Comparison result: no remaining mismatch after applying filters.");
+            }
+            else
+            {
+                Log(adapter.ExpectedToMismatch
+                    ? "Comparison result: no mismatch found, but this adapter expected one."
+                    : "Comparison result: no mismatch. Pipeline is valid.");
+            }
+
             return;
         }
 

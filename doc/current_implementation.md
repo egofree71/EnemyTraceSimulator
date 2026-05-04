@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.14  
+**Current package version:** v0.6.17  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -168,6 +168,7 @@ Current role:
 - advances the adapter state with a first `AdvanceOneTick()` hook;
 - synchronizes reference gates and timers during adapter playback;
 - advances active enemies by one pixel using the MAME reference direction;
+- supports filtering `EnemyWork` mismatches during comparison;
 - displays the status line below the two boards to avoid toolbar overflow;
 - writes messages to the bottom console and to Godot output.
 
@@ -586,6 +587,7 @@ When **Compare** is pressed:
 - **Run injected mismatch test** uses `InjectedMismatchSimulationAdapter` and deliberately alters the first active enemy X coordinate by one pixel;
 - the injected test is expected to report a mismatch;
 - **Run Lady Bug adapter skeleton** uses `LadyBugEnemySimulationAdapter`; it builds a typed initial state, creates a `LadyBugSimulationState`, calls `AdvanceOneTick()` for later frames, syncs reference player/ports/gates/timers, advances active enemies by one pixel using the MAME direction, and generates frames from that state;
+- **Ignore EnemyWork mismatches** filters `EnemyWork` mismatches after comparison, which is useful while validating movement separately from decision-state reconstruction;
 - the console reports compared frame count and mismatch count;
 - comparison currently covers actors, gates, metadata, `enemyWork`, timers, and ports;
 - if a mismatch is found, the first mismatch is reported and the viewer jumps to that frame.
@@ -646,6 +648,7 @@ Use `Ctrl + Home` to restore that default.
 - First tick-advance hook syncing player and ports from the reference trace.
 - Reference environment sync for gates and timers.
 - Reference-direction enemy stepping for active enemies.
+- Comparison option to ignore `EnemyWork` mismatches.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -852,7 +855,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.14: simulation adapter interface, first Lady Bug adapter skeleton, simulation state, reference environment sync, and reference-direction enemy stepping added.
+Status after v0.6.17: simulation adapter interface, first Lady Bug adapter skeleton, simulation state, reference environment sync, reference-direction enemy stepping, and comparison filtering added.
 
 Implemented:
 
@@ -870,12 +873,14 @@ Implemented:
 - the current tick hook syncs player, ports, gates, and timers from the MAME reference trace;
 - active enemies are advanced by one pixel using the MAME reference direction;
 - adapter startup/version text and comparison summary were updated to reflect this sync behavior;
-- the current expected first mismatch is typically `EnemyWork.tempDir`, showing that basic coordinate stepping has passed the first frame where an enemy moves.
+- the current expected first mismatch is typically `EnemyWork.tempDir`, showing that basic coordinate stepping has passed the first frame where an enemy moves;
+- `EnemyWork` mismatches can be temporarily filtered from the comparison;
+- when `EnemyWork` is ignored, the current reference trace has no remaining mismatch for the compared fields.
 
 Planned next changes:
 
+- start reproducing `enemyWork`, beginning with `tempDir`;
 - replace the MAME reference direction with real enemy direction decision logic;
-- replace the placeholder enemyWork update with real state advancement;
 - reuse or port the existing enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize the simulation from the MAME trace:
@@ -888,7 +893,7 @@ Planned next changes:
   - enemy work state, if required;
 - advance one tick at a time;
 - replace the MAME reference direction with real enemy direction decision logic;
-- replace placeholder enemyWork state with real state advancement;
+- replace placeholder enemyWork state with real state advancement, beginning with `tempDir`;
 - compare simulated enemy positions and directions to MAME.
 
 ### v0.7: mismatch visualization
