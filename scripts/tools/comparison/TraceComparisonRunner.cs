@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 /// <summary>
 /// Compares a MAME reference trace against a simulation-produced frame sequence.
-/// v0.5 intentionally keeps this strict and simple.
+/// v0.5 intentionally keeps this strict and explicit.
 /// </summary>
 public static class TraceComparisonRunner
 {
@@ -52,6 +52,9 @@ public static class TraceComparisonRunner
             ComparePlayer(referenceFrame.player, simulationFrame.Player, comparisonFrame);
             CompareEnemies(referenceFrame, simulationFrame, comparisonFrame);
             CompareGates(referenceFrame, simulationFrame, comparisonFrame);
+            CompareEnemyWork(referenceFrame.enemyWork, simulationFrame.EnemyWork, comparisonFrame);
+            CompareTimers(referenceFrame.timers, simulationFrame.Timers, comparisonFrame);
+            ComparePorts(referenceFrame.ports, simulationFrame.Ports, comparisonFrame);
 
             if (comparisonFrame.HasMismatch)
                 result.Frames.Add(comparisonFrame);
@@ -62,16 +65,12 @@ public static class TraceComparisonRunner
 
     private static void CompareFrameHeader(EnemyTraceFrame reference, SimulationFrame simulation, ComparisonFrame comparison)
     {
-        if (reference.frame != simulation.Tick)
-        {
-            AddMismatch(
-                comparison,
-                TraceMismatchKind.Frame,
-                "tick",
-                reference.frame.ToString(),
-                simulation.Tick.ToString(),
-                "Frame tick differs.");
-        }
+        CompareInt(reference.frame, simulation.Tick, "tick", TraceMismatchKind.Frame, comparison);
+        CompareString(reference.schema, simulation.Schema, "schema", TraceMismatchKind.Metadata, comparison);
+        CompareString(reference.phase, simulation.Phase, "phase", TraceMismatchKind.Metadata, comparison);
+        CompareInt(reference.mameFrame, simulation.MameFrame, "mameFrame", TraceMismatchKind.Metadata, comparison);
+        CompareString(reference.pc, simulation.Pc, "pc", TraceMismatchKind.Metadata, comparison);
+        CompareString(reference.r, simulation.R, "r", TraceMismatchKind.Metadata, comparison);
     }
 
     private static void ComparePlayer(EnemyTraceActor? reference, SimulationActorState? simulation, ComparisonFrame comparison)
@@ -142,42 +141,87 @@ public static class TraceComparisonRunner
                 continue;
             }
 
-            if (!string.Equals(referenceGate.orientation, simulationGate.Orientation, StringComparison.OrdinalIgnoreCase))
-            {
-                AddMismatch(
-                    comparison,
-                    TraceMismatchKind.Gate,
-                    "orientation",
-                    referenceGate.orientation ?? string.Empty,
-                    simulationGate.Orientation ?? string.Empty,
-                    $"Gate {referenceGate.gate_id} orientation differs.",
-                    gateId: referenceGate.gate_id);
-            }
-
-            if (referenceGate.pivot_x != simulationGate.PivotX)
-            {
-                AddMismatch(
-                    comparison,
-                    TraceMismatchKind.Gate,
-                    "pivot_x",
-                    referenceGate.pivot_x.ToString(),
-                    simulationGate.PivotX.ToString(),
-                    $"Gate {referenceGate.gate_id} pivot X differs.",
-                    gateId: referenceGate.gate_id);
-            }
-
-            if (referenceGate.pivot_y != simulationGate.PivotY)
-            {
-                AddMismatch(
-                    comparison,
-                    TraceMismatchKind.Gate,
-                    "pivot_y",
-                    referenceGate.pivot_y.ToString(),
-                    simulationGate.PivotY.ToString(),
-                    $"Gate {referenceGate.gate_id} pivot Y differs.",
-                    gateId: referenceGate.gate_id);
-            }
+            CompareString(referenceGate.orientation, simulationGate.Orientation, "orientation", TraceMismatchKind.Gate, comparison, gateId: referenceGate.gate_id);
+            CompareInt(referenceGate.pivot_x, simulationGate.PivotX, "pivot_x", TraceMismatchKind.Gate, comparison, gateId: referenceGate.gate_id);
+            CompareInt(referenceGate.pivot_y, simulationGate.PivotY, "pivot_y", TraceMismatchKind.Gate, comparison, gateId: referenceGate.gate_id);
         }
+    }
+
+    private static void CompareEnemyWork(EnemyTraceEnemyWorkState? reference, SimulationEnemyWorkState? simulation, ComparisonFrame comparison)
+    {
+        if (reference == null && simulation == null)
+            return;
+
+        if (reference == null || simulation == null)
+        {
+            AddMismatch(
+                comparison,
+                TraceMismatchKind.EnemyWork,
+                "enemyWork",
+                reference == null ? "null" : "present",
+                simulation == null ? "null" : "present",
+                "Enemy work presence differs.");
+            return;
+        }
+
+        CompareInt(reference.tempDir, simulation.TempDir, "tempDir", TraceMismatchKind.EnemyWork, comparison);
+        CompareInt(reference.tempX, simulation.TempX, "tempX", TraceMismatchKind.EnemyWork, comparison);
+        CompareInt(reference.tempY, simulation.TempY, "tempY", TraceMismatchKind.EnemyWork, comparison);
+        CompareInt(reference.rejectedMask, simulation.RejectedMask, "rejectedMask", TraceMismatchKind.EnemyWork, comparison);
+        CompareInt(reference.fallbackMask, simulation.FallbackMask, "fallbackMask", TraceMismatchKind.EnemyWork, comparison);
+        CompareInt(reference.chaseRoundRobin, simulation.ChaseRoundRobin, "chaseRoundRobin", TraceMismatchKind.EnemyWork, comparison);
+        CompareIntList(reference.preferred, simulation.Preferred, "preferred", TraceMismatchKind.EnemyWork, comparison);
+        CompareIntList(reference.chaseTimers, simulation.ChaseTimers, "chaseTimers", TraceMismatchKind.EnemyWork, comparison);
+    }
+
+    private static void CompareTimers(EnemyTraceTimersState? reference, SimulationTimersState? simulation, ComparisonFrame comparison)
+    {
+        if (reference == null && simulation == null)
+            return;
+
+        if (reference == null || simulation == null)
+        {
+            AddMismatch(
+                comparison,
+                TraceMismatchKind.Timer,
+                "timers",
+                reference == null ? "null" : "present",
+                simulation == null ? "null" : "present",
+                "Timer presence differs.");
+            return;
+        }
+
+        CompareInt(reference.timer61B4, simulation.Timer61B4, "61B4", TraceMismatchKind.Timer, comparison);
+        CompareInt(reference.timer61B5, simulation.Timer61B5, "61B5", TraceMismatchKind.Timer, comparison);
+        CompareInt(reference.timer61B6, simulation.Timer61B6, "61B6", TraceMismatchKind.Timer, comparison);
+        CompareInt(reference.timer61B7, simulation.Timer61B7, "61B7", TraceMismatchKind.Timer, comparison);
+        CompareInt(reference.timer61B8, simulation.Timer61B8, "61B8", TraceMismatchKind.Timer, comparison);
+        CompareInt(reference.timer61B9, simulation.Timer61B9, "61B9", TraceMismatchKind.Timer, comparison);
+        CompareInt(reference.freeze61E1, simulation.Freeze61E1, "freeze61E1", TraceMismatchKind.Timer, comparison);
+        CompareInt(reference.collectibleColorCounter6199, simulation.CollectibleColorCounter6199, "collectibleColorCounter6199", TraceMismatchKind.Timer, comparison);
+    }
+
+    private static void ComparePorts(EnemyTracePortsState? reference, SimulationPortsState? simulation, ComparisonFrame comparison)
+    {
+        if (reference == null && simulation == null)
+            return;
+
+        if (reference == null || simulation == null)
+        {
+            AddMismatch(
+                comparison,
+                TraceMismatchKind.Port,
+                "ports",
+                reference == null ? "null" : "present",
+                simulation == null ? "null" : "present",
+                "Port presence differs.");
+            return;
+        }
+
+        CompareInt(reference.in0_9000, simulation.In0_9000, "in0_9000", TraceMismatchKind.Port, comparison);
+        CompareInt(reference.in1_9001, simulation.In1_9001, "in1_9001", TraceMismatchKind.Port, comparison);
+        CompareInt(reference.dsw0_9002, simulation.Dsw0_9002, "dsw0_9002", TraceMismatchKind.Port, comparison);
+        CompareInt(reference.dsw1_9003, simulation.Dsw1_9003, "dsw1_9003", TraceMismatchKind.Port, comparison);
     }
 
     private static void CompareActor(
@@ -200,7 +244,8 @@ public static class TraceComparisonRunner
         string field,
         TraceMismatchKind kind,
         ComparisonFrame comparison,
-        int? slot = null)
+        int? slot = null,
+        int? gateId = null)
     {
         if (expected == actual)
             return;
@@ -212,7 +257,8 @@ public static class TraceComparisonRunner
             expected.ToString("X2"),
             actual.ToString("X2"),
             $"{kind} {field} differs.",
-            slot: slot);
+            slot: slot,
+            gateId: gateId);
     }
 
     private static void CompareString(
@@ -221,7 +267,8 @@ public static class TraceComparisonRunner
         string field,
         TraceMismatchKind kind,
         ComparisonFrame comparison,
-        int? slot = null)
+        int? slot = null,
+        int? gateId = null)
     {
         if (string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
             return;
@@ -233,7 +280,8 @@ public static class TraceComparisonRunner
             expected ?? string.Empty,
             actual ?? string.Empty,
             $"{kind} {field} differs.",
-            slot: slot);
+            slot: slot,
+            gateId: gateId);
     }
 
     private static void CompareBool(
@@ -255,6 +303,49 @@ public static class TraceComparisonRunner
             actual.ToString(),
             $"{kind} {field} differs.",
             slot: slot);
+    }
+
+    private static void CompareIntList(
+        IReadOnlyList<int> expected,
+        IReadOnlyList<int> actual,
+        string field,
+        TraceMismatchKind kind,
+        ComparisonFrame comparison)
+    {
+        if (expected.Count != actual.Count)
+        {
+            AddMismatch(
+                comparison,
+                kind,
+                field,
+                FormatIntList(expected),
+                FormatIntList(actual),
+                $"{kind} {field} count differs.");
+            return;
+        }
+
+        for (int i = 0; i < expected.Count; i++)
+        {
+            if (expected[i] == actual[i])
+                continue;
+
+            AddMismatch(
+                comparison,
+                kind,
+                $"{field}[{i}]",
+                expected[i].ToString("X2"),
+                actual[i].ToString("X2"),
+                $"{kind} {field}[{i}] differs.");
+        }
+    }
+
+    private static string FormatIntList(IReadOnlyList<int> values)
+    {
+        var formatted = new List<string>(values.Count);
+        foreach (int value in values)
+            formatted.Add(value.ToString("X2"));
+
+        return string.Join(",", formatted);
     }
 
     private static SimulationActorState? FindSimulationEnemy(SimulationFrame frame, int slot)

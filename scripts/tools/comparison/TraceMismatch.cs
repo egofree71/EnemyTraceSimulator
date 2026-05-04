@@ -17,8 +17,12 @@ public sealed class TraceMismatch
 public enum TraceMismatchKind
 {
     Frame,
+    Metadata,
     Player,
     Enemy,
     Gate,
+    EnemyWork,
+    Timer,
+    Port,
     Count
 }

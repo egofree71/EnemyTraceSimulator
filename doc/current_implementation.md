@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.5.4  
+**Current package version:** v0.5.6  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -161,6 +161,7 @@ Current role:
 - supports condition-based trace search from the Find window;
 - runs an initial comparison pipeline through the Compare button;
 - opens a comparison test window with identity and injected-mismatch checks;
+- compares frame metadata, enemyWork, timers, and ports;
 - displays the status line below the two boards to avoid toolbar overflow;
 - writes messages to the bottom console and to Godot output.
 
@@ -578,6 +579,7 @@ When **Compare** is pressed:
 - **Run injected mismatch test** deliberately alters the first active enemy X coordinate by one pixel;
 - the injected test is expected to report a mismatch;
 - the console reports compared frame count and mismatch count;
+- comparison currently covers actors, gates, metadata, `enemyWork`, timers, and ports;
 - if a mismatch is found, the first mismatch is reported and the viewer jumps to that frame.
 
 ### 8.6 Player debug workflow
@@ -629,6 +631,7 @@ Use `Ctrl + Home` to restore that default.
 - Initial comparison data model.
 - Identity trace comparison through the Compare button.
 - Injected mismatch comparison test.
+- Diagnostic state comparison: metadata, enemyWork, timers, ports.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -805,19 +808,23 @@ Remaining v0.4 work:
 
 ### v0.5: comparison data model
 
-Status after v0.5.4: initial comparison model, identity comparison, and injected mismatch test implemented.
+Status after v0.5.6: initial comparison model, identity comparison, injected mismatch test, and diagnostic state comparison implemented.
 
 Implemented:
 
 - `SimulationFrame`;
 - `SimulationActorState`;
 - `SimulationGateState`;
+- `SimulationEnemyWorkState`;
+- `SimulationTimersState`;
+- `SimulationPortsState`;
 - `ComparisonFrame`;
-- `TraceMismatch` and `TraceMismatchKind`;
+- `TraceMismatch` and `TraceMismatchKind`, including `Metadata`, `EnemyWork`, `Timer`, and `Port`;
 - `TraceComparisonResult`;
 - `TraceComparisonRunner`;
 - `TraceSimulationStub` identity source;
 - injected mismatch source that alters the first active enemy X coordinate;
+- comparison of frame metadata, `enemyWork`, timers, and ports;
 - toolbar **Compare** button;
 - comparison test window;
 - console report with compared frame count, mismatch count, and first mismatch when present;
@@ -826,8 +833,8 @@ Implemented:
 
 Remaining v0.5 work:
 
-- add richer mismatch categories for timers and metadata if needed;
-- keep the left board trace-driven until the comparison model is stable.
+- keep the left board trace-driven until the comparison model is stable;
+- then move to v0.6: C# enemy simulation adapter.
 
 ### v0.6: C# enemy simulation adapter
 
