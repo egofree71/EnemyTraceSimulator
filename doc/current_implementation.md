@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.3.2  
+**Current package version:** v0.3.4  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -59,6 +59,7 @@ The current implementation covers steps 1 to 4 partially. It can launch MAME fro
 │        ├─ EnemyTraceEnemyWorkState.cs
 │        ├─ EnemyTraceTimersState.cs
 │        ├─ EnemyTracePortsState.cs
+│        ├─ EnemyTraceRawMemoryState.cs
 │        ├─ MameTraceCoordinates.cs
 │        └─ MameTraceLoader.cs
 ├─ tools/
@@ -296,6 +297,7 @@ EnemyTraceGateState.cs
 EnemyTraceEnemyWorkState.cs
 EnemyTraceTimersState.cs
 EnemyTracePortsState.cs
+EnemyTraceRawMemoryState.cs
 MameTraceCoordinates.cs
 MameTraceLoader.cs
 ```
@@ -310,9 +312,9 @@ MameTraceLoader.cs
 - `enemyWork` diagnostic RAM;
 - timers;
 - input ports;
-- the optional `logicalMaze6200_62AF` block.
+- optional raw memory blocks such as `logicalMaze6200_62AF`, `ram6000_62AF`, `vramD000_D3FF`, and `colorD400_D7FF`.
 
-It does not yet expose dedicated typed models for all top-level metadata or optional raw memory blocks. Those remain future v0.3 cleanup work.
+It does not yet expose dedicated typed models for all possible future top-level metadata fields. Those remain future v0.3 cleanup work if the trace schema grows.
 
 `MameTraceCoordinates` currently defines the actor Y mirror:
 
@@ -449,6 +451,7 @@ EnemyTraceGateState
 EnemyTraceEnemyWorkState
 EnemyTraceTimersState
 EnemyTracePortsState
+EnemyTraceRawMemoryState
 MameTraceCoordinates
 MameTraceLoader
 ```
@@ -457,7 +460,7 @@ This means `EnemyTraceSimulatorWindow.cs` is no longer responsible for JSON pars
 
 Current limitation:
 
-- top-level metadata and optional raw memory blocks are still only partially represented.
+- top-level metadata is still only partially represented beyond the currently used fields.
 
 ## 8. Current behavior
 
@@ -505,7 +508,7 @@ When **Charger trace** is pressed:
 4. frame data is stored in memory;
 5. frame 0 is displayed on both boards;
 6. the status label is updated;
-7. the console reports the frame count, gate count, first player position, and a compact diagnostic scan of the first frames when available.
+7. the console reports the frame count, gate count, metadata, raw memory block sizes, first player position, and a compact diagnostic scan of the first frames when available.
 
 ### 8.5 Playback
 
@@ -564,6 +567,7 @@ Use `Ctrl + Home` to restore that default.
 - JSONL trace loading through `MameTraceLoader`.
 - Trace model classes extracted into `scripts/tools/trace/`.
 - Diagnostic trace blocks parsed: `enemyWork`, timers, and ports.
+- Optional raw memory blocks parsed into `EnemyTraceRawMemoryState`.
 - Frame playback at 60 Hz.
 - Manual tick/frame stepping.
 - Direct tick jump field.
@@ -697,7 +701,7 @@ The next steps should focus on making the trace and comparison architecture clea
 
 ### v0.3: trace model cleanup and loader extraction
 
-Status after v0.3.2: trace extraction and first diagnostic DTO pass done.
+Status after v0.3.4: trace extraction, diagnostic DTOs, and raw memory block parsing done.
 
 Implemented:
 
@@ -708,13 +712,13 @@ Implemented:
 - `EnemyTraceSimulatorWindow.cs` no longer owns trace parsing or trace model definitions;
 - current UI behavior kept unchanged;
 - `enemyWork`, timers, and ports parsed into dedicated DTOs;
-- first-frame enemy scan logs compact enemy-work diagnostics.
+- optional raw memory blocks parsed into `EnemyTraceRawMemoryState`;
+- first-frame enemy scan logs compact enemy-work diagnostics;
+- trace loading logs raw memory block sizes when present.
 
 Remaining v0.3 cleanup:
 
-- add explicit DTOs for:
-  - top-level metadata;
-  - optional raw memory blocks;
+- add explicit DTOs for top-level metadata if needed;
 - document which fields are source-of-truth and which are visual/debug fields;
 - add loader-focused sample trace checks or tests.
 

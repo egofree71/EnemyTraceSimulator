@@ -17,5 +17,6 @@ public sealed class EnemyTraceFrame
     public EnemyTraceEnemyWorkState? enemyWork { get; set; }
     public EnemyTraceTimersState? timers { get; set; }
     public EnemyTracePortsState? ports { get; set; }
+    public EnemyTraceRawMemoryState? rawMemory { get; set; }
     public string? logicalMaze6200_62AF { get; set; }
 }

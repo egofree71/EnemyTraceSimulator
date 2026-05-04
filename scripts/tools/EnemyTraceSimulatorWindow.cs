@@ -58,7 +58,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.3.2: trace diagnostic blocks parsed. Ctrl+E toggles inactive enemy slots for diagnostics.");
+        Log("v0.3.4: raw memory trace blocks parsed. Ctrl+E toggles inactive enemy slots for diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -318,6 +318,26 @@ public partial class EnemyTraceSimulatorWindow : Control
         return count;
     }
 
+
+    private void LogFrameMetadata(EnemyTraceFrame frame)
+    {
+        Log($"Frame 0 metadata: schema={frame.schema} phase={frame.phase} mameFrame={frame.mameFrame} pc={frame.pc} r={frame.r}");
+    }
+
+    private void LogRawMemorySummary(EnemyTraceFrame frame)
+    {
+        if (frame.rawMemory == null)
+        {
+            Log("Frame 0 memory blocks: none");
+            return;
+        }
+
+        Log($"Frame 0 memory blocks: " +
+            $"maze={frame.rawMemory.LogicalMazeByteCount} bytes, " +
+            $"ram={frame.rawMemory.RamByteCount} bytes, " +
+            $"vram={frame.rawMemory.VramByteCount} bytes, " +
+            $"color={frame.rawMemory.ColorByteCount} bytes");
+    }
 
     private void LogEnemyScan(int maxFrames)
     {
@@ -708,6 +728,8 @@ public partial class EnemyTraceSimulatorWindow : Control
         Log($"Trace loaded: {path}");
         Log($"Frames: {_frames.Count}");
         Log($"Gates in first frame: {_frames[0].gates?.Count ?? 0}");
+        LogFrameMetadata(_frames[0]);
+        LogRawMemorySummary(_frames[0]);
         Log($"Active enemies in frame 0: {CountActiveEnemies(_frames[0])}");
         Log($"Known enemy slots in frame 0: {CountKnownEnemies(_frames[0])}");
 

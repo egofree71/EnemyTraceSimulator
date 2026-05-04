@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.3.2**
+Current package version: **v0.3.4**
 
 Implemented now:
 
@@ -29,6 +29,7 @@ Implemented now:
 - JSONL trace loading through `MameTraceLoader`;
 - trace model classes extracted under `scripts/tools/trace/`;
 - diagnostic trace blocks parsed into dedicated classes: `EnemyTraceEnemyWorkState`, `EnemyTraceTimersState`, and `EnemyTracePortsState`;
+- optional raw memory trace blocks parsed into `EnemyTraceRawMemoryState`;
 - centralized MAME-to-Godot actor Y conversion through `MameTraceCoordinates`;
 - debug rendering of the logical 11 x 11 maze from `data/maze.json`;
 - rendering of rotating gates from the loaded trace;
@@ -192,6 +193,7 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │        ├─ EnemyTraceEnemyWorkState.cs
 │        ├─ EnemyTraceTimersState.cs
 │        ├─ EnemyTracePortsState.cs
+│        ├─ EnemyTraceRawMemoryState.cs
 │        ├─ MameTraceCoordinates.cs
 │        └─ MameTraceLoader.cs
 ├─ tools/
@@ -325,7 +327,7 @@ The next steps should now focus less on UI polish and more on making the trace p
 
 ### v0.3: trace model cleanup and loader extraction
 
-Status after v0.3.2: trace model extraction and first diagnostic DTO pass done.
+Status after v0.3.4: trace model extraction, diagnostic DTOs, and optional raw memory block parsing done.
 
 Implemented:
 
@@ -335,11 +337,13 @@ Implemented:
 - MAME-to-Godot actor Y conversion centralized in `MameTraceCoordinates`;
 - `EnemyTraceSimulatorWindow.cs` no longer owns JSON / JSONL parsing or trace DTO definitions;
 - `enemyWork`, `timers`, and `ports` are now parsed into dedicated classes;
-- the first-frame enemy scan now logs compact enemy-work diagnostics, including temporary direction, rejection mask, fallback mask, preferred directions, and chase timers.
+- optional raw memory blocks are parsed into `EnemyTraceRawMemoryState`;
+- the first-frame enemy scan now logs compact enemy-work diagnostics, including temporary direction, rejection mask, fallback mask, preferred directions, and chase timers;
+- trace loading logs a compact raw-memory block summary when those blocks are present.
 
 Remaining v0.3 cleanup:
 
-- add explicit DTOs for top-level metadata and optional raw memory blocks;
+- add explicit DTOs for top-level metadata if the trace schema grows further;
 - document which trace fields are source-of-truth and which are only visual/debug fields;
 - add small loader-focused tests or sample trace checks when the project structure is ready for tests.
 

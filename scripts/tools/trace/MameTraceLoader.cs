@@ -98,6 +98,8 @@ public static class MameTraceLoader
         if (element.TryGetProperty("ports", out JsonElement portsElement) && portsElement.ValueKind == JsonValueKind.Object)
             frame.ports = ParsePorts(portsElement);
 
+        frame.rawMemory = ParseRawMemory(element);
+
         return frame;
     }
 
@@ -191,6 +193,30 @@ public static class MameTraceLoader
             in1_9001 = ReadInt(element, "in1_9001", -1),
             dsw0_9002 = ReadInt(element, "dsw0_9002", -1),
             dsw1_9003 = ReadInt(element, "dsw1_9003", -1)
+        };
+    }
+
+    private static EnemyTraceRawMemoryState? ParseRawMemory(JsonElement element)
+    {
+        string logicalMaze = ReadString(element, "logicalMaze6200_62AF", string.Empty);
+        string ram = ReadString(element, "ram6000_62AF", string.Empty);
+        string vram = ReadString(element, "vramD000_D3FF", string.Empty);
+        string color = ReadString(element, "colorD400_D7FF", string.Empty);
+
+        if (string.IsNullOrWhiteSpace(logicalMaze) &&
+            string.IsNullOrWhiteSpace(ram) &&
+            string.IsNullOrWhiteSpace(vram) &&
+            string.IsNullOrWhiteSpace(color))
+        {
+            return null;
+        }
+
+        return new EnemyTraceRawMemoryState
+        {
+            logicalMaze6200_62AF = logicalMaze,
+            ram6000_62AF = ram,
+            vramD000_D3FF = vram,
+            colorD400_D7FF = color
         };
     }
 
