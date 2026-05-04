@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.6.10**
+Current package version: **v0.6.14**
 
 Implemented now:
 
@@ -169,7 +169,9 @@ After v0.6.5, the adapter no longer directly returns an identity simulation. It 
 
 After v0.6.7, `LadyBugSimulationState.AdvanceOneTick()` exists. It initially synchronized external inputs from the MAME reference trace, specifically the player state and input ports.
 
-After v0.6.10, `AdvanceOneTick()` also synchronizes gates and timers from the MAME reference trace. This makes the current Lady Bug adapter focus its expected divergence on enemies and enemyWork. Real enemy movement and enemyWork updates are still not implemented yet.
+After v0.6.10, `AdvanceOneTick()` also synchronizes gates and timers from the MAME reference trace. This makes the current Lady Bug adapter focus its expected divergence on enemies and enemyWork.
+
+After v0.6.14, active enemies are advanced by one pixel using the direction observed in the MAME trace. This is not yet the real enemy decision logic, but it validates the low-level coordinate movement convention. The expected first divergence now moves from enemy position to `enemyWork` or later decision-state fields.
 
 The status line is displayed below the two board views, not inside the toolbar. This keeps the toolbar stable even after a large trace is loaded.
 
@@ -435,6 +437,8 @@ Implemented:
 - player and input ports synchronized from the MAME reference trace during adapter playback;
 - gates and timers synchronized from the MAME reference trace during adapter playback;
 - adapter summary/version log updated to reflect the current sync behavior;
+- active enemies advanced by one pixel using the direction observed in the MAME trace;
+- comparison summary renamed to `Lady Bug reference-direction step`;
 - status line moved below the two boards to avoid toolbar overflow.
 
 Remaining v0.4 work:
@@ -469,7 +473,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.10: simulation adapter interface, Lady Bug adapter skeleton, simulation state, tick-advance hook, and reference environment sync added.
+Status after v0.6.14: simulation adapter interface, Lady Bug adapter skeleton, simulation state, reference environment sync, and reference-direction enemy stepping added.
 
 Implemented:
 
@@ -485,11 +489,14 @@ Implemented:
 - Lady Bug adapter now generates frames from its own simulation state instead of directly mirroring MAME;
 - `LadyBugSimulationState.AdvanceOneTick()` exists;
 - the tick hook currently syncs player, input ports, gates, and timers from MAME as reference state;
-- the startup/version log and adapter summary now reflect this behavior.
+- active enemies move one pixel using the MAME direction;
+- the comparison source summary now reports `Lady Bug reference-direction step`;
+- the current expected first mismatch is now typically in `EnemyWork`, not in basic enemy position.
 
 Remaining v0.6 work:
 
-- replace the placeholder enemy and enemyWork logic with real enemy movement state advancement;
+- replace the reference direction with real enemy direction decision logic;
+- replace placeholder enemyWork logic with real state advancement;
 - reuse or port the enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize gates, maze, player position, enemies, timers, chase state, and enemy work state from the MAME trace;

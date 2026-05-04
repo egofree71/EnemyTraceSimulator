@@ -4,7 +4,7 @@ using System.Collections.Generic;
 /// Mutable state owned by the future Lady Bug enemy simulation adapter.
 ///
 /// v0.6.7 adds the first tick-advance hook. It currently syncs external
-/// player, port, gate, and timer state from the reference trace but does not move enemies yet.
+/// player, port, gate, timer, and enemy control state from the reference trace. Active enemies are moved by one pixel using the reference direction.
 /// </summary>
 public sealed class LadyBugSimulationState
 {
@@ -38,13 +38,16 @@ public sealed class LadyBugSimulationState
     {
         SyncReferenceInputs(referenceFrame);
         SyncReferenceEnvironment(referenceFrame);
+        AdvanceEnemiesUsingReferenceControlState(referenceFrame);
 
         // Intentionally not updated yet:
-        // - enemies
+        // - enemy decision logic
         // - enemyWork
         //
-        // Later patches should replace this placeholder with the real Lady Bug
-        // enemy movement and enemy-work update sequence.
+        // This step only validates the low-level coordinate movement convention:
+        // an active enemy moves one pixel using the direction observed in MAME.
+        // Later patches should replace the reference direction with the real Lady Bug
+        // enemy decision and enemy-work update sequence.
     }
 
     private void SyncReferenceInputs(EnemyTraceFrame referenceFrame)
@@ -76,6 +79,121 @@ public sealed class LadyBugSimulationState
         Timers = referenceFrame.timers == null
             ? null
             : CopyTimers(referenceFrame.timers);
+    }
+
+    private void AdvanceEnemiesUsingReferenceControlState(EnemyTraceFrame referenceFrame)
+    {
+        if (referenceFrame.enemies == null)
+            return;
+
+        foreach (EnemyTraceActor referenceEnemy in referenceFrame.enemies)
+        {
+            SimulationActorState? enemy = FindEnemyBySlot(referenceEnemy.slot);
+
+            if (enemy == null)
+            {
+                Enemies.Add(CopyActor(referenceEnemy));
+                continue;
+            }
+
+            if (!referenceEnemy.active)
+            {
+                // Inactive slots can be reshuffled by the arcade object manager.
+                // They are not part of the movement validation target yet, so keep
+                // them aligned with the reference trace.
+                CopyActorInto(referenceEnemy, enemy);
+                continue;
+            }
+
+            if (!enemy.HasKnownPosition)
+            {
+                CopyActorInto(referenceEnemy, enemy);
+                continue;
+            }
+
+            enemy.Raw = referenceEnemy.raw;
+            enemy.Active = referenceEnemy.active;
+            enemy.Direction = referenceEnemy.dir;
+
+            MoveActorOnePixel(enemy, referenceEnemy.dir);
+        }
+    }
+
+    private SimulationActorState? FindEnemyBySlot(int slot)
+    {
+        foreach (SimulationActorState enemy in Enemies)
+        {
+            if (enemy.Slot == slot)
+                return enemy;
+        }
+
+        return null;
+    }
+
+    private static void MoveActorOnePixel(SimulationActorState actor, string? direction)
+    {
+        if (string.IsNullOrWhiteSpace(direction))
+            return;
+
+        if (!TryParseTraceByte(direction, out int directionValue))
+            return;
+
+        switch (directionValue)
+        {
+            case 0x01: // left
+                actor.X = (actor.X - 1) & 0xFF;
+                break;
+
+            case 0x02: // down in arcade visual space; MAME actor Y decreases
+                actor.Y = (actor.Y - 1) & 0xFF;
+                break;
+
+            case 0x04: // right
+                actor.X = (actor.X + 1) & 0xFF;
+                break;
+
+            case 0x08: // up in arcade visual space; MAME actor Y increases
+                actor.Y = (actor.Y + 1) & 0xFF;
+                break;
+        }
+    }
+
+    private static bool TryParseTraceByte(string? text, out int value)
+    {
+        value = 0;
+
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        string trimmed = text.Trim();
+
+        if (trimmed.StartsWith("0x", System.StringComparison.OrdinalIgnoreCase))
+            return int.TryParse(trimmed[2..], System.Globalization.NumberStyles.HexNumber, null, out value);
+
+        bool looksHex = trimmed.Length <= 2;
+        foreach (char c in trimmed)
+        {
+            if (!System.Uri.IsHexDigit(c))
+            {
+                looksHex = false;
+                break;
+            }
+        }
+
+        if (looksHex)
+            return int.TryParse(trimmed, System.Globalization.NumberStyles.HexNumber, null, out value);
+
+        return int.TryParse(trimmed, out value);
+    }
+
+    private static void CopyActorInto(EnemyTraceActor source, SimulationActorState destination)
+    {
+        destination.Slot = source.slot;
+        destination.Raw = source.raw;
+        destination.X = source.x;
+        destination.Y = source.y;
+        destination.Direction = source.dir;
+        destination.Active = source.active;
     }
 
     public SimulationFrame BuildFrame(int frameIndex, EnemyTraceFrame referenceFrame)

@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.10: Lady Bug adapter syncs reference player, ports, gates, and timers.");
+        Log("v0.6.13: Lady Bug adapter advances active enemies with reference direction; enemyWork is still pending.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -933,7 +933,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current Lady Bug adapter syncs reference player, ports, gates, and timers, but enemy movement is still a skeleton.",
+            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current adapter syncs reference player, ports, gates, timers, and advances active enemies using the MAME direction. enemyWork is still pending.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
