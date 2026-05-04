@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.4.6**
+Current package version: **v0.4.8**
 
 Implemented now:
 
@@ -153,7 +153,9 @@ The tick field is synchronized with playback. If the requested tick is not prese
 
 The **Dump** button opens a separate diagnostic window for the current frame. It includes metadata, player state, enemy slots, gates, enemy work RAM, timers, ports, and raw-memory block sizes. The main console remains a concise activity log.
 
-The **Find** button opens a separate navigation helper window. It can jump to the first active enemy, the first enemy direction change, the first active frame for a selected slot, the first direction change for a selected slot, and the first gate change. When jumping to the first gate change, the console now reports which gates changed orientation.
+The **Find** button opens a separate navigation helper window. It can jump to the first active enemy, the first enemy direction change, the first active frame for a selected slot, the first direction change for a selected slot, and the first gate change. When jumping to the first gate change, the console reports which gates changed orientation.
+
+The same window also includes a condition search area with **Find condition** and **Find next**. Current supported conditions include `enemyWork rejectedMask != 0`, `enemyWork fallbackMask != 0`, `enemyWork tempDir == value`, enemy direction checks, slot direction checks, and player direction checks.
 
 ## Important Godot .NET rebuild note
 
@@ -367,7 +369,7 @@ Remaining v0.3 cleanup:
 
 ### v0.4: trace inspection and diagnostic state
 
-Status after v0.4.6: current-frame dump window, trace navigation helpers, and gate-change diagnostics implemented.
+Status after v0.4.8: current-frame dump window, trace navigation helpers, gate-change diagnostics, and condition-based search implemented.
 
 Implemented:
 
@@ -381,7 +383,8 @@ Implemented:
 - separate trace navigation helper window;
 - helpers for first active enemy, first direction change, first active frame for a selected slot, first direction change for a selected slot, and first gate change;
 - gate-change diagnostics in the Dump window, comparing the selected frame with the previous frame;
-- console summary of the gates that changed when using **Find → First gate change**.
+- console summary of the gates that changed when using **Find → First gate change**;
+- condition-based search in the **Find** window.
 
 Remaining v0.4 work:
 

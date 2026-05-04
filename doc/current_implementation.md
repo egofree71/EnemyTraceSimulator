@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.4.6  
+**Current package version:** v0.4.8  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -156,6 +156,7 @@ Current role:
 - opens a separate current-frame diagnostic dump window;
 - opens a separate trace navigation helper window;
 - reports gate orientation changes between the selected frame and the previous frame;
+- supports condition-based trace search from the Find window;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -560,6 +561,8 @@ When **Find** is pressed:
 - the user can search the first direction change for a selected enemy slot;
 - the user can jump to the first gate change;
 - when jumping to the first gate change, the console reports the changed gate ids and orientation transitions;
+- the user can run condition-based searches with **Find condition** or **Find next**;
+- supported conditions currently include `enemyWork rejectedMask != 0`, `enemyWork fallbackMask != 0`, `enemyWork tempDir == value`, active enemy direction checks, selected-slot direction checks, and player direction checks;
 - the selected frame is displayed immediately and playback is paused.
 
 ### 8.6 Player debug workflow
@@ -607,6 +610,7 @@ Use `Ctrl + Home` to restore that default.
 - Current-frame diagnostic dump window.
 - Trace navigation helper window.
 - Gate-change diagnostics in frame dumps and Find results.
+- Condition-based trace search.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -761,7 +765,7 @@ Remaining v0.3 cleanup:
 
 ### v0.4: trace inspection and diagnostic state
 
-Status after v0.4.6: current-frame dump window, trace navigation helpers, and gate-change diagnostics implemented.
+Status after v0.4.8: current-frame dump window, trace navigation helpers, gate-change diagnostics, and condition-based search implemented.
 
 Implemented:
 
@@ -773,12 +777,13 @@ Implemented:
 - toolbar **Find** button;
 - navigation helpers for first active enemy, first direction change, selected-slot first active frame, selected-slot first direction change, and first gate change;
 - gate-change diagnostics comparing the selected frame to the previous frame;
-- console summary of gate ids and orientation transitions after **Find → First gate change**.
+- console summary of gate ids and orientation transitions after **Find → First gate change**;
+- condition-based search with **Find condition** and **Find next**.
 
 Remaining v0.4 work:
 
-- add a more generic condition-based search, if it becomes useful;
-- keep this phase read-only.
+- keep this phase read-only;
+- after this, the next roadmap phase is v0.5: comparison data model.
 
 ### v0.5: comparison data model
 

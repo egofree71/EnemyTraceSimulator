@@ -61,7 +61,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.4.6: gate-change diagnostics added.");
+        Log("v0.4.8: condition-based trace search added.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -1257,6 +1257,66 @@ public partial class EnemyTraceSimulatorWindow : Control
         slotRow.AddChild(slotSpin);
         root.AddChild(slotRow);
 
+        var conditionRow = new HBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        conditionRow.AddChild(new Label
+        {
+            Text = "Condition:",
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(110, 0)
+        });
+
+        var conditionOption = new OptionButton
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        conditionOption.AddItem("enemyWork rejectedMask != 0");
+        conditionOption.AddItem("enemyWork fallbackMask != 0");
+        conditionOption.AddItem("enemyWork tempDir == value");
+        conditionOption.AddItem("any active enemy dir == value");
+        conditionOption.AddItem("slot dir == value");
+        conditionOption.AddItem("slot active and dir == value");
+        conditionOption.AddItem("player dir == value");
+        conditionRow.AddChild(conditionOption);
+
+        var conditionValue = new LineEdit
+        {
+            Text = "08",
+            PlaceholderText = "hex / dir",
+            CustomMinimumSize = new Vector2(90, 34)
+        };
+        conditionRow.AddChild(conditionValue);
+        root.AddChild(conditionRow);
+
+        var conditionButtonRow = new HBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+
+        var findConditionButton = new Button
+        {
+            Text = "Find condition",
+            CustomMinimumSize = new Vector2(150, 36),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        findConditionButton.Pressed += () =>
+            JumpToConditionFrame(conditionOption.Selected, (int)slotSpin.Value, conditionValue.Text, startAfterCurrentFrame: false);
+
+        var findNextConditionButton = new Button
+        {
+            Text = "Find next",
+            CustomMinimumSize = new Vector2(120, 36),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        findNextConditionButton.Pressed += () =>
+            JumpToConditionFrame(conditionOption.Selected, (int)slotSpin.Value, conditionValue.Text, startAfterCurrentFrame: true);
+
+        conditionButtonRow.AddChild(findConditionButton);
+        conditionButtonRow.AddChild(findNextConditionButton);
+        root.AddChild(conditionButtonRow);
+
         var buttonGrid = new GridContainer
         {
             Columns = 2,
@@ -1301,7 +1361,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         closeRow.AddChild(closeButton);
 
         AddChild(findWindow);
-        findWindow.PopupCentered(new Vector2I(520, 360));
+        findWindow.PopupCentered(new Vector2I(620, 520));
     }
 
     private void JumpToFirstGateChangeFrame()
@@ -1311,6 +1371,142 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         if (frameIndex >= 0)
             Log(BuildGateChangeSummary(frameIndex));
+    }
+
+    private void JumpToConditionFrame(int conditionIndex, int slot, string valueText, bool startAfterCurrentFrame)
+    {
+        int frameIndex = FindConditionFrame(conditionIndex, slot, valueText, startAfterCurrentFrame, out string description);
+
+        if (frameIndex < 0)
+        {
+            Log($"Find: {description} not found.");
+            return;
+        }
+
+        JumpToFoundFrame(description, frameIndex);
+    }
+
+    private int FindConditionFrame(int conditionIndex, int slot, string valueText, bool startAfterCurrentFrame, out string description)
+    {
+        int startIndex = startAfterCurrentFrame
+            ? Math.Min(_currentFrameIndex + 1, _frames.Count)
+            : 0;
+
+        description = conditionIndex switch
+        {
+            0 => "enemyWork rejectedMask != 0",
+            1 => "enemyWork fallbackMask != 0",
+            2 => $"enemyWork tempDir == {valueText}",
+            3 => $"any active enemy dir == {valueText}",
+            4 => $"slot {slot} dir == {valueText}",
+            5 => $"slot {slot} active and dir == {valueText}",
+            6 => $"player dir == {valueText}",
+            _ => "unknown condition"
+        };
+
+        for (int i = startIndex; i < _frames.Count; i++)
+        {
+            if (FrameMatchesCondition(_frames[i], conditionIndex, slot, valueText))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static bool FrameMatchesCondition(EnemyTraceFrame frame, int conditionIndex, int slot, string valueText)
+    {
+        return conditionIndex switch
+        {
+            0 => frame.enemyWork?.rejectedMask > 0,
+            1 => frame.enemyWork?.fallbackMask > 0,
+            2 => ByteValueMatches(frame.enemyWork?.tempDir, valueText),
+            3 => AnyActiveEnemyDirectionMatches(frame, valueText),
+            4 => EnemySlotDirectionMatches(frame, slot, valueText, requireActive: false),
+            5 => EnemySlotDirectionMatches(frame, slot, valueText, requireActive: true),
+            6 => DirectionStringMatches(frame.player?.dir, valueText),
+            _ => false
+        };
+    }
+
+    private static bool AnyActiveEnemyDirectionMatches(EnemyTraceFrame frame, string valueText)
+    {
+        if (frame.enemies == null)
+            return false;
+
+        foreach (EnemyTraceActor enemy in frame.enemies)
+        {
+            if (enemy.active && DirectionStringMatches(enemy.dir, valueText))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool EnemySlotDirectionMatches(EnemyTraceFrame frame, int slot, string valueText, bool requireActive)
+    {
+        EnemyTraceActor? enemy = FindEnemyBySlot(frame, slot);
+
+        if (enemy == null)
+            return false;
+
+        if (requireActive && !enemy.active)
+            return false;
+
+        return DirectionStringMatches(enemy.dir, valueText);
+    }
+
+    private static bool DirectionStringMatches(string? actualDirection, string valueText)
+    {
+        if (string.IsNullOrWhiteSpace(actualDirection))
+            return false;
+
+        string actual = actualDirection.Trim();
+        string expected = valueText.Trim();
+
+        if (TryParseTraceByte(actual, out int actualByte) &&
+            TryParseTraceByte(expected, out int expectedByte))
+        {
+            return actualByte == expectedByte;
+        }
+
+        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ByteValueMatches(int? actualValue, string valueText)
+    {
+        if (!actualValue.HasValue || actualValue.Value < 0)
+            return false;
+
+        return TryParseTraceByte(valueText, out int expectedValue) &&
+               actualValue.Value == expectedValue;
+    }
+
+    private static bool TryParseTraceByte(string? text, out int value)
+    {
+        value = 0;
+
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        string trimmed = text.Trim();
+
+        if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return int.TryParse(trimmed[2..], System.Globalization.NumberStyles.HexNumber, null, out value);
+
+        bool looksHex = trimmed.Length <= 2;
+        foreach (char c in trimmed)
+        {
+            if (!Uri.IsHexDigit(c))
+            {
+                looksHex = false;
+                break;
+            }
+        }
+
+        if (looksHex)
+            return int.TryParse(trimmed, System.Globalization.NumberStyles.HexNumber, null, out value);
+
+        return int.TryParse(trimmed, out value);
     }
 
     private static void AddFindButton(GridContainer grid, string text, Action handler)
