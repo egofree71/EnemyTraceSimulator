@@ -100,6 +100,12 @@ allow_greater = true
 rounded = true
 editable = false
 
+[node name="DumpFrameButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+custom_minimum_size = Vector2(90, 38)
+layout_mode = 2
+text = "Dump"
+tooltip_text = "Afficher dans la console le détail de la frame courante"
+
 [node name="StatusLabel" type="Label" parent="Root/MainLayout/PlaybackControls"]
 layout_mode = 2
 size_flags_horizontal = 3

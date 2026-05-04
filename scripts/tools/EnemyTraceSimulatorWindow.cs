@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 
 /// <summary>
@@ -33,6 +34,7 @@ public partial class EnemyTraceSimulatorWindow : Control
     private Button? _pauseResumeButton;
     private Button? _stepButton;
     private SpinBox? _tickSpinBox;
+    private Button? _dumpFrameButton;
 
 
     private static readonly JsonSerializerOptions SettingsJsonOptions = new()
@@ -58,7 +60,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.3.4: raw memory trace blocks parsed. Ctrl+E toggles inactive enemy slots for diagnostics.");
+        Log("v0.4.2: dump windows use native subwindows and compact status text.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -130,6 +132,9 @@ public partial class EnemyTraceSimulatorWindow : Control
         _simulationBoard = GetNodeOrNull<EnemyTraceBoardView>("Root/MainLayout/BoardComparison/SimulationBoard");
         _mameBoard = GetNodeOrNull<EnemyTraceBoardView>("Root/MainLayout/BoardComparison/MameTraceBoard");
         _console = GetNodeOrNull<TextEdit>("Root/MainLayout/Console");
+        if (_console != null)
+            _console.WrapMode = TextEdit.LineWrappingMode.Boundary;
+
         _statusLabel = GetNodeOrNull<Label>("Root/MainLayout/PlaybackControls/StatusLabel");
         _settingsButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/SettingsButton");
         _launchMameLuaButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/LaunchMameLuaButton");
@@ -137,6 +142,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _pauseResumeButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/PauseResumeButton");
         _stepButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/StepButton");
         _tickSpinBox = GetNodeOrNull<SpinBox>("Root/MainLayout/PlaybackControls/TickSpinBox");
+        _dumpFrameButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/DumpFrameButton");
 
         if (_simulationBoard != null)
             _simulationBoard.BoardTitle = "Simulation C# / Godot";
@@ -170,6 +176,12 @@ public partial class EnemyTraceSimulatorWindow : Control
             "Avancer d’un tick");
 
         ConfigureTickSpinBox();
+
+        ConfigureTextButton(
+            _dumpFrameButton,
+            "Dump",
+            "Afficher dans la console le détail de la frame courante");
+
         UpdatePauseResumeButtonText();
     }
 
@@ -182,6 +194,16 @@ public partial class EnemyTraceSimulatorWindow : Control
         button.TooltipText = tooltipText;
         button.CustomMinimumSize = PlaybackButtonSize;
         button.AddThemeFontSizeOverride("font_size", PlaybackButtonFontSize);
+    }
+
+    private static void ConfigureTextButton(Button? button, string text, string tooltipText)
+    {
+        if (button == null)
+            return;
+
+        button.Text = text;
+        button.TooltipText = tooltipText;
+        button.CustomMinimumSize = new Vector2(90, 38);
     }
 
     private void ConfigureTickSpinBox()
@@ -215,6 +237,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         ConnectButton("Root/MainLayout/PlaybackControls/RunSimulationButton", OnRunSimulationPressed);
         ConnectButton("Root/MainLayout/PlaybackControls/PauseResumeButton", OnPauseResumePressed);
         ConnectButton("Root/MainLayout/PlaybackControls/StepButton", OnStepPressed);
+        ConnectButton("Root/MainLayout/PlaybackControls/DumpFrameButton", OnDumpFramePressed);
 
         if (_tickSpinBox != null)
             _tickSpinBox.ValueChanged += OnTickSpinBoxValueChanged;
@@ -326,44 +349,50 @@ public partial class EnemyTraceSimulatorWindow : Control
 
     private void LogRawMemorySummary(EnemyTraceFrame frame)
     {
-        if (frame.rawMemory == null)
-        {
-            Log("Frame 0 memory blocks: none");
-            return;
-        }
-
-        Log($"Frame 0 memory blocks: " +
-            $"maze={frame.rawMemory.LogicalMazeByteCount} bytes, " +
-            $"ram={frame.rawMemory.RamByteCount} bytes, " +
-            $"vram={frame.rawMemory.VramByteCount} bytes, " +
-            $"color={frame.rawMemory.ColorByteCount} bytes");
+        string summary = BuildRawMemorySummary(frame);
+        Log(summary);
     }
 
-    private void LogEnemyScan(int maxFrames)
+    private static string BuildRawMemorySummary(EnemyTraceFrame frame)
     {
-        int count = Math.Min(maxFrames, _frames.Count);
-        Log($"Enemy scan, first {count} frames:");
+        if (frame.rawMemory == null)
+            return "Frame memory blocks: none";
 
-        for (int i = 0; i < count; i++)
+        return $"Frame memory blocks: " +
+               $"maze={frame.rawMemory.LogicalMazeByteCount} bytes, " +
+               $"ram={frame.rawMemory.RamByteCount} bytes, " +
+               $"vram={frame.rawMemory.VramByteCount} bytes, " +
+               $"color={frame.rawMemory.ColorByteCount} bytes";
+    }
+
+    private void LogTraceSummary()
+    {
+        if (_frames.Count == 0)
+            return;
+
+        int firstActiveEnemyFrame = FindFirstFrameWithActiveEnemy();
+        if (firstActiveEnemyFrame >= 0)
         {
-            EnemyTraceFrame frame = _frames[i];
-            if (frame.enemies == null || frame.enemies.Count == 0)
-            {
-                Log($"  idx={i} tick={frame.frame}: no enemy records");
-                continue;
-            }
-
-            var parts = new List<string>();
-            foreach (EnemyTraceActor enemy in frame.enemies)
-            {
-                string activeFlag = enemy.active ? "A" : "-";
-                string knownFlag = enemy.HasKnownPosition ? "K" : "-";
-                parts.Add($"E{enemy.slot}:{activeFlag}{knownFlag} raw={enemy.raw:X2} mame=({enemy.x:X2},{enemy.y:X2}) godot=({enemy.x:X2},{MameTraceCoordinates.MameToGodotArcadeY(enemy.y):X2}) dir={enemy.dir}");
-            }
-
-            string workText = FormatEnemyWork(frame.enemyWork);
-            Log($"  idx={i} tick={frame.frame}: {string.Join(" | ", parts)}{workText}");
+            EnemyTraceFrame frame = _frames[firstActiveEnemyFrame];
+            Log($"First active enemy frame: index={firstActiveEnemyFrame}, tick={frame.frame}, active={CountActiveEnemies(frame)}");
         }
+        else
+        {
+            Log("No active enemy found in trace.");
+        }
+
+        Log("Use Dump to inspect the current frame in a separate window.");
+    }
+
+    private int FindFirstFrameWithActiveEnemy()
+    {
+        for (int i = 0; i < _frames.Count; i++)
+        {
+            if (CountActiveEnemies(_frames[i]) > 0)
+                return i;
+        }
+
+        return -1;
     }
 
     private static string FormatEnemyWork(EnemyTraceEnemyWorkState? enemyWork)
@@ -737,7 +766,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         if (player != null)
             Log($"Player frame 0: mame=({player.x:X2},{player.y:X2}) godot=({player.x:X2},{MameTraceCoordinates.MameToGodotArcadeY(player.y):X2}) target=({player.turnTargetX:X2},{player.turnTargetY:X2}) dir={player.dir}");
 
-        LogEnemyScan(10);
+        LogTraceSummary();
         UpdateStatus();
     }
 
@@ -848,6 +877,232 @@ public partial class EnemyTraceSimulatorWindow : Control
         _isUpdatingTickSpinBox = false;
     }
 
+    private void OnDumpFramePressed()
+    {
+        if (_frames.Count == 0)
+        {
+            Log("No trace loaded.");
+            return;
+        }
+
+        ShowDumpWindow(_currentFrameIndex);
+    }
+
+    private void ShowDumpWindow(int frameIndex)
+    {
+        if (frameIndex < 0 || frameIndex >= _frames.Count)
+            return;
+
+        EnemyTraceFrame frame = _frames[frameIndex];
+
+        var dumpWindow = new Window
+        {
+            Title = $"MAME trace dump - tick {frame.frame}",
+            Transient = false,
+            Exclusive = false,
+            Unresizable = false,
+            MinSize = new Vector2I(620, 420)
+        };
+
+        var margin = new MarginContainer();
+        margin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        margin.AddThemeConstantOverride("margin_left", 10);
+        margin.AddThemeConstantOverride("margin_top", 10);
+        margin.AddThemeConstantOverride("margin_right", 10);
+        margin.AddThemeConstantOverride("margin_bottom", 10);
+        dumpWindow.AddChild(margin);
+
+        var root = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        root.AddThemeConstantOverride("separation", 8);
+        margin.AddChild(root);
+
+        var textEdit = new TextEdit
+        {
+            Text = BuildFrameDump(frameIndex),
+            Editable = false,
+            WrapMode = TextEdit.LineWrappingMode.None,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        root.AddChild(textEdit);
+
+        var buttonRow = new HBoxContainer
+        {
+            Alignment = BoxContainer.AlignmentMode.End,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        root.AddChild(buttonRow);
+
+        var closeButton = new Button
+        {
+            Text = "Close",
+            CustomMinimumSize = new Vector2(90, 34)
+        };
+        closeButton.Pressed += dumpWindow.QueueFree;
+        dumpWindow.CloseRequested += dumpWindow.QueueFree;
+        buttonRow.AddChild(closeButton);
+
+        AddChild(dumpWindow);
+
+        Vector2 viewportSize = GetViewportRect().Size;
+        int width = Math.Clamp((int)viewportSize.X - 80, 720, 1100);
+        int height = Math.Clamp((int)viewportSize.Y - 80, 520, 780);
+
+        dumpWindow.PopupCentered(new Vector2I(width, height));
+        Log($"Opened frame dump window for tick {frame.frame}.");
+    }
+
+    private string BuildFrameDump(int frameIndex)
+    {
+        var sb = new StringBuilder();
+
+        if (frameIndex < 0 || frameIndex >= _frames.Count)
+            return string.Empty;
+
+        EnemyTraceFrame frame = _frames[frameIndex];
+
+        sb.AppendLine("---- current frame diagnostic dump ----");
+        sb.AppendLine($"Index={frameIndex + 1}/{_frames.Count}");
+        sb.AppendLine($"tick={frame.frame}");
+        sb.AppendLine($"schema={frame.schema}");
+        sb.AppendLine($"phase={frame.phase}");
+        sb.AppendLine($"mameFrame={frame.mameFrame}");
+        sb.AppendLine($"pc={frame.pc}");
+        sb.AppendLine($"r={frame.r}");
+        sb.AppendLine();
+
+        AppendPlayerDump(sb, frame.player);
+        AppendEnemiesDump(sb, frame);
+        AppendGatesDump(sb, frame);
+        AppendEnemyWorkDump(sb, frame.enemyWork);
+        AppendTimersDump(sb, frame.timers);
+        AppendPortsDump(sb, frame.ports);
+        sb.AppendLine(BuildRawMemorySummary(frame));
+        sb.AppendLine("---------------------------------------");
+
+        return sb.ToString();
+    }
+
+    private void AppendPlayerDump(StringBuilder sb, EnemyTraceActor? player)
+    {
+        if (player == null)
+        {
+            sb.AppendLine("Player: none");
+            sb.AppendLine();
+            return;
+        }
+
+        string target = player.HasTurnTarget
+            ? $" target=({player.turnTargetX:X2},{player.turnTargetY:X2}) targetGodot=({player.turnTargetX:X2},{MameTraceCoordinates.MameToGodotArcadeY(player.turnTargetY):X2})"
+            : string.Empty;
+
+        sb.AppendLine("Player:");
+        sb.AppendLine($"  raw={player.raw:X2} active={player.active}");
+        sb.AppendLine($"  mame=({player.x:X2},{player.y:X2}) godot=({player.x:X2},{MameTraceCoordinates.MameToGodotArcadeY(player.y):X2})");
+        sb.AppendLine($"  dir={player.dir} sprite={player.sprite:X2} attr={player.attr:X2}{target}");
+        sb.AppendLine();
+    }
+
+    private void AppendEnemiesDump(StringBuilder sb, EnemyTraceFrame frame)
+    {
+        if (frame.enemies == null || frame.enemies.Count == 0)
+        {
+            sb.AppendLine("Enemies: none");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine($"Enemies: {frame.enemies.Count} slot records, active={CountActiveEnemies(frame)}, known={CountKnownEnemies(frame)}");
+
+        foreach (EnemyTraceActor enemy in frame.enemies)
+        {
+            string activeFlag = enemy.active ? "active" : "inactive";
+            string knownFlag = enemy.HasKnownPosition ? "known" : "empty";
+            sb.AppendLine($"  E{enemy.slot}: {activeFlag}/{knownFlag} raw={enemy.raw:X2} mame=({enemy.x:X2},{enemy.y:X2}) godot=({enemy.x:X2},{MameTraceCoordinates.MameToGodotArcadeY(enemy.y):X2}) dir={enemy.dir} sprite={enemy.sprite:X2} attr={enemy.attr:X2}");
+        }
+
+        sb.AppendLine();
+    }
+
+    private void AppendGatesDump(StringBuilder sb, EnemyTraceFrame frame)
+    {
+        if (frame.gates == null || frame.gates.Count == 0)
+        {
+            sb.AppendLine("Gates: none");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine($"Gates: {frame.gates.Count}");
+
+        int max = Math.Min(frame.gates.Count, 24);
+        for (int i = 0; i < max; i++)
+        {
+            EnemyTraceGateState gate = frame.gates[i];
+            sb.AppendLine($"  Gate {gate.gate_id}: {gate.orientation} pivot=({gate.pivot_x},{gate.pivot_y})");
+        }
+
+        if (frame.gates.Count > max)
+            sb.AppendLine($"  ... {frame.gates.Count - max} more gates not shown");
+
+        sb.AppendLine();
+    }
+
+    private static void AppendEnemyWorkDump(StringBuilder sb, EnemyTraceEnemyWorkState? enemyWork)
+    {
+        if (enemyWork == null)
+        {
+            sb.AppendLine("EnemyWork: none");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine("EnemyWork:");
+        sb.AppendLine($"  tempDir={enemyWork.tempDir:X2} temp=({enemyWork.tempX:X2},{enemyWork.tempY:X2})");
+        sb.AppendLine($"  rejected={enemyWork.rejectedMask:X2} fallback={enemyWork.fallbackMask:X2}");
+        sb.AppendLine($"  preferred=[{FormatHexList(enemyWork.preferred)}]");
+        sb.AppendLine($"  chaseTimers=[{FormatHexList(enemyWork.chaseTimers)}]");
+        sb.AppendLine($"  roundRobin={enemyWork.chaseRoundRobin:X2}");
+        sb.AppendLine();
+    }
+
+    private static void AppendTimersDump(StringBuilder sb, EnemyTraceTimersState? timers)
+    {
+        if (timers == null)
+        {
+            sb.AppendLine("Timers: none");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine("Timers:");
+        sb.AppendLine($"  61B4={timers.timer61B4:X2} 61B5={timers.timer61B5:X2} 61B6={timers.timer61B6:X2}");
+        sb.AppendLine($"  61B7={timers.timer61B7:X2} 61B8={timers.timer61B8:X2} 61B9={timers.timer61B9:X2}");
+        sb.AppendLine($"  freeze61E1={timers.freeze61E1:X2} color6199={timers.collectibleColorCounter6199:X2}");
+        sb.AppendLine();
+    }
+
+    private static void AppendPortsDump(StringBuilder sb, EnemyTracePortsState? ports)
+    {
+        if (ports == null)
+        {
+            sb.AppendLine("Ports: none");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine("Ports:");
+        sb.AppendLine($"  IN0/9000={ports.in0_9000:X2}");
+        sb.AppendLine($"  IN1/9001={ports.in1_9001:X2}");
+        sb.AppendLine($"  DSW0/9002={ports.dsw0_9002:X2}");
+        sb.AppendLine($"  DSW1/9003={ports.dsw1_9003:X2}");
+        sb.AppendLine();
+    }
+
     private void OnRunSimulationPressed()
     {
         if (_frames.Count == 0)
@@ -940,7 +1195,9 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         EnemyTraceFrame frame = _frames[_currentFrameIndex];
         string state = _isRunning && !_isPaused ? "lecture" : "pause";
-        _statusLabel.Text = $"Frame {_currentFrameIndex + 1}/{_frames.Count} | tick={frame.frame} | active enemies={CountActiveEnemies(frame)} | {state}";
+        int activeEnemies = CountActiveEnemies(frame);
+        _statusLabel.Text = $"F {_currentFrameIndex + 1}/{_frames.Count} | T {frame.frame} | E {activeEnemies} | {state}";
+        _statusLabel.TooltipText = $"Frame {_currentFrameIndex + 1}/{_frames.Count} | tick={frame.frame} | active enemies={activeEnemies} | {state}";
     }
 
     private void Log(string message)

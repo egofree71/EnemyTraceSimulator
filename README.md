@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.3.4**
+Current package version: **v0.4.2**
 
 Implemented now:
 
@@ -44,6 +44,8 @@ assets/sprites/enemies/enemy_level1.png` when available;
 - MAME-to-Godot actor Y mirroring with `0xDD - mameY`;
 - playback controls: restart, pause/resume, step one tick;
 - direct tick jump field in the toolbar;
+- current-frame diagnostic dump window opened from the toolbar;
+- native Godot subwindows enabled for diagnostic windows;
 - two synchronized boards: left for future C# simulation, right for MAME trace;
 - bottom console area for runtime messages;
 - `.gitignore` rules for generated traces, logs, runtime files, and local MAME state files.
@@ -148,6 +150,8 @@ Tick jump to the requested trace tick
 
 The tick field is synchronized with playback. If the requested tick is not present in the trace, the viewer shows the nearest available frame and writes a message to the console.
 
+The **Dump** button opens a separate diagnostic window for the current frame. It includes metadata, player state, enemy slots, gates, enemy work RAM, timers, ports, and raw-memory block sizes. The main console remains a concise activity log.
+
 ## Important Godot .NET rebuild note
 
 After replacing C# files, Godot may continue to run an older compiled assembly. If the UI does not reflect the latest patch, use:
@@ -211,6 +215,17 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 ├─ .gitignore
 └─ README.md
 ```
+
+## Window behavior
+
+The project uses native subwindows for diagnostic windows:
+
+```ini
+[display]
+window/subwindows/embed_subwindows=false
+```
+
+This allows the frame dump window to move outside the main simulator window on the desktop.
 
 ## Configuration
 
@@ -349,15 +364,21 @@ Remaining v0.3 cleanup:
 
 ### v0.4: trace inspection and diagnostic state
 
-Goal: make it easier to understand what MAME is doing before connecting the C# simulation.
+Status after v0.4.2: current-frame dump window implemented.
 
-Planned work:
+Implemented:
 
-- add a selected-frame details panel or console command-style dump;
-- show active enemy slots, raw bytes, MAME coordinates, Godot/display coordinates, direction, sprite, and attr;
-- expose `enemyWork` fields such as temporary direction, rejected mask, fallback mask, preferred directions, and chase timers;
-- show current gate orientations and possibly changed gates for the selected tick;
-- add helpers to jump to the first active enemy frame, first direction change, or first frame matching a slot condition;
+- toolbar **Dump** button;
+- separate diagnostic window for the current frame;
+- dump of metadata, player state, enemy slots, gates, enemy work RAM, timers, ports, and raw-memory block sizes;
+- compact main console: activity and summary messages stay in the console, large dumps move to the dump window;
+- native subwindows enabled so diagnostic windows can move outside the main simulator window;
+- compact status label to avoid toolbar overflow.
+
+Remaining v0.4 work:
+
+- show changed gates for the selected tick;
+- add helper navigation: first active enemy frame, first direction change, first frame for a slot, or first frame matching a simple condition;
 - keep this diagnostic layer read-only: it should inspect the MAME trace, not simulate anything yet.
 
 ### v0.5: comparison data model

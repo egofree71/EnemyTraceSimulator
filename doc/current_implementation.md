@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.3.4  
+**Current package version:** v0.4.2  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -78,6 +78,17 @@ The current implementation covers steps 1 to 4 partially. It can launch MAME fro
 └─ README.md
 ```
 
+## 3. Window behavior
+
+The project currently uses native subwindows for diagnostic windows:
+
+```ini
+[display]
+window/subwindows/embed_subwindows=false
+```
+
+This is required so the frame dump window is not trapped inside the main simulator viewport and can be moved freely on the desktop.
+
 ## 3. Project entry point
 
 The Godot project starts from:
@@ -110,6 +121,7 @@ EnemyTraceSimulator (Control)
       │  ├─ StepButton (Button)
       │  ├─ TickLabel (Label)
       │  ├─ TickSpinBox (SpinBox)
+      │  ├─ DumpFrameButton (Button)
       │  └─ StatusLabel (Label)
       ├─ BoardComparison (HBoxContainer)
       │  ├─ SimulationBoard (Control + EnemyTraceBoardView.cs)
@@ -140,6 +152,7 @@ Current role:
 - supports runtime player debug controls;
 - supports inactive enemy slot diagnostic toggling;
 - supports direct tick navigation through the toolbar tick field;
+- opens a separate current-frame diagnostic dump window;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -529,6 +542,12 @@ When **▶|** is pressed:
 - playback pauses;
 - one frame is advanced manually.
 
+When **Dump** is pressed:
+
+- a separate diagnostic window opens for the current frame;
+- the main console receives only a short activity message;
+- the dump window shows metadata, player state, enemy slots, gates, enemy work RAM, timers, ports, and memory block sizes.
+
 ### 8.6 Player debug workflow
 
 By default, the board stays visually clean.
@@ -571,6 +590,8 @@ Use `Ctrl + Home` to restore that default.
 - Frame playback at 60 Hz.
 - Manual tick/frame stepping.
 - Direct tick jump field.
+- Current-frame diagnostic dump window.
+- Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
 - Player sprite rendering with optional debug markers.
@@ -724,33 +745,20 @@ Remaining v0.3 cleanup:
 
 ### v0.4: trace inspection and diagnostic state
 
-Goal:
-- make the loaded MAME trace easier to understand before simulation begins.
+Status after v0.4.2: current-frame dump window implemented.
 
-Planned changes:
+Implemented:
 
-- add a selected-frame diagnostic view or structured console dump;
-- show for each enemy slot:
-  - active flag;
-  - raw byte;
-  - MAME coordinate;
-  - converted Godot/debug coordinate;
-  - direction;
-  - sprite;
-  - attr;
-- expose `enemyWork` fields:
-  - temporary direction;
-  - temporary position;
-  - rejected mask;
-  - fallback mask;
-  - preferred directions;
-  - chase timers;
-  - chase round-robin value;
-- add helper navigation:
-  - first active enemy frame;
-  - first direction change;
-  - first frame for a given enemy slot;
-  - first frame matching a simple condition;
+- toolbar **Dump** button;
+- separate diagnostic window for the current frame;
+- diagnostic dump of frame metadata, player state, enemy slots, gates, `enemyWork`, timers, ports, and raw-memory block sizes;
+- compact main console;
+- native subwindows so diagnostic windows are not trapped inside the main viewport.
+
+Remaining v0.4 work:
+
+- show changed gates for the selected tick;
+- add helper navigation: first active enemy frame, first direction change, first frame for a given enemy slot, first frame matching a simple condition;
 - keep this phase read-only.
 
 ### v0.5: comparison data model
