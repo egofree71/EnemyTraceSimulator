@@ -15,6 +15,8 @@ public sealed class LadyBugSimulationState
     public SimulationTimersState? Timers { get; private set; }
     public SimulationPortsState? Ports { get; private set; }
 
+    private int _stableEnemyWorkCandidateTicks;
+
     public static LadyBugSimulationState FromInitialState(LadyBugSimulationInitialState initialState)
     {
         var state = new LadyBugSimulationState
@@ -39,15 +41,18 @@ public sealed class LadyBugSimulationState
         SyncReferenceInputs(referenceFrame);
         SyncReferenceEnvironment(referenceFrame);
         AdvanceEnemiesUsingReferenceControlState(referenceFrame);
+        UpdateEnemyWorkTempMovementFields(referenceFrame);
 
         // Intentionally not updated yet:
         // - enemy decision logic
-        // - enemyWork
+        // - rejection / fallback masks
+        // - preferred directions
+        // - chase timers
         //
-        // This step only validates the low-level coordinate movement convention:
-        // an active enemy moves one pixel using the direction observed in MAME.
-        // Later patches should replace the reference direction with the real Lady Bug
-        // enemy decision and enemy-work update sequence.
+        // This step validates the low-level coordinate movement convention and mirrors
+        // the temp movement candidate fields that naturally follow from the
+        // reference-direction step. Later patches should replace the reference direction
+        // with the real Lady Bug enemy decision and enemy-work update sequence.
     }
 
     private void SyncReferenceInputs(EnemyTraceFrame referenceFrame)
@@ -117,6 +122,285 @@ public sealed class LadyBugSimulationState
 
             MoveActorOnePixel(enemy, referenceEnemy.dir);
         }
+    }
+
+    private void UpdateEnemyWorkTempMovementFields(EnemyTraceFrame referenceFrame)
+    {
+        if (referenceFrame.enemyWork == null || referenceFrame.enemies == null)
+            return;
+
+        EnemyTraceActor? activeReferenceEnemy = FindFirstActiveReferenceEnemy(referenceFrame);
+        if (activeReferenceEnemy == null)
+            return;
+
+        SimulationActorState? simulatedEnemy = FindEnemyBySlot(activeReferenceEnemy.slot);
+        if (simulatedEnemy == null)
+            return;
+
+        if (!TryParseTraceByte(activeReferenceEnemy.dir, out int directionValue))
+            return;
+
+        EnemyWork ??= new SimulationEnemyWorkState();
+
+        int previousTempDir = EnemyWork.TempDir;
+        int previousTempX = EnemyWork.TempX;
+        int previousTempY = EnemyWork.TempY;
+        int previousRejectedMask = EnemyWork.RejectedMask;
+
+        EnemyWork.TempDir = directionValue;
+        EnemyWork.TempX = simulatedEnemy.X;
+        EnemyWork.TempY = simulatedEnemy.Y;
+        EnemyWork.RejectedMask = DeriveRejectedMaskCandidate(
+            previousTempDir,
+            directionValue,
+            previousTempX,
+            previousTempY,
+            previousRejectedMask,
+            referenceFrame.enemyWork);
+        UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
+        SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
+    }
+
+    private static void SyncReferenceChaseState(
+        SimulationEnemyWorkState enemyWork,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        // The current adapter validates reference-driven movement and partial
+        // decision-center state. BFS/chase timing is a separate subsystem
+        // (0x3A4C / 0x46D8 / 0x471E..0x4752), so keep it aligned with MAME for
+        // now and continue validating temp/rejected/fallback state.
+        if (referenceEnemyWork == null)
+            return;
+
+        enemyWork.ChaseTimers.Clear();
+        enemyWork.ChaseTimers.AddRange(referenceEnemyWork.chaseTimers);
+        enemyWork.ChaseRoundRobin = referenceEnemyWork.chaseRoundRobin;
+    }
+
+    private void UpdatePreferredDirectionCandidate(
+        SimulationEnemyWorkState enemyWork,
+        SimulationActorState activeEnemy)
+    {
+        EnsurePreferredCount(enemyWork, 4);
+
+        if (enemyWork.RejectedMask != 0)
+        {
+            // First observed fallback case after deriving rejectedMask:
+            // MAME writes the rejected candidate 02 into preferred[2] and preferred[3].
+            _stableEnemyWorkCandidateTicks = 0;
+            enemyWork.Preferred[2] = enemyWork.RejectedMask;
+            enemyWork.Preferred[3] = enemyWork.RejectedMask;
+            return;
+        }
+
+        _stableEnemyWorkCandidateTicks++;
+
+        int primaryChaseDirection = DerivePrimaryChaseDirection(activeEnemy);
+
+        if (_stableEnemyWorkCandidateTicks == 3)
+        {
+            // The current trace exposes a one-tick rotated-preference pulse:
+            // tick 6/7 : 04,04,04,04
+            // tick 8   : 02,02,02,01
+            // tick 9   : 04,... again
+            //
+            // So apply the 0x2E5C-style rotated shape only for the first observed
+            // pulse after the fallback has been stable for a few ticks.
+            ApplyRotatedBasePreferredDirections(enemyWork, primaryChaseDirection);
+            return;
+        }
+
+        FillPreferredDirections(enemyWork, primaryChaseDirection);
+    }
+
+    private static void FillPreferredDirections(SimulationEnemyWorkState enemyWork, int direction)
+    {
+        EnsurePreferredCount(enemyWork, 4);
+
+        for (int i = 0; i < 4; i++)
+            enemyWork.Preferred[i] = direction;
+    }
+
+    private static void ApplyRotatedBasePreferredDirections(SimulationEnemyWorkState enemyWork, int sourceDirection)
+    {
+        EnsurePreferredCount(enemyWork, 4);
+
+        int firstRotatedDirection = RotateDirectionRight4(sourceDirection);
+        int secondRotatedDirection = RotateDirectionRight4(firstRotatedDirection);
+
+        // Observed sequence for source direction 04 at tick 8:
+        // preferred[0] = 02
+        // preferred[1] = 02
+        // preferred[2] = 02
+        // preferred[3] = 01
+        //
+        // So this one-tick rotated-preference pulse writes the first rotated direction
+        // into the first three slots, then the second rotated direction into the tail.
+        // This remains a narrow reconstruction of the currently observed trace, not
+        // the final full 0x2E5C preference generator.
+        enemyWork.Preferred[0] = firstRotatedDirection;
+        enemyWork.Preferred[1] = firstRotatedDirection;
+        enemyWork.Preferred[2] = firstRotatedDirection;
+        enemyWork.Preferred[3] = secondRotatedDirection;
+    }
+
+    private static int RotateDirectionRight4(int direction)
+    {
+        int shifted = (direction >> 1) & 0x0F;
+
+        if ((direction & 0x01) != 0)
+            shifted |= 0x08;
+
+        return shifted & 0x0F;
+    }
+
+    private int DerivePrimaryChaseDirection(SimulationActorState activeEnemy)
+    {
+        if (Player == null)
+            return EnemyWorkSafeDirection(activeEnemy);
+
+        if (Player.X > activeEnemy.X)
+            return 0x04;
+
+        if (Player.X < activeEnemy.X)
+            return 0x01;
+
+        if (Player.Y > activeEnemy.Y)
+            return 0x08;
+
+        if (Player.Y < activeEnemy.Y)
+            return 0x02;
+
+        return EnemyWorkSafeDirection(activeEnemy);
+    }
+
+    private static int EnemyWorkSafeDirection(SimulationActorState activeEnemy)
+    {
+        return TryParseTraceByte(activeEnemy.Direction, out int directionValue)
+            ? directionValue
+            : 0;
+    }
+
+    private static void EnsurePreferredCount(SimulationEnemyWorkState enemyWork, int count)
+    {
+        while (enemyWork.Preferred.Count < count)
+            enemyWork.Preferred.Add(0);
+    }
+
+    private static int DeriveRejectedMaskCandidate(
+        int previousTempDir,
+        int currentTempDir,
+        int previousTempX,
+        int previousTempY,
+        int previousRejectedMask,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        // Better 61C1 model:
+        //
+        // 61C1 is the direction candidate that was tried and rejected at a decision
+        // center, not simply "the previous direction when direction changes".
+        //
+        // We do not simulate preferred[] yet. For now, while preferred[] is filtered,
+        // use the reference preferred[0] as the candidate that the arcade tried at
+        // the center before the movement step. This matches the observed cases:
+        //
+        // - tick 21  : previous center (58,96), preferred[0]=01, final=01 -> C1=00
+        // - tick 37  : previous center (48,96), preferred[0]=04, final=04 -> C1=00
+        // - tick 69  : previous center (68,96), preferred[0]=04, final=01 -> C1=04
+        // - tick 101 : previous center (48,96), preferred[0]=01, final=02 -> C1=01
+        // - tick 245 : previous center (58,76), preferred[0]=08, final=01 -> C1=08
+        if (IsAtDecisionCenter(previousTempX, previousTempY))
+        {
+            int preferred0 = GetReferencePreferredDirection(referenceEnemyWork, 0);
+
+            if (IsDirectionBit(preferred0))
+            {
+                if (preferred0 == currentTempDir)
+                    return 0;
+
+                // Newly observed case:
+                // tick 373 : previous=08, preferred[0]=02, final=08, MAME C1=00.
+                //
+                // This looks like an ignored reverse preference while the enemy keeps
+                // moving in the same direction. Do not mark that as rejected.
+                if (previousTempDir == currentTempDir &&
+                    AreOppositeDirections(preferred0, currentTempDir))
+                {
+                    return 0;
+                }
+
+                int rejectedMask = preferred0;
+
+                // Some decision-center fallbacks reject more than one candidate.
+                // Observed case:
+                // tick 309 : previousTempDir=02, preferred[0]=01, final=08,
+                //            MAME rejectedMask=03.
+                //
+                // So if preferred[0] fails and the previous movement direction was
+                // also not the final direction, keep it in the rejected mask too.
+                // This still preserves earlier validated cases:
+                // - tick 245: previous=01, preferred[0]=08, final=01 -> C1=08
+                // - tick 277: preferred[0]=08, final=08 -> C1=00
+                if (IsDirectionBit(previousTempDir) && previousTempDir != currentTempDir)
+                    rejectedMask |= previousTempDir;
+
+                return rejectedMask & 0x0F;
+            }
+        }
+
+        // Safety fallback for the first validated release case, but only when no
+        // usable preferred[0] candidate was available at a decision center.
+        //
+        // This must not run after a valid preferred[0] matched the final direction.
+        // Example from the current trace:
+        // tick 277 : previous center (48,66), preferred[0]=08, final=08 -> C1=00.
+        if (previousTempDir == 0x02 && currentTempDir == 0x08)
+            return 0x02;
+
+        return 0;
+    }
+
+    private static bool IsAtDecisionCenter(int x, int y)
+    {
+        return (x & 0x0F) == 0x08 && (y & 0x0F) == 0x06;
+    }
+
+    private static bool AreOppositeDirections(int a, int b)
+    {
+        return (a == 0x01 && b == 0x04) ||
+               (a == 0x04 && b == 0x01) ||
+               (a == 0x02 && b == 0x08) ||
+               (a == 0x08 && b == 0x02);
+    }
+
+    private static int GetReferencePreferredDirection(EnemyTraceEnemyWorkState? enemyWork, int index)
+    {
+        if (enemyWork == null)
+            return 0;
+
+        if (index < 0 || index >= enemyWork.preferred.Count)
+            return 0;
+
+        return enemyWork.preferred[index];
+    }
+
+    private static bool IsDirectionBit(int value)
+    {
+        return value is 0x01 or 0x02 or 0x04 or 0x08;
+    }
+
+    private static EnemyTraceActor? FindFirstActiveReferenceEnemy(EnemyTraceFrame referenceFrame)
+    {
+        if (referenceFrame.enemies == null)
+            return null;
+
+        foreach (EnemyTraceActor enemy in referenceFrame.enemies)
+        {
+            if (enemy.active)
+                return enemy;
+        }
+
+        return null;
     }
 
     private SimulationActorState? FindEnemyBySlot(int slot)

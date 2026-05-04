@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.17: filtered comparison result message adjusted.");
+        Log("v0.6.35: preferred-direction mismatch filter added for EnemyWork diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -912,7 +912,7 @@ public partial class EnemyTraceSimulatorWindow : Control
             Transient = false,
             Exclusive = false,
             Unresizable = false,
-            MinSize = new Vector2I(560, 350)
+            MinSize = new Vector2I(600, 390)
         };
 
         var margin = new MarginContainer();
@@ -933,22 +933,30 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current adapter syncs reference player, ports, gates, timers, and advances active enemies using the MAME direction. enemyWork is still pending.",
+            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current adapter syncs reference player, ports, gates, timers, advances active enemies using the MAME direction, derives EnemyWork temp fields, transient rejected-mask, fallback pair, and one-tick 0x2E5C-style rotated preference pulse after stable fallback. Real decision logic is still pending.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
 
         var ignoreEnemyWorkCheckBox = new CheckBox
         {
-            Text = "Ignore EnemyWork mismatches",
-            TooltipText = "Useful for validating movement while enemyWork/decision-state simulation is still pending.",
+            Text = "Ignore all EnemyWork mismatches",
+            TooltipText = "Useful for validating movement while all enemyWork/decision-state simulation is still pending.",
             ButtonPressed = false
         };
         root.AddChild(ignoreEnemyWorkCheckBox);
 
-        AddSimulationAdapterButton(root, new IdentityTraceSimulationAdapter(), "Run identity comparison", ignoreEnemyWorkCheckBox);
-        AddSimulationAdapterButton(root, new InjectedMismatchSimulationAdapter(), "Run injected mismatch test", ignoreEnemyWorkCheckBox);
-        AddSimulationAdapterButton(root, new LadyBugEnemySimulationAdapter(), "Run Lady Bug adapter skeleton", ignoreEnemyWorkCheckBox);
+        var ignorePreferredCheckBox = new CheckBox
+        {
+            Text = "Ignore only EnemyWork preferred[] mismatches",
+            TooltipText = "Useful because preferred[] is currently driven by the arcade random/preference generator, while temp/rejected/fallback fields can still be checked.",
+            ButtonPressed = false
+        };
+        root.AddChild(ignorePreferredCheckBox);
+
+        AddSimulationAdapterButton(root, new IdentityTraceSimulationAdapter(), "Run identity comparison", ignoreEnemyWorkCheckBox, ignorePreferredCheckBox);
+        AddSimulationAdapterButton(root, new InjectedMismatchSimulationAdapter(), "Run injected mismatch test", ignoreEnemyWorkCheckBox, ignorePreferredCheckBox);
+        AddSimulationAdapterButton(root, new LadyBugEnemySimulationAdapter(), "Run Lady Bug reference-direction step", ignoreEnemyWorkCheckBox, ignorePreferredCheckBox);
 
         var closeRow = new HBoxContainer
         {
@@ -967,10 +975,15 @@ public partial class EnemyTraceSimulatorWindow : Control
         closeRow.AddChild(closeButton);
 
         AddChild(compareWindow);
-        compareWindow.PopupCentered(new Vector2I(640, 400));
+        compareWindow.PopupCentered(new Vector2I(680, 440));
     }
 
-    private void AddSimulationAdapterButton(VBoxContainer root, IEnemySimulationAdapter adapter, string text, CheckBox ignoreEnemyWorkCheckBox)
+    private void AddSimulationAdapterButton(
+        VBoxContainer root,
+        IEnemySimulationAdapter adapter,
+        string text,
+        CheckBox ignoreEnemyWorkCheckBox,
+        CheckBox ignorePreferredCheckBox)
     {
         var button = new Button
         {
@@ -980,15 +993,16 @@ public partial class EnemyTraceSimulatorWindow : Control
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
 
-        button.Pressed += () => RunComparison(adapter, CreateComparisonOptions(ignoreEnemyWorkCheckBox));
+        button.Pressed += () => RunComparison(adapter, CreateComparisonOptions(ignoreEnemyWorkCheckBox, ignorePreferredCheckBox));
         root.AddChild(button);
     }
 
-    private static TraceComparisonOptions CreateComparisonOptions(CheckBox ignoreEnemyWorkCheckBox)
+    private static TraceComparisonOptions CreateComparisonOptions(CheckBox ignoreEnemyWorkCheckBox, CheckBox ignorePreferredCheckBox)
     {
         return new TraceComparisonOptions
         {
-            IgnoreEnemyWork = ignoreEnemyWorkCheckBox.ButtonPressed
+            IgnoreEnemyWork = ignoreEnemyWorkCheckBox.ButtonPressed,
+            IgnoreEnemyWorkPreferred = ignorePreferredCheckBox.ButtonPressed
         };
     }
 
@@ -1023,6 +1037,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         TraceMismatch mismatch = result.FirstMismatch;
         Log($"First mismatch: frameIndex={mismatch.FrameIndex}, tick={mismatch.Tick}, kind={mismatch.Kind}, field={mismatch.Field}, expected={mismatch.Expected}, actual={mismatch.Actual}");
+        LogMismatchTimeline(mismatch, simulationResult.Frames);
 
         if (mismatch.FrameIndex >= 0 && mismatch.FrameIndex < _frames.Count)
         {
@@ -1033,6 +1048,82 @@ public partial class EnemyTraceSimulatorWindow : Control
             ApplyCurrentFrame();
             UpdateStatus();
         }
+    }
+
+    private void LogMismatchTimeline(TraceMismatch mismatch, IReadOnlyList<SimulationFrame> simulationFrames)
+    {
+        if (mismatch.FrameIndex < 0 || mismatch.FrameIndex >= _frames.Count)
+            return;
+
+        if (mismatch.Kind != TraceMismatchKind.EnemyWork &&
+            mismatch.Kind != TraceMismatchKind.Enemy)
+        {
+            return;
+        }
+
+        int start = Math.Max(0, mismatch.FrameIndex - 3);
+        int end = Math.Min(_frames.Count - 1, mismatch.FrameIndex + 6);
+
+        Log($"Mismatch timeline: frames {start}..{end}");
+
+        for (int i = start; i <= end; i++)
+        {
+            EnemyTraceFrame referenceFrame = _frames[i];
+            SimulationFrame? simulationFrame = i < simulationFrames.Count ? simulationFrames[i] : null;
+
+            string referenceEnemy = FormatFirstActiveEnemy(referenceFrame.enemies);
+            string simulationEnemy = FormatFirstActiveEnemy(simulationFrame?.Enemies);
+
+            Log($"  tick={referenceFrame.frame} refEW={FormatEnemyWorkCompact(referenceFrame.enemyWork)} simEW={FormatEnemyWorkCompact(simulationFrame?.EnemyWork)} refEnemy={referenceEnemy} simEnemy={simulationEnemy}");
+        }
+    }
+
+    private static string FormatEnemyWorkCompact(EnemyTraceEnemyWorkState? enemyWork)
+    {
+        if (enemyWork == null)
+            return "null";
+
+        return $"td={enemyWork.tempDir:X2} t=({enemyWork.tempX:X2},{enemyWork.tempY:X2}) " +
+               $"rej={enemyWork.rejectedMask:X2} fb={enemyWork.fallbackMask:X2} " +
+               $"pref=[{FormatHexList(enemyWork.preferred)}] ch=[{FormatHexList(enemyWork.chaseTimers)}] rr={enemyWork.chaseRoundRobin:X2}";
+    }
+
+    private static string FormatEnemyWorkCompact(SimulationEnemyWorkState? enemyWork)
+    {
+        if (enemyWork == null)
+            return "null";
+
+        return $"td={enemyWork.TempDir:X2} t=({enemyWork.TempX:X2},{enemyWork.TempY:X2}) " +
+               $"rej={enemyWork.RejectedMask:X2} fb={enemyWork.FallbackMask:X2} " +
+               $"pref=[{FormatHexList(enemyWork.Preferred)}] ch=[{FormatHexList(enemyWork.ChaseTimers)}] rr={enemyWork.ChaseRoundRobin:X2}";
+    }
+
+    private static string FormatFirstActiveEnemy(List<EnemyTraceActor>? enemies)
+    {
+        if (enemies == null)
+            return "none";
+
+        foreach (EnemyTraceActor enemy in enemies)
+        {
+            if (enemy.active)
+                return $"E{enemy.slot}:raw={enemy.raw:X2} xy=({enemy.x:X2},{enemy.y:X2}) dir={enemy.dir}";
+        }
+
+        return "none";
+    }
+
+    private static string FormatFirstActiveEnemy(List<SimulationActorState>? enemies)
+    {
+        if (enemies == null)
+            return "none";
+
+        foreach (SimulationActorState enemy in enemies)
+        {
+            if (enemy.Active)
+                return $"E{enemy.Slot}:raw={enemy.Raw:X2} xy=({enemy.X:X2},{enemy.Y:X2}) dir={enemy.Direction}";
+        }
+
+        return "none";
     }
 
     private void OnDumpFramePressed()

@@ -13,7 +13,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls and moves active enemies by one pixel using the MAME direction.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, and updates first EnemyWork fields, including the first preferred fallback pair.";
 
     public bool ExpectedToMismatch => true;
 
@@ -42,6 +42,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             "Lady Bug reference-direction step; initial state: " + initialState.Summary +
             "; AdvanceOneTick syncs player, ports, gates, timers, and enemy control state; " +
             "active enemies move one pixel using the MAME direction; " +
-            "enemyWork and real enemy decision logic are not implemented yet");
+            "EnemyWork tempDir/tempX/tempY, transient rejectedMask, preferred fallback pair and a one-tick 0x2E5C-style rotated preference pulse is derived after stable fallback; " +
+            "real enemy decision logic is not implemented yet");
     }
 }
