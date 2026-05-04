@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.17  
+**Current package version:** v0.6.44  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -855,7 +855,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.17: simulation adapter interface, first Lady Bug adapter skeleton, simulation state, reference environment sync, reference-direction enemy stepping, and comparison filtering added.
+Status after v0.6.44: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, and preferred-only comparison filtering added.
 
 Implemented:
 
@@ -879,7 +879,8 @@ Implemented:
 
 Planned next changes:
 
-- start reproducing `enemyWork`, beginning with `tempDir`;
+- implement real `EnemyWork.preferred[]`, beginning with the arcade base-preference path around `0x2E5C`;
+- replace temporary reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem;
 - replace the MAME reference direction with real enemy direction decision logic;
 - reuse or port the existing enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
@@ -937,3 +938,38 @@ It should be a strict diagnostic tool:
 - deterministic playback;
 - minimal visuals;
 - precise mismatch reporting.
+
+
+## v0.6.44 current checkpoint
+
+The current simulator is now a **reference-direction enemy work validator**.
+
+The adapter still does not make independent enemy decisions. Instead, it uses the MAME trace direction for active enemies so that lower-level state handling can be validated without first solving the whole AI.
+
+Current validated behavior:
+
+- active enemy position and direction match MAME across the current 601-frame trace;
+- `EnemyWork.tempDir`, `EnemyWork.tempX`, and `EnemyWork.tempY` are derived from the simulated active enemy state;
+- `EnemyWork.rejectedMask` is derived at decision centers from the attempted preferred candidate and the final movement direction;
+- `EnemyWork.fallbackMask` remains aligned for the current trace;
+- `EnemyWork.chaseTimers[]` and `EnemyWork.chaseRoundRobin` are temporarily synchronized from MAME;
+- comparison can filter only `EnemyWork.preferred[]` while still validating the rest of `EnemyWork`;
+- first-mismatch timeline logging prints compact reference/simulation state around the divergence.
+
+Current diagnostic result:
+
+```text
+Comparison options: EnemyWork preferred[] mismatches ignored
+Comparison result: no remaining mismatch after applying filters.
+```
+
+This means the only remaining mismatches in the current comparison path are in `EnemyWork.preferred[]`.
+
+### Important limitation
+
+`EnemyWork.preferred[]` is not yet simulated correctly. The timeline shows patterns that look like the arcade base-preference / pseudo-random generator rather than a simple chase direction. For now, `preferred[]` is either filtered from comparison or partially used from the MAME reference to compute `rejectedMask`.
+
+The next implementation target should therefore be the preferred-direction generator, especially the arcade path around `0x2E5C`, before trying to remove the `preferred[]` filter.
+
+
+Comparison option: **Ignore only EnemyWork preferred[] mismatches** filters `EnemyWork.preferred[]` while keeping other `EnemyWork` fields active in comparison.

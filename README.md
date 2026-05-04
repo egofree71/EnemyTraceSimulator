@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.6.17**
+Current package version: **v0.6.44**
 
 Implemented now:
 
@@ -298,30 +298,30 @@ A typical frame contains:
   "phase": "post_load_tick0",
   "mameFrame": 5,
   "player": {
-	"raw": "82",
-	"x": "78",
-	"y": "8B",
-	"sprite": "00",
-	"attr": "00",
-	"turnTargetX": "78",
-	"turnTargetY": "86",
-	"currentDir": "08"
+    "raw": "82",
+    "x": "78",
+    "y": "8B",
+    "sprite": "00",
+    "attr": "00",
+    "turnTargetX": "78",
+    "turnTargetY": "86",
+    "currentDir": "08"
   },
   "enemies": [
-	{
-	  "slot": 0,
-	  "raw": "82",
-	  "x": "58",
-	  "y": "86",
-	  "currentDir": "08"
-	}
+    {
+      "slot": 0,
+      "raw": "82",
+      "x": "58",
+      "y": "86",
+      "currentDir": "08"
+    }
   ],
   "gates": [
-	{
-	  "gate_id": 0,
-	  "pivot": { "x": 3, "y": 2 },
-	  "currentOrientation": "Horizontal"
-	}
+    {
+      "gate_id": 0,
+      "pivot": { "x": 3, "y": 2 },
+      "currentOrientation": "Horizontal"
+    }
   ]
 }
 ```
@@ -476,7 +476,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.17: simulation adapter interface, Lady Bug adapter skeleton, simulation state, reference environment sync, reference-direction enemy stepping, and comparison filtering added.
+Status after v0.6.44: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, and preferred-only comparison filtering added.
 
 Implemented:
 
@@ -500,7 +500,8 @@ Implemented:
 
 Remaining v0.6 work:
 
-- start reproducing `enemyWork`, beginning with `tempDir`;
+- implement the real `EnemyWork.preferred[]` generator, beginning with the arcade base-preference path around `0x2E5C`;
+- replace temporary reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem;
 - replace the reference direction with real enemy direction decision logic;
 - reuse or port the enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
@@ -541,3 +542,35 @@ It is not trying to look like the final game. It should help answer one question
 > At which exact frame does the C# enemy simulation diverge from the arcade reference?
 
 That means the tool should favor integer arcade-pixel positions, raw MAME values, deterministic playback, and precise mismatch reporting over nice visuals.
+
+
+## v0.6.44 checkpoint: reference-driven enemy work alignment
+
+After the reference-direction step work, the Lady Bug adapter can now validate the current 601-frame trace with **no remaining mismatch** when only `EnemyWork.preferred[]` mismatches are filtered.
+
+Current behavior of `LadyBugEnemySimulationAdapter`:
+
+- synchronizes reference player, ports, gates, and global timers;
+- advances active enemies one arcade pixel per tick using the MAME reference direction;
+- derives `EnemyWork.tempDir`, `EnemyWork.tempX`, and `EnemyWork.tempY` from the simulated active enemy;
+- derives `EnemyWork.rejectedMask` from decision-center candidates, using the MAME reference `preferred[0]` while `preferred[]` itself remains unsimulated;
+- keeps `EnemyWork.fallbackMask` aligned for the validated trace;
+- synchronizes `EnemyWork.chaseTimers[]` and `EnemyWork.chaseRoundRobin` from MAME as a temporary reference state;
+- supports comparison filters for either all `EnemyWork` mismatches or only `EnemyWork.preferred[]` mismatches;
+- logs a compact mismatch timeline around the first mismatch to diagnose enemy state transitions.
+
+Important validation result:
+
+```text
+Ignore only EnemyWork preferred[] mismatches
+Comparison result: no remaining mismatch after applying filters.
+```
+
+This means the current adapter matches MAME for enemy position, enemy direction, `tempDir`, `tempX`, `tempY`, `rejectedMask`, `fallbackMask`, chase timer state when synchronized, gates, global timers, player, and ports. The remaining unsolved block is `EnemyWork.preferred[]`.
+
+Next work:
+
+- replace the temporary MAME reference `preferred[0]` dependency with a real reproduction of the arcade preferred-direction generator;
+- implement the base preferred-direction path around `0x2E5C`;
+- later replace reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem.
+
