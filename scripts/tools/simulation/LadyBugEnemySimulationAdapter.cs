@@ -1,11 +1,12 @@
 using System.Collections.Generic;
 
 /// <summary>
-/// Reference-direction step skeleton for the real Lady Bug enemy simulation adapter.
+/// Reference-direction validation adapter for the future real Lady Bug enemy simulation.
 ///
-/// The adapter now creates frames from its own mutable simulation state instead of
-/// directly returning an identity trace. It advances through the reference trace
-/// with a first minimal tick hook. Player, ports, gates, timers, and enemy control state are synced from MAME; active enemies are advanced by one pixel using the reference direction.
+/// The adapter creates frames from its own mutable simulation state. It advances
+/// through the reference trace with reference-driven enemy direction and partial
+/// EnemyWork reconstruction. preferred[], chase timers, and chase round-robin are
+/// temporarily synced from MAME while their real arcade generators are pending.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -13,9 +14,9 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, and updates first EnemyWork fields, including the first preferred fallback pair.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, and updates first EnemyWork fields, with preferred[] temporarily synced from the reference trace.";
 
-    public bool ExpectedToMismatch => true;
+    public bool ExpectedToMismatch => false;
 
     public SimulationAdapterResult Run(IReadOnlyList<EnemyTraceFrame> referenceFrames)
     {
@@ -39,10 +40,10 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
         return new SimulationAdapterResult(
             frames,
-            "Lady Bug reference-direction step; initial state: " + initialState.Summary +
+            "Lady Bug reference-synced EnemyWork checkpoint; initial state: " + initialState.Summary +
             "; AdvanceOneTick syncs player, ports, gates, timers, and enemy control state; " +
             "active enemies move one pixel using the MAME direction; " +
-            "EnemyWork tempDir/tempX/tempY, transient rejectedMask, preferred fallback pair and a one-tick 0x2E5C-style rotated preference pulse is derived after stable fallback; " +
+            "EnemyWork tempDir/tempX/tempY, transient rejectedMask, preferred fallback pair and preferred[] is temporarily synced from the reference trace; " +
             "real enemy decision logic is not implemented yet");
     }
 }

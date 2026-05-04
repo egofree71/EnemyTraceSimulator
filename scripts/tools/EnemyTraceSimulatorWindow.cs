@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.35: preferred-direction mismatch filter added for EnemyWork diagnostics.");
+        Log("v0.6.49: reference-synced EnemyWork checkpoint no longer expects a mismatch.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }

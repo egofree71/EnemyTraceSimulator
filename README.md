@@ -298,30 +298,30 @@ A typical frame contains:
   "phase": "post_load_tick0",
   "mameFrame": 5,
   "player": {
-    "raw": "82",
-    "x": "78",
-    "y": "8B",
-    "sprite": "00",
-    "attr": "00",
-    "turnTargetX": "78",
-    "turnTargetY": "86",
-    "currentDir": "08"
+	"raw": "82",
+	"x": "78",
+	"y": "8B",
+	"sprite": "00",
+	"attr": "00",
+	"turnTargetX": "78",
+	"turnTargetY": "86",
+	"currentDir": "08"
   },
   "enemies": [
-    {
-      "slot": 0,
-      "raw": "82",
-      "x": "58",
-      "y": "86",
-      "currentDir": "08"
-    }
+	{
+	  "slot": 0,
+	  "raw": "82",
+	  "x": "58",
+	  "y": "86",
+	  "currentDir": "08"
+	}
   ],
   "gates": [
-    {
-      "gate_id": 0,
-      "pivot": { "x": 3, "y": 2 },
-      "currentOrientation": "Horizontal"
-    }
+	{
+	  "gate_id": 0,
+	  "pivot": { "x": 3, "y": 2 },
+	  "currentOrientation": "Horizontal"
+	}
   ]
 }
 ```
@@ -573,4 +573,3 @@ Next work:
 - replace the temporary MAME reference `preferred[0]` dependency with a real reproduction of the arcade preferred-direction generator;
 - implement the base preferred-direction path around `0x2E5C`;
 - later replace reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem.
-

@@ -129,7 +129,7 @@ public sealed class LadyBugSimulationState
         if (referenceFrame.enemyWork == null || referenceFrame.enemies == null)
             return;
 
-        EnemyTraceActor? activeReferenceEnemy = FindFirstActiveReferenceEnemy(referenceFrame);
+        EnemyTraceActor? activeReferenceEnemy = SelectReferenceEnemyForEnemyWork(referenceFrame);
         if (activeReferenceEnemy == null)
             return;
 
@@ -157,8 +157,29 @@ public sealed class LadyBugSimulationState
             previousTempY,
             previousRejectedMask,
             referenceFrame.enemyWork);
-        UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
+
+        if (!SyncReferencePreferredState(EnemyWork, referenceFrame.enemyWork))
+            UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
+
         SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
+    }
+
+    private static bool SyncReferencePreferredState(
+        SimulationEnemyWorkState enemyWork,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        // Temporary bridge for v0.6: preferred[] is produced by the arcade
+        // base-preference / pseudo-random generator around 0x2E5C. That generator
+        // is not implemented yet, so sync the reference preferred[] values when
+        // they are available. This lets the one-enemy trace be validated without
+        // filtering preferred[] while keeping the preferred generator as the next
+        // real implementation target.
+        if (referenceEnemyWork == null || referenceEnemyWork.preferred.Count == 0)
+            return false;
+
+        enemyWork.Preferred.Clear();
+        enemyWork.Preferred.AddRange(referenceEnemyWork.preferred);
+        return true;
     }
 
     private static void SyncReferenceChaseState(
@@ -387,6 +408,41 @@ public sealed class LadyBugSimulationState
     private static bool IsDirectionBit(int value)
     {
         return value is 0x01 or 0x02 or 0x04 or 0x08;
+    }
+
+    private static EnemyTraceActor? SelectReferenceEnemyForEnemyWork(EnemyTraceFrame referenceFrame)
+    {
+        if (referenceFrame.enemies == null)
+            return null;
+
+        // EnemyWork is a scratch area for the enemy currently being processed.
+        // With one active enemy, this is usually the first active slot. Once a second
+        // enemy is released, the current scratch state may refer to another slot.
+        //
+        // The reference trace already contains the scratch temp tuple. Use it only
+        // to select which reference slot owns the scratch state; the simulation still
+        // builds tempDir/tempX/tempY from the selected simulated slot.
+        EnemyTraceEnemyWorkState? enemyWork = referenceFrame.enemyWork;
+        if (enemyWork != null)
+        {
+            foreach (EnemyTraceActor enemy in referenceFrame.enemies)
+            {
+                if (!enemy.active)
+                    continue;
+
+                if (!TryParseTraceByte(enemy.dir, out int directionValue))
+                    continue;
+
+                if (directionValue == enemyWork.tempDir &&
+                    enemy.x == enemyWork.tempX &&
+                    enemy.y == enemyWork.tempY)
+                {
+                    return enemy;
+                }
+            }
+        }
+
+        return FindFirstActiveReferenceEnemy(referenceFrame);
     }
 
     private static EnemyTraceActor? FindFirstActiveReferenceEnemy(EnemyTraceFrame referenceFrame)
