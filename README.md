@@ -298,30 +298,30 @@ A typical frame contains:
   "phase": "post_load_tick0",
   "mameFrame": 5,
   "player": {
-    "raw": "82",
-    "x": "78",
-    "y": "8B",
-    "sprite": "00",
-    "attr": "00",
-    "turnTargetX": "78",
-    "turnTargetY": "86",
-    "currentDir": "08"
+	"raw": "82",
+	"x": "78",
+	"y": "8B",
+	"sprite": "00",
+	"attr": "00",
+	"turnTargetX": "78",
+	"turnTargetY": "86",
+	"currentDir": "08"
   },
   "enemies": [
-    {
-      "slot": 0,
-      "raw": "82",
-      "x": "58",
-      "y": "86",
-      "currentDir": "08"
-    }
+	{
+	  "slot": 0,
+	  "raw": "82",
+	  "x": "58",
+	  "y": "86",
+	  "currentDir": "08"
+	}
   ],
   "gates": [
-    {
-      "gate_id": 0,
-      "pivot": { "x": 3, "y": 2 },
-      "currentOrientation": "Horizontal"
-    }
+	{
+	  "gate_id": 0,
+	  "pivot": { "x": 3, "y": 2 },
+	  "currentOrientation": "Horizontal"
+	}
   ]
 }
 ```
@@ -605,4 +605,3 @@ Scope of this checkpoint:
 Important limitation:
 
 `EnemyWork.preferred[]` is not yet simulated. It is intentionally synchronized from MAME as a bridge so the rest of the one-enemy pipeline can be validated without filtering. The next real AI task remains the implementation of the arcade preferred-direction generator, especially the path around `0x2E5C`.
-

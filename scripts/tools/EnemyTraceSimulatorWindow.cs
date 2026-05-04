@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.49: reference-synced EnemyWork checkpoint no longer expects a mismatch.");
+        Log("v0.6.51: preferred[] generator diagnostics added.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -912,7 +912,7 @@ public partial class EnemyTraceSimulatorWindow : Control
             Transient = false,
             Exclusive = false,
             Unresizable = false,
-            MinSize = new Vector2I(600, 390)
+            MinSize = new Vector2I(620, 440)
         };
 
         var margin = new MarginContainer();
@@ -933,7 +933,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current adapter syncs reference player, ports, gates, timers, advances active enemies using the MAME direction, derives EnemyWork temp fields, transient rejected-mask, fallback pair, and one-tick 0x2E5C-style rotated preference pulse after stable fallback. Real decision logic is still pending.",
+            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current adapter can reference-sync EnemyWork.preferred[] for validation. The diagnostics button compares simple 0x2E5C/R-register candidate generators against the MAME preferred[] trace.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
@@ -957,6 +957,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         AddSimulationAdapterButton(root, new IdentityTraceSimulationAdapter(), "Run identity comparison", ignoreEnemyWorkCheckBox, ignorePreferredCheckBox);
         AddSimulationAdapterButton(root, new InjectedMismatchSimulationAdapter(), "Run injected mismatch test", ignoreEnemyWorkCheckBox, ignorePreferredCheckBox);
         AddSimulationAdapterButton(root, new LadyBugEnemySimulationAdapter(), "Run Lady Bug reference-direction step", ignoreEnemyWorkCheckBox, ignorePreferredCheckBox);
+        AddPreferredDiagnosticsButton(root);
 
         var closeRow = new HBoxContainer
         {
@@ -975,7 +976,29 @@ public partial class EnemyTraceSimulatorWindow : Control
         closeRow.AddChild(closeButton);
 
         AddChild(compareWindow);
-        compareWindow.PopupCentered(new Vector2I(680, 440));
+        compareWindow.PopupCentered(new Vector2I(700, 500));
+    }
+
+    private void AddPreferredDiagnosticsButton(VBoxContainer root)
+    {
+        var button = new Button
+        {
+            Text = "Analyze preferred[] generator candidates",
+            TooltipText = "Compare simple 0x2E5C/R-register candidate generators against the MAME preferred[] trace without changing the simulation checkpoint.",
+            CustomMinimumSize = new Vector2(240, 38),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+
+        button.Pressed += RunPreferredGeneratorDiagnostics;
+        root.AddChild(button);
+    }
+
+    private void RunPreferredGeneratorDiagnostics()
+    {
+        IReadOnlyList<string> report = LadyBugPreferredGeneratorDiagnostics.BuildReport(_frames);
+
+        foreach (string line in report)
+            Log(line);
     }
 
     private void AddSimulationAdapterButton(
