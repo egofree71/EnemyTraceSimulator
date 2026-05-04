@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.4.8**
+Current package version: **v0.5.2**
 
 Implemented now:
 
@@ -157,6 +157,10 @@ The **Find** button opens a separate navigation helper window. It can jump to th
 
 The same window also includes a condition search area with **Find condition** and **Find next**. Current supported conditions include `enemyWork rejectedMask != 0`, `enemyWork fallbackMask != 0`, `enemyWork tempDir == value`, enemy direction checks, slot direction checks, and player direction checks.
 
+The **Compare** button runs the v0.5 comparison pipeline. For now it compares the MAME trace against an identity simulation generated from the same trace, so the expected result is zero mismatches. This validates the comparison plumbing before the real C# enemy simulation adapter is connected.
+
+The status line is displayed below the two board views, not inside the toolbar. This keeps the toolbar stable even after a large trace is loaded.
+
 ## Important Godot .NET rebuild note
 
 After replacing C# files, Godot may continue to run an older compiled assembly. If the UI does not reflect the latest patch, use:
@@ -195,16 +199,25 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │     ├─ EnemyTraceSimulatorWindow.cs
 │     ├─ MameTraceLauncher.cs
 │     ├─ MameTraceSettings.cs
-│     └─ trace/
-│        ├─ EnemyTraceActor.cs
-│        ├─ EnemyTraceFrame.cs
-│        ├─ EnemyTraceGateState.cs
-│        ├─ EnemyTraceEnemyWorkState.cs
-│        ├─ EnemyTraceTimersState.cs
-│        ├─ EnemyTracePortsState.cs
-│        ├─ EnemyTraceRawMemoryState.cs
-│        ├─ MameTraceCoordinates.cs
-│        └─ MameTraceLoader.cs
+│     ├─ trace/
+│     │  ├─ EnemyTraceActor.cs
+│     │  ├─ EnemyTraceFrame.cs
+│     │  ├─ EnemyTraceGateState.cs
+│     │  ├─ EnemyTraceEnemyWorkState.cs
+│     │  ├─ EnemyTraceTimersState.cs
+│     │  ├─ EnemyTracePortsState.cs
+│     │  ├─ EnemyTraceRawMemoryState.cs
+│     │  ├─ MameTraceCoordinates.cs
+│     │  └─ MameTraceLoader.cs
+│     └─ comparison/
+│        ├─ SimulationFrame.cs
+│        ├─ SimulationActorState.cs
+│        ├─ SimulationGateState.cs
+│        ├─ ComparisonFrame.cs
+│        ├─ TraceMismatch.cs
+│        ├─ TraceComparisonResult.cs
+│        ├─ TraceSimulationStub.cs
+│        └─ TraceComparisonRunner.cs
 ├─ tools/
 │  └─ mame/
 │     ├─ lua/
@@ -384,7 +397,10 @@ Implemented:
 - helpers for first active enemy, first direction change, first active frame for a selected slot, first direction change for a selected slot, and first gate change;
 - gate-change diagnostics in the Dump window, comparing the selected frame with the previous frame;
 - console summary of the gates that changed when using **Find → First gate change**;
-- condition-based search in the **Find** window.
+- condition-based search in the **Find** window;
+- initial comparison data model under `scripts/tools/comparison/`;
+- toolbar **Compare** button using a temporary identity simulation source;
+- status line moved below the two boards to avoid toolbar overflow.
 
 Remaining v0.4 work:
 
@@ -394,17 +410,23 @@ Remaining v0.4 work:
 
 ### v0.5: comparison data model
 
-Goal: prepare the comparison architecture without yet wiring the real game enemy AI.
+Status after v0.5.2: initial comparison model and identity comparison pipeline implemented.
 
-Planned work:
+Implemented:
 
-- add `SimulationFrame` and `ComparisonFrame` types;
-- add mismatch types for player, enemies, gates, timers, and metadata;
-- add a `TraceComparisonRunner`;
-- compare two trace-like frame sequences;
-- report the first mismatch in the console;
-- keep the left board trace-driven until the comparison model is stable;
-- add a small fake simulation source first, so the comparison pipeline can be tested without the full enemy AI.
+- `SimulationFrame`, `SimulationActorState`, and `SimulationGateState`;
+- `ComparisonFrame`, `TraceMismatch`, and `TraceComparisonResult`;
+- `TraceComparisonRunner`;
+- temporary `TraceSimulationStub` identity source;
+- toolbar **Compare** button;
+- first mismatch report in the console;
+- status line moved below the boards to avoid toolbar overflow.
+
+Remaining v0.5 work:
+
+- add richer mismatch categories for timers and metadata if needed;
+- optionally add a deliberate mismatch test source to validate mismatch reporting;
+- keep the left board trace-driven until the comparison model is stable.
 
 ### v0.6: C# enemy simulation adapter
 

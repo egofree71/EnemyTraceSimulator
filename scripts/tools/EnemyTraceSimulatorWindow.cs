@@ -36,6 +36,7 @@ public partial class EnemyTraceSimulatorWindow : Control
     private SpinBox? _tickSpinBox;
     private Button? _dumpFrameButton;
     private Button? _findFrameButton;
+    private Button? _compareButton;
 
 
     private static readonly JsonSerializerOptions SettingsJsonOptions = new()
@@ -61,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.4.8: condition-based trace search added.");
+        Log("v0.5.2: explicit status labels restored below boards.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -136,7 +137,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         if (_console != null)
             _console.WrapMode = TextEdit.LineWrappingMode.Boundary;
 
-        _statusLabel = GetNodeOrNull<Label>("Root/MainLayout/PlaybackControls/StatusLabel");
+        _statusLabel = GetNodeOrNull<Label>("Root/MainLayout/StatusLabel");
         _settingsButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/SettingsButton");
         _launchMameLuaButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/LaunchMameLuaButton");
         _runSimulationButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/RunSimulationButton");
@@ -145,6 +146,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _tickSpinBox = GetNodeOrNull<SpinBox>("Root/MainLayout/PlaybackControls/TickSpinBox");
         _dumpFrameButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/DumpFrameButton");
         _findFrameButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/FindFrameButton");
+        _compareButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/CompareButton");
 
         if (_simulationBoard != null)
             _simulationBoard.BoardTitle = "Simulation C# / Godot";
@@ -188,6 +190,11 @@ public partial class EnemyTraceSimulatorWindow : Control
             _findFrameButton,
             "Find",
             "Ouvrir les helpers de navigation dans la trace");
+
+        ConfigureTextButton(
+            _compareButton,
+            "Compare",
+            "Comparer la trace MAME avec une simulation de référence temporaire");
 
         UpdatePauseResumeButtonText();
     }
@@ -246,6 +253,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         ConnectButton("Root/MainLayout/PlaybackControls/StepButton", OnStepPressed);
         ConnectButton("Root/MainLayout/PlaybackControls/DumpFrameButton", OnDumpFramePressed);
         ConnectButton("Root/MainLayout/PlaybackControls/FindFrameButton", OnFindFramePressed);
+        ConnectButton("Root/MainLayout/PlaybackControls/CompareButton", OnComparePressed);
 
         if (_tickSpinBox != null)
             _tickSpinBox.ValueChanged += OnTickSpinBoxValueChanged;
@@ -883,6 +891,41 @@ public partial class EnemyTraceSimulatorWindow : Control
         _isUpdatingTickSpinBox = true;
         _tickSpinBox.Value = _frames[_currentFrameIndex].frame;
         _isUpdatingTickSpinBox = false;
+    }
+
+    private void OnComparePressed()
+    {
+        if (_frames.Count == 0)
+        {
+            Log("No trace loaded.");
+            return;
+        }
+
+        // v0.5.0 validates the comparison pipeline with an identity simulation source.
+        // The real C# enemy simulation adapter will replace this source in v0.6.
+        List<SimulationFrame> simulationFrames = TraceSimulationStub.CreateIdentitySimulation(_frames);
+        TraceComparisonResult result = TraceComparisonRunner.Compare(_frames, simulationFrames);
+
+        Log($"Comparison complete: comparedFrames={result.ComparedFrameCount}, mismatches={result.MismatchCount}");
+
+        if (!result.HasMismatch || result.FirstMismatch == null)
+        {
+            Log("Comparison result: no mismatch. Identity simulation pipeline is valid.");
+            return;
+        }
+
+        TraceMismatch mismatch = result.FirstMismatch;
+        Log($"First mismatch: frameIndex={mismatch.FrameIndex}, tick={mismatch.Tick}, kind={mismatch.Kind}, field={mismatch.Field}, expected={mismatch.Expected}, actual={mismatch.Actual}");
+
+        if (mismatch.FrameIndex >= 0 && mismatch.FrameIndex < _frames.Count)
+        {
+            _currentFrameIndex = mismatch.FrameIndex;
+            _isRunning = true;
+            _isPaused = true;
+            _playbackAccumulator = 0;
+            ApplyCurrentFrame();
+            UpdateStatus();
+        }
     }
 
     private void OnDumpFramePressed()
@@ -1742,8 +1785,8 @@ public partial class EnemyTraceSimulatorWindow : Control
         EnemyTraceFrame frame = _frames[_currentFrameIndex];
         string state = _isRunning && !_isPaused ? "lecture" : "pause";
         int activeEnemies = CountActiveEnemies(frame);
-        _statusLabel.Text = $"F {_currentFrameIndex + 1}/{_frames.Count} | T {frame.frame} | E {activeEnemies} | {state}";
-        _statusLabel.TooltipText = $"Frame {_currentFrameIndex + 1}/{_frames.Count} | tick={frame.frame} | active enemies={activeEnemies} | {state}";
+        _statusLabel.Text = $"Frame {_currentFrameIndex + 1}/{_frames.Count} | Tick {frame.frame} | Ennemis actifs {activeEnemies} | {state}";
+        _statusLabel.TooltipText = _statusLabel.Text;
     }
 
     private void Log(string message)

@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.4.8  
+**Current package version:** v0.5.2  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -123,7 +123,9 @@ EnemyTraceSimulator (Control)
       │  ├─ TickSpinBox (SpinBox)
       │  ├─ DumpFrameButton (Button)
       │  ├─ FindFrameButton (Button)
-      │  └─ StatusLabel (Label)
+      │  └─ CompareButton (Button)
+      ├─ BoardComparison (HBoxContainer)
+      ├─ StatusLabel (Label)
       ├─ BoardComparison (HBoxContainer)
       │  ├─ SimulationBoard (Control + EnemyTraceBoardView.cs)
       │  └─ MameTraceBoard (Control + EnemyTraceBoardView.cs)
@@ -157,6 +159,8 @@ Current role:
 - opens a separate trace navigation helper window;
 - reports gate orientation changes between the selected frame and the previous frame;
 - supports condition-based trace search from the Find window;
+- runs an initial comparison pipeline through the Compare button;
+- displays the status line below the two boards to avoid toolbar overflow;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -565,6 +569,14 @@ When **Find** is pressed:
 - supported conditions currently include `enemyWork rejectedMask != 0`, `enemyWork fallbackMask != 0`, `enemyWork tempDir == value`, active enemy direction checks, selected-slot direction checks, and player direction checks;
 - the selected frame is displayed immediately and playback is paused.
 
+When **Compare** is pressed:
+
+- the current v0.5 comparison pipeline runs;
+- the loaded MAME trace is compared against an identity simulation generated from the same trace;
+- the expected result is zero mismatches;
+- the console reports compared frame count and mismatch count;
+- if a mismatch is found, the first mismatch is reported and the viewer jumps to that frame.
+
 ### 8.6 Player debug workflow
 
 By default, the board stays visually clean.
@@ -611,6 +623,8 @@ Use `Ctrl + Home` to restore that default.
 - Trace navigation helper window.
 - Gate-change diagnostics in frame dumps and Find results.
 - Condition-based trace search.
+- Initial comparison data model.
+- Identity trace comparison through the Compare button.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -787,23 +801,27 @@ Remaining v0.4 work:
 
 ### v0.5: comparison data model
 
-Goal:
-- build the comparison pipeline before connecting the real enemy AI.
+Status after v0.5.2: initial comparison model and identity comparison pipeline implemented.
 
-Planned changes:
+Implemented:
 
-- add `SimulationFrame`;
-- add `ComparisonFrame`;
-- add mismatch types for:
-  - player;
-  - enemies;
-  - gates;
-  - timers;
-  - metadata;
-- add `TraceComparisonRunner`;
-- compare two frame sequences with the same shape;
-- report the first mismatch in the console;
-- initially test the comparison runner with a fake simulation source.
+- `SimulationFrame`;
+- `SimulationActorState`;
+- `SimulationGateState`;
+- `ComparisonFrame`;
+- `TraceMismatch` and `TraceMismatchKind`;
+- `TraceComparisonResult`;
+- `TraceComparisonRunner`;
+- `TraceSimulationStub` identity source;
+- toolbar **Compare** button;
+- console report with compared frame count, mismatch count, and first mismatch when present;
+- status label moved below the board views.
+
+Remaining v0.5 work:
+
+- add richer mismatch categories for timers and metadata if needed;
+- optionally add a deliberate mismatch source to test mismatch reporting;
+- keep the left board trace-driven until the comparison model is stable.
 
 ### v0.6: C# enemy simulation adapter
 
