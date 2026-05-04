@@ -35,6 +35,7 @@ public partial class EnemyTraceSimulatorWindow : Control
     private Button? _stepButton;
     private SpinBox? _tickSpinBox;
     private Button? _dumpFrameButton;
+    private Button? _findFrameButton;
 
 
     private static readonly JsonSerializerOptions SettingsJsonOptions = new()
@@ -60,7 +61,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.4.2: dump windows use native subwindows and compact status text.");
+        Log("v0.4.4: trace navigation helpers added.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -143,6 +144,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _stepButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/StepButton");
         _tickSpinBox = GetNodeOrNull<SpinBox>("Root/MainLayout/PlaybackControls/TickSpinBox");
         _dumpFrameButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/DumpFrameButton");
+        _findFrameButton = GetNodeOrNull<Button>("Root/MainLayout/PlaybackControls/FindFrameButton");
 
         if (_simulationBoard != null)
             _simulationBoard.BoardTitle = "Simulation C# / Godot";
@@ -181,6 +183,11 @@ public partial class EnemyTraceSimulatorWindow : Control
             _dumpFrameButton,
             "Dump",
             "Afficher dans la console le détail de la frame courante");
+
+        ConfigureTextButton(
+            _findFrameButton,
+            "Find",
+            "Ouvrir les helpers de navigation dans la trace");
 
         UpdatePauseResumeButtonText();
     }
@@ -238,6 +245,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         ConnectButton("Root/MainLayout/PlaybackControls/PauseResumeButton", OnPauseResumePressed);
         ConnectButton("Root/MainLayout/PlaybackControls/StepButton", OnStepPressed);
         ConnectButton("Root/MainLayout/PlaybackControls/DumpFrameButton", OnDumpFramePressed);
+        ConnectButton("Root/MainLayout/PlaybackControls/FindFrameButton", OnFindFramePressed);
 
         if (_tickSpinBox != null)
             _tickSpinBox.ValueChanged += OnTickSpinBoxValueChanged;
@@ -1101,6 +1109,270 @@ public partial class EnemyTraceSimulatorWindow : Control
         sb.AppendLine($"  DSW0/9002={ports.dsw0_9002:X2}");
         sb.AppendLine($"  DSW1/9003={ports.dsw1_9003:X2}");
         sb.AppendLine();
+    }
+
+    private void OnFindFramePressed()
+    {
+        if (_frames.Count == 0)
+        {
+            Log("No trace loaded.");
+            return;
+        }
+
+        ShowFindFrameWindow();
+    }
+
+    private void ShowFindFrameWindow()
+    {
+        var findWindow = new Window
+        {
+            Title = "Trace navigation helpers",
+            Transient = false,
+            Exclusive = false,
+            Unresizable = false,
+            MinSize = new Vector2I(460, 300)
+        };
+
+        var margin = new MarginContainer();
+        margin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        margin.AddThemeConstantOverride("margin_left", 12);
+        margin.AddThemeConstantOverride("margin_top", 12);
+        margin.AddThemeConstantOverride("margin_right", 12);
+        margin.AddThemeConstantOverride("margin_bottom", 12);
+        findWindow.AddChild(margin);
+
+        var root = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        root.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(root);
+
+        var explanation = new Label
+        {
+            Text = "Jump to useful frames in the loaded MAME trace.",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart
+        };
+        root.AddChild(explanation);
+
+        var slotRow = new HBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        slotRow.AddChild(new Label
+        {
+            Text = "Enemy slot:",
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(110, 0)
+        });
+
+        var slotSpin = new SpinBox
+        {
+            MinValue = 0,
+            MaxValue = 3,
+            Step = 1,
+            Rounded = true,
+            Value = 0,
+            CustomMinimumSize = new Vector2(90, 34)
+        };
+        slotRow.AddChild(slotSpin);
+        root.AddChild(slotRow);
+
+        var buttonGrid = new GridContainer
+        {
+            Columns = 2,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        buttonGrid.AddThemeConstantOverride("h_separation", 8);
+        buttonGrid.AddThemeConstantOverride("v_separation", 8);
+        root.AddChild(buttonGrid);
+
+        AddFindButton(buttonGrid, "First active enemy", () =>
+            JumpToFoundFrame("first active enemy", FindFirstActiveEnemyFrame()));
+
+        AddFindButton(buttonGrid, "First direction change", () =>
+            JumpToFoundFrame("first direction change", FindFirstEnemyDirectionChangeFrame()));
+
+        AddFindButton(buttonGrid, "First active for slot", () =>
+            JumpToFoundFrame($"first active enemy for slot {(int)slotSpin.Value}", FindFirstActiveEnemyFrameForSlot((int)slotSpin.Value)));
+
+        AddFindButton(buttonGrid, "Direction change for slot", () =>
+            JumpToFoundFrame($"first direction change for slot {(int)slotSpin.Value}", FindFirstEnemyDirectionChangeFrameForSlot((int)slotSpin.Value)));
+
+        AddFindButton(buttonGrid, "First gate change", () =>
+            JumpToFoundFrame("first gate change", FindFirstGateChangeFrame()));
+
+        AddFindButton(buttonGrid, "Current frame dump", () =>
+            ShowDumpWindow(_currentFrameIndex));
+
+        var closeRow = new HBoxContainer
+        {
+            Alignment = BoxContainer.AlignmentMode.End,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        root.AddChild(closeRow);
+
+        var closeButton = new Button
+        {
+            Text = "Close",
+            CustomMinimumSize = new Vector2(90, 34)
+        };
+        closeButton.Pressed += findWindow.QueueFree;
+        findWindow.CloseRequested += findWindow.QueueFree;
+        closeRow.AddChild(closeButton);
+
+        AddChild(findWindow);
+        findWindow.PopupCentered(new Vector2I(520, 360));
+    }
+
+    private static void AddFindButton(GridContainer grid, string text, Action handler)
+    {
+        var button = new Button
+        {
+            Text = text,
+            CustomMinimumSize = new Vector2(210, 36),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+
+        button.Pressed += handler;
+        grid.AddChild(button);
+    }
+
+    private void JumpToFoundFrame(string description, int frameIndex)
+    {
+        if (frameIndex < 0)
+        {
+            Log($"Find: {description} not found.");
+            return;
+        }
+
+        _currentFrameIndex = frameIndex;
+        _isRunning = true;
+        _isPaused = true;
+        _playbackAccumulator = 0;
+
+        ApplyCurrentFrame();
+        UpdateStatus();
+
+        EnemyTraceFrame frame = _frames[_currentFrameIndex];
+        Log($"Find: {description} -> index={frameIndex}, tick={frame.frame}");
+    }
+
+    private int FindFirstActiveEnemyFrame()
+    {
+        for (int i = 0; i < _frames.Count; i++)
+        {
+            if (CountActiveEnemies(_frames[i]) > 0)
+                return i;
+        }
+
+        return -1;
+    }
+
+    private int FindFirstActiveEnemyFrameForSlot(int slot)
+    {
+        for (int i = 0; i < _frames.Count; i++)
+        {
+            EnemyTraceActor? enemy = FindEnemyBySlot(_frames[i], slot);
+            if (enemy is { active: true })
+                return i;
+        }
+
+        return -1;
+    }
+
+    private int FindFirstEnemyDirectionChangeFrame()
+    {
+        var previousDirections = new Dictionary<int, string?>();
+
+        for (int i = 0; i < _frames.Count; i++)
+        {
+            EnemyTraceFrame frame = _frames[i];
+            if (frame.enemies == null)
+                continue;
+
+            foreach (EnemyTraceActor enemy in frame.enemies)
+            {
+                if (!enemy.active)
+                    continue;
+
+                if (previousDirections.TryGetValue(enemy.slot, out string? previousDirection) &&
+                    !string.Equals(previousDirection, enemy.dir, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+
+                previousDirections[enemy.slot] = enemy.dir;
+            }
+        }
+
+        return -1;
+    }
+
+    private int FindFirstEnemyDirectionChangeFrameForSlot(int slot)
+    {
+        string? previousDirection = null;
+        bool hasPrevious = false;
+
+        for (int i = 0; i < _frames.Count; i++)
+        {
+            EnemyTraceActor? enemy = FindEnemyBySlot(_frames[i], slot);
+            if (enemy is not { active: true })
+                continue;
+
+            if (hasPrevious &&
+                !string.Equals(previousDirection, enemy.dir, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+
+            previousDirection = enemy.dir;
+            hasPrevious = true;
+        }
+
+        return -1;
+    }
+
+    private int FindFirstGateChangeFrame()
+    {
+        Dictionary<int, string> previous = new();
+
+        for (int i = 0; i < _frames.Count; i++)
+        {
+            EnemyTraceFrame frame = _frames[i];
+            if (frame.gates == null)
+                continue;
+
+            foreach (EnemyTraceGateState gate in frame.gates)
+            {
+                string orientation = gate.orientation ?? string.Empty;
+
+                if (previous.TryGetValue(gate.gate_id, out string? previousOrientation) &&
+                    !string.Equals(previousOrientation, orientation, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+
+                previous[gate.gate_id] = orientation;
+            }
+        }
+
+        return -1;
+    }
+
+    private static EnemyTraceActor? FindEnemyBySlot(EnemyTraceFrame frame, int slot)
+    {
+        if (frame.enemies == null)
+            return null;
+
+        foreach (EnemyTraceActor enemy in frame.enemies)
+        {
+            if (enemy.slot == slot)
+                return enemy;
+        }
+
+        return null;
     }
 
     private void OnRunSimulationPressed()

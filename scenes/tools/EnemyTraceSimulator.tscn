@@ -106,6 +106,12 @@ layout_mode = 2
 text = "Dump"
 tooltip_text = "Afficher dans la console le détail de la frame courante"
 
+[node name="FindFrameButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+custom_minimum_size = Vector2(80, 38)
+layout_mode = 2
+text = "Find"
+tooltip_text = "Ouvrir les helpers de navigation dans la trace"
+
 [node name="StatusLabel" type="Label" parent="Root/MainLayout/PlaybackControls"]
 layout_mode = 2
 size_flags_horizontal = 3

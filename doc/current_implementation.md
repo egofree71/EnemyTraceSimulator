@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.4.2  
+**Current package version:** v0.4.4  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -122,6 +122,7 @@ EnemyTraceSimulator (Control)
       │  ├─ TickLabel (Label)
       │  ├─ TickSpinBox (SpinBox)
       │  ├─ DumpFrameButton (Button)
+      │  ├─ FindFrameButton (Button)
       │  └─ StatusLabel (Label)
       ├─ BoardComparison (HBoxContainer)
       │  ├─ SimulationBoard (Control + EnemyTraceBoardView.cs)
@@ -153,6 +154,7 @@ Current role:
 - supports inactive enemy slot diagnostic toggling;
 - supports direct tick navigation through the toolbar tick field;
 - opens a separate current-frame diagnostic dump window;
+- opens a separate trace navigation helper window;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -548,6 +550,16 @@ When **Dump** is pressed:
 - the main console receives only a short activity message;
 - the dump window shows metadata, player state, enemy slots, gates, enemy work RAM, timers, ports, and memory block sizes.
 
+When **Find** is pressed:
+
+- a separate navigation helper window opens;
+- the user can jump to the first active enemy frame;
+- the user can jump to the first enemy direction change;
+- the user can search the first active frame for a selected enemy slot;
+- the user can search the first direction change for a selected enemy slot;
+- the user can jump to the first gate change;
+- the selected frame is displayed immediately and playback is paused.
+
 ### 8.6 Player debug workflow
 
 By default, the board stays visually clean.
@@ -591,6 +603,7 @@ Use `Ctrl + Home` to restore that default.
 - Manual tick/frame stepping.
 - Direct tick jump field.
 - Current-frame diagnostic dump window.
+- Trace navigation helper window.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -745,7 +758,7 @@ Remaining v0.3 cleanup:
 
 ### v0.4: trace inspection and diagnostic state
 
-Status after v0.4.2: current-frame dump window implemented.
+Status after v0.4.4: current-frame dump window and trace navigation helpers implemented.
 
 Implemented:
 
@@ -753,12 +766,14 @@ Implemented:
 - separate diagnostic window for the current frame;
 - diagnostic dump of frame metadata, player state, enemy slots, gates, `enemyWork`, timers, ports, and raw-memory block sizes;
 - compact main console;
-- native subwindows so diagnostic windows are not trapped inside the main viewport.
+- native subwindows so diagnostic windows are not trapped inside the main viewport;
+- toolbar **Find** button;
+- navigation helpers for first active enemy, first direction change, selected-slot first active frame, selected-slot first direction change, and first gate change.
 
 Remaining v0.4 work:
 
-- show changed gates for the selected tick;
-- add helper navigation: first active enemy frame, first direction change, first frame for a given enemy slot, first frame matching a simple condition;
+- show which exact gate changed at the selected tick;
+- add a more generic condition-based search, if it becomes useful;
 - keep this phase read-only.
 
 ### v0.5: comparison data model
