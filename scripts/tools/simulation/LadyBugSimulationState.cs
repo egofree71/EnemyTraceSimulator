@@ -3,8 +3,8 @@ using System.Collections.Generic;
 /// <summary>
 /// Mutable state owned by the future Lady Bug enemy simulation adapter.
 ///
-/// v0.6.5 keeps the state frozen. Later patches should update this state by applying
-/// the real enemy movement logic one tick at a time.
+/// v0.6.7 adds the first tick-advance hook. It currently syncs external
+/// player/port inputs from the reference trace but does not move enemies yet.
 /// </summary>
 public sealed class LadyBugSimulationState
 {
@@ -34,6 +34,29 @@ public sealed class LadyBugSimulationState
         return state;
     }
 
+    public void AdvanceOneTick(EnemyTraceFrame referenceFrame)
+    {
+        // The player position and input ports are treated as external inputs for enemy
+        // validation. This lets the future enemy simulation chase the same player state
+        // observed in MAME while still owning enemy movement internally.
+        Player = referenceFrame.player == null
+            ? null
+            : CopyActor(referenceFrame.player);
+
+        Ports = referenceFrame.ports == null
+            ? null
+            : CopyPorts(referenceFrame.ports);
+
+        // Intentionally not updated yet:
+        // - enemies
+        // - gates
+        // - enemyWork
+        // - timers
+        //
+        // Later patches should replace this placeholder with the real Lady Bug
+        // enemy movement/timer/gate update sequence.
+    }
+
     public SimulationFrame BuildFrame(int frameIndex, EnemyTraceFrame referenceFrame)
     {
         var frame = new SimulationFrame
@@ -58,6 +81,30 @@ public sealed class LadyBugSimulationState
             frame.Gates.Add(CloneGate(gate));
 
         return frame;
+    }
+
+    private static SimulationActorState CopyActor(EnemyTraceActor actor)
+    {
+        return new SimulationActorState
+        {
+            Slot = actor.slot,
+            Raw = actor.raw,
+            X = actor.x,
+            Y = actor.y,
+            Direction = actor.dir,
+            Active = actor.active
+        };
+    }
+
+    private static SimulationPortsState CopyPorts(EnemyTracePortsState ports)
+    {
+        return new SimulationPortsState
+        {
+            In0_9000 = ports.in0_9000,
+            In1_9001 = ports.in1_9001,
+            Dsw0_9002 = ports.dsw0_9002,
+            Dsw1_9003 = ports.dsw1_9003
+        };
     }
 
     private static SimulationActorState CloneActor(SimulationActorState actor)

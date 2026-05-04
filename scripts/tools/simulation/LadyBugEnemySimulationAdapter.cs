@@ -4,16 +4,16 @@ using System.Collections.Generic;
 /// First skeleton for the real Lady Bug enemy simulation adapter.
 ///
 /// The adapter now creates frames from its own mutable simulation state instead of
-/// directly returning an identity trace. The state is intentionally frozen for now:
-/// no real enemy movement is applied yet.
+/// directly returning an identity trace. It advances through the reference trace
+/// with a first minimal tick hook, but no real enemy movement is applied yet.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
     public string Name => "Lady Bug adapter skeleton";
 
     public string Description =>
-        "Build the future Lady Bug simulation initial state from the trace. " +
-        "For now, the simulation state is frozen, so it should diverge once the arcade state changes.";
+        "Build the future Lady Bug simulation state from the trace. " +
+        "AdvanceOneTick currently syncs external player/port inputs only.";
 
     public bool ExpectedToMismatch => true;
 
@@ -30,11 +30,17 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
         var frames = new List<SimulationFrame>(referenceFrames.Count);
         for (int i = 0; i < referenceFrames.Count; i++)
+        {
+            if (i > 0)
+                simulationState.AdvanceOneTick(referenceFrames[i]);
+
             frames.Add(simulationState.BuildFrame(i, referenceFrames[i]));
+        }
 
         return new SimulationAdapterResult(
             frames,
             "Lady Bug adapter skeleton; initial state: " + initialState.Summary +
-            "; simulation state is frozen; expected to mismatch when MAME moves or changes state");
+            "; AdvanceOneTick currently syncs external player/port inputs only; " +
+            "enemy, gate, timer, and enemyWork logic are not implemented yet");
     }
 }

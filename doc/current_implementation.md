@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.5  
+**Current package version:** v0.6.7  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -164,7 +164,8 @@ Current role:
 - compares frame metadata, enemyWork, timers, and ports;
 - routes comparison through `IEnemySimulationAdapter` implementations;
 - includes a first `LadyBugEnemySimulationAdapter` skeleton;
-- generates Lady Bug adapter frames from a frozen `LadyBugSimulationState`;
+- generates Lady Bug adapter frames from a `LadyBugSimulationState`;
+- advances the adapter state with a first `AdvanceOneTick()` hook;
 - displays the status line below the two boards to avoid toolbar overflow;
 - writes messages to the bottom console and to Godot output.
 
@@ -582,7 +583,7 @@ When **Compare** is pressed:
 - the expected identity result is zero mismatches;
 - **Run injected mismatch test** uses `InjectedMismatchSimulationAdapter` and deliberately alters the first active enemy X coordinate by one pixel;
 - the injected test is expected to report a mismatch;
-- **Run Lady Bug adapter skeleton** uses `LadyBugEnemySimulationAdapter`; it builds a typed initial state, creates a frozen `LadyBugSimulationState`, and generates frames from that state;
+- **Run Lady Bug adapter skeleton** uses `LadyBugEnemySimulationAdapter`; it builds a typed initial state, creates a `LadyBugSimulationState`, calls `AdvanceOneTick()` for later frames, and generates frames from that state;
 - the console reports compared frame count and mismatch count;
 - comparison currently covers actors, gates, metadata, `enemyWork`, timers, and ports;
 - if a mismatch is found, the first mismatch is reported and the viewer jumps to that frame.
@@ -639,7 +640,8 @@ Use `Ctrl + Home` to restore that default.
 - Diagnostic state comparison: metadata, enemyWork, timers, ports.
 - Simulation adapter interface for comparison sources.
 - First Lady Bug simulation adapter skeleton.
-- Frozen Lady Bug simulation state used as the first non-identity adapter output.
+- Lady Bug simulation state used as the first non-identity adapter output.
+- First tick-advance hook syncing player and ports from the reference trace.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -846,7 +848,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.5: simulation adapter interface, first Lady Bug adapter skeleton, and frozen simulation state added.
+Status after v0.6.7: simulation adapter interface, first Lady Bug adapter skeleton, simulation state, and first tick-advance hook added.
 
 Implemented:
 
@@ -859,11 +861,13 @@ Implemented:
 - `LadyBugEnemySimulationAdapter` skeleton;
 - comparison window now runs adapters instead of directly calling the temporary trace stub;
 - comparison window includes **Run Lady Bug adapter skeleton**;
-- Lady Bug adapter now produces frames from a frozen simulation state instead of directly mirroring MAME.
+- Lady Bug adapter now produces frames from simulation state instead of directly mirroring MAME;
+- `LadyBugSimulationState.AdvanceOneTick()` exists;
+- the current tick hook syncs player and ports from the MAME reference trace.
 
 Planned next changes:
 
-- add a first tick-advance method to `LadyBugSimulationState`;
+- replace the placeholder tick hook with real enemy movement state advancement;
 - reuse or port the existing enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize the simulation from the MAME trace:
@@ -875,7 +879,7 @@ Planned next changes:
   - chase state;
   - enemy work state, if required;
 - advance one tick at a time;
-- replace the frozen skeleton output with real state advancement;
+- replace the placeholder enemy/gate/timer state with real state advancement;
 - compare simulated enemy positions and directions to MAME.
 
 ### v0.7: mismatch visualization

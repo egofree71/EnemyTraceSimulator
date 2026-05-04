@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.6.5**
+Current package version: **v0.6.7**
 
 Implemented now:
 
@@ -165,7 +165,9 @@ The temporary comparison sources now implement `IEnemySimulationAdapter`. This k
 
 `LadyBugEnemySimulationAdapter` now exists as the first skeleton for the future real C# simulation. It builds a typed `LadyBugSimulationInitialState` from the first MAME trace frame, including player, enemy slots, gates, enemyWork, timers, and ports.
 
-After v0.6.5, the adapter no longer directly returns an identity simulation. It builds a `LadyBugSimulationState` and generates frames from that frozen state. No real enemy movement is applied yet, so this adapter is now expected to diverge once the MAME trace changes state.
+After v0.6.5, the adapter no longer directly returns an identity simulation. It builds a `LadyBugSimulationState` and generates frames from that state. No real enemy movement is applied yet, so this adapter is expected to diverge once the MAME trace changes enemy, gate, timer, or enemyWork state.
+
+After v0.6.7, `LadyBugSimulationState.AdvanceOneTick()` exists. It currently synchronizes external inputs from the MAME reference trace, specifically the player state and input ports. Enemies, gates, timers, and enemyWork are still not advanced by real simulation logic yet.
 
 The status line is displayed below the two board views, not inside the toolbar. This keeps the toolbar stable even after a large trace is loaded.
 
@@ -427,6 +429,8 @@ Implemented:
 - first `LadyBugEnemySimulationAdapter` skeleton;
 - typed `LadyBugSimulationInitialState` built from the first MAME trace frame;
 - frozen `LadyBugSimulationState` used to generate simulation frames independently from the MAME trace;
+- first `AdvanceOneTick()` hook in `LadyBugSimulationState`;
+- player and input ports synchronized from the MAME reference trace during adapter playback;
 - status line moved below the two boards to avoid toolbar overflow.
 
 Remaining v0.4 work:
@@ -461,7 +465,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.5: simulation adapter interface, Lady Bug adapter skeleton, and frozen simulation state added.
+Status after v0.6.7: simulation adapter interface, Lady Bug adapter skeleton, frozen simulation state, and first tick-advance hook added.
 
 Implemented:
 
@@ -474,11 +478,13 @@ Implemented:
 - `LadyBugEnemySimulationAdapter` skeleton;
 - **Compare** window now runs adapters instead of calling the temporary stub directly;
 - **Compare** window includes **Run Lady Bug adapter skeleton**;
-- Lady Bug adapter now generates frames from its own frozen simulation state instead of directly mirroring MAME.
+- Lady Bug adapter now generates frames from its own simulation state instead of directly mirroring MAME;
+- `LadyBugSimulationState.AdvanceOneTick()` exists;
+- the tick hook currently syncs player and input ports from MAME as external inputs.
 
 Remaining v0.6 work:
 
-- add a first tick-advance method to `LadyBugSimulationState`;
+- replace the placeholder tick hook with real enemy movement state advancement;
 - reuse or port the enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize gates, maze, player position, enemies, timers, chase state, and enemy work state from the MAME trace;
