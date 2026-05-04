@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.2.34**
+Current package version: **v0.3.0**
 
 Implemented now:
 
@@ -26,7 +26,9 @@ Implemented now:
 - Lua runtime configuration generation;
 - MAME Lua trace script integration;
 - MAME save-state loading through MAME command-line options;
-- JSONL trace loading;
+- JSONL trace loading through `MameTraceLoader`;
+- trace model classes extracted under `scripts/tools/trace/`;
+- centralized MAME-to-Godot actor Y conversion through `MameTraceCoordinates`;
 - debug rendering of the logical 11 x 11 maze from `data/maze.json`;
 - rendering of rotating gates from the loaded trace;
 - rendering of the player from `assets/sprites/player/ladybug_spritesheet.png
@@ -181,7 +183,13 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │     ├─ EnemyTraceBoardView.cs
 │     ├─ EnemyTraceSimulatorWindow.cs
 │     ├─ MameTraceLauncher.cs
-│     └─ MameTraceSettings.cs
+│     ├─ MameTraceSettings.cs
+│     └─ trace/
+│        ├─ EnemyTraceActor.cs
+│        ├─ EnemyTraceFrame.cs
+│        ├─ EnemyTraceGateState.cs
+│        ├─ MameTraceCoordinates.cs
+│        └─ MameTraceLoader.cs
 ├─ tools/
 │  └─ mame/
 │     ├─ lua/
@@ -251,7 +259,7 @@ A typical frame contains:
 }
 ```
 
-The parser is intentionally tolerant and supports several field names used during the trace experiments, such as `pivot`, `gatePivot`, `orientation`, and `currentOrientation`.
+The parser is now isolated in `scripts/tools/trace/MameTraceLoader.cs`. It is intentionally tolerant and supports several field names used during the trace experiments, such as `pivot`, `gatePivot`, `orientation`, and `currentOrientation`.
 
 ## Debug board rendering
 
@@ -313,17 +321,21 @@ The next steps should now focus less on UI polish and more on making the trace p
 
 ### v0.3: trace model cleanup and loader extraction
 
-Goal: remove trace parsing and trace DTOs from `EnemyTraceSimulatorWindow.cs`.
+Status after v0.3.0: initial extraction done.
 
-Planned work:
+Implemented:
 
-- move `EnemyTraceFrame`, `EnemyTraceActor`, and `EnemyTraceGateState` into separate files;
-- add a dedicated `MameTraceLoader`;
-- add explicit DTOs for trace frames, actors, gates, timers, enemy work RAM, ports, and metadata;
-- keep support for the current JSONL trace format;
-- centralize MAME-to-Godot actor coordinate conversion, including the `0xDD - mameY` mirror;
+- `EnemyTraceFrame`, `EnemyTraceActor`, and `EnemyTraceGateState` moved into separate files;
+- dedicated `MameTraceLoader` added;
+- current JSONL trace loading kept unchanged from the UI point of view;
+- MAME-to-Godot actor Y conversion centralized in `MameTraceCoordinates`;
+- `EnemyTraceSimulatorWindow.cs` no longer owns JSON / JSONL parsing or trace DTO definitions.
+
+Remaining v0.3 cleanup:
+
+- add explicit DTOs for timers, enemy work RAM, ports, and metadata;
 - document which trace fields are source-of-truth and which are only visual/debug fields;
-- keep the UI behavior unchanged while the internals are cleaned up.
+- add small loader-focused tests or sample trace checks when the project structure is ready for tests.
 
 ### v0.4: trace inspection and diagnostic state
 

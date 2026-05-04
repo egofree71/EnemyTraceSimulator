@@ -11,12 +11,6 @@ public partial class EnemyTraceBoardView : Control
     private const int DefaultMazeHeight = 11;
     private const float ArcadeCellSize = 16.0f;
 
-    // MAME stores actor Y in the arcade hardware coordinate space, where the
-    // top of the maze has a high Y value and the bottom has a low Y value.
-    // Examples observed in MAME: top ~= 0xD6, bottom ~= 0x36.
-    // Godot/debug-board arcade coordinates use the opposite orientation, so
-    // every actor Y read from the trace must be mirrored before drawing.
-    private const int MameYMirror = 0xDD;
 
     private const string PlayerSpriteSheetPath = "res://assets/sprites/player/ladybug_spritesheet.png";
     private static readonly Vector2 PlayerSpriteFrameSize = new(64.0f, 64.0f);
@@ -467,21 +461,11 @@ public partial class EnemyTraceBoardView : Control
 
     private Vector2 ArcadePointToBoard(Vector2 origin, float cell, int mameX, int mameY)
     {
-        int godotArcadeY = MameToGodotArcadeY(mameY);
+        int godotArcadeY = MameTraceCoordinates.MameToGodotArcadeY(mameY);
 
         float localX = mameX / ArcadeCellSize * cell;
         float localY = godotArcadeY / ArcadeCellSize * cell;
         return origin + new Vector2(localX, localY);
-    }
-
-    private static int MameToGodotArcadeY(int mameY)
-    {
-        return MameYMirror - mameY;
-    }
-
-    private static int GodotToMameArcadeY(int godotArcadeY)
-    {
-        return MameYMirror - godotArcadeY;
     }
 
     private static Vector2 ArcadeDeltaToBoard(float cell, Vector2 arcadeDelta)

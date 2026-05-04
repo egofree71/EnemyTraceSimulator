@@ -34,11 +34,6 @@ public partial class EnemyTraceSimulatorWindow : Control
     private Button? _stepButton;
     private SpinBox? _tickSpinBox;
 
-    private static readonly JsonDocumentOptions TraceJsonDocumentOptions = new()
-    {
-        AllowTrailingCommas = true,
-        CommentHandling = JsonCommentHandling.Skip
-    };
 
     private static readonly JsonSerializerOptions SettingsJsonOptions = new()
     {
@@ -63,7 +58,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.2.34: tick jump field added. Ctrl+E toggles inactive enemy slots for diagnostics.");
+        Log("v0.3.0: trace model and JSONL loader extracted. Ctrl+E toggles inactive enemy slots for diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -323,10 +318,6 @@ public partial class EnemyTraceSimulatorWindow : Control
         return count;
     }
 
-    private static int MameToGodotArcadeY(int mameY)
-    {
-        return 0xDD - mameY;
-    }
 
     private void LogEnemyScan(int maxFrames)
     {
@@ -347,7 +338,7 @@ public partial class EnemyTraceSimulatorWindow : Control
             {
                 string activeFlag = enemy.active ? "A" : "-";
                 string knownFlag = enemy.HasKnownPosition ? "K" : "-";
-                parts.Add($"E{enemy.slot}:{activeFlag}{knownFlag} raw={enemy.raw:X2} mame=({enemy.x:X2},{enemy.y:X2}) godot=({enemy.x:X2},{MameToGodotArcadeY(enemy.y):X2}) dir={enemy.dir}");
+                parts.Add($"E{enemy.slot}:{activeFlag}{knownFlag} raw={enemy.raw:X2} mame=({enemy.x:X2},{enemy.y:X2}) godot=({enemy.x:X2},{MameTraceCoordinates.MameToGodotArcadeY(enemy.y):X2}) dir={enemy.dir}");
             }
 
             Log($"  idx={i} tick={frame.frame}: {string.Join(" | ", parts)}");
@@ -666,9 +657,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         try
         {
             string text = file.GetAsText();
-            _frames = path.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)
-                ? ParseJsonLinesTrace(text)
-                : ParseJsonTraceFile(text);
+            _frames = MameTraceLoader.Load(path, text);
         }
         catch (Exception ex)
         {
@@ -700,213 +689,10 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         EnemyTraceActor? player = _frames[0].player;
         if (player != null)
-            Log($"Player frame 0: mame=({player.x:X2},{player.y:X2}) godot=({player.x:X2},{MameToGodotArcadeY(player.y):X2}) target=({player.turnTargetX:X2},{player.turnTargetY:X2}) dir={player.dir}");
+            Log($"Player frame 0: mame=({player.x:X2},{player.y:X2}) godot=({player.x:X2},{MameTraceCoordinates.MameToGodotArcadeY(player.y):X2}) target=({player.turnTargetX:X2},{player.turnTargetY:X2}) dir={player.dir}");
 
         LogEnemyScan(10);
         UpdateStatus();
-    }
-
-    private static List<EnemyTraceFrame> ParseJsonTraceFile(string text)
-    {
-        using JsonDocument document = JsonDocument.Parse(text, TraceJsonDocumentOptions);
-        JsonElement root = document.RootElement;
-
-        var frames = new List<EnemyTraceFrame>();
-
-        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("frames", out JsonElement framesElement))
-        {
-            foreach (JsonElement frameElement in framesElement.EnumerateArray())
-                frames.Add(ParseFrame(frameElement));
-        }
-        else if (root.ValueKind == JsonValueKind.Object)
-        {
-            frames.Add(ParseFrame(root));
-        }
-
-        return frames;
-    }
-
-    private static List<EnemyTraceFrame> ParseJsonLinesTrace(string text)
-    {
-        var frames = new List<EnemyTraceFrame>();
-        string[] lines = text.Replace("\r\n", "\n").Split('\n');
-
-        foreach (string rawLine in lines)
-        {
-            string line = rawLine.Trim();
-            if (line.Length == 0)
-                continue;
-
-            using JsonDocument document = JsonDocument.Parse(line, TraceJsonDocumentOptions);
-            frames.Add(ParseFrame(document.RootElement));
-        }
-
-        return frames;
-    }
-
-    private static EnemyTraceFrame ParseFrame(JsonElement element)
-    {
-        var frame = new EnemyTraceFrame
-        {
-            frame = ReadInt(element, "frame", ReadInt(element, "tick", 0))
-        };
-
-        if (element.TryGetProperty("player", out JsonElement playerElement))
-            frame.player = ParseActor(playerElement, -1, true);
-
-        if (element.TryGetProperty("enemies", out JsonElement enemiesElement) && enemiesElement.ValueKind == JsonValueKind.Array)
-        {
-            frame.enemies = new List<EnemyTraceActor>();
-            foreach (JsonElement enemyElement in enemiesElement.EnumerateArray())
-                frame.enemies.Add(ParseActor(enemyElement, ReadInt(enemyElement, "slot", 0), false));
-        }
-
-        if (element.TryGetProperty("gates", out JsonElement gatesElement) && gatesElement.ValueKind == JsonValueKind.Array)
-        {
-            frame.gates = new List<EnemyTraceGateState>();
-            foreach (JsonElement gateElement in gatesElement.EnumerateArray())
-                frame.gates.Add(ParseGate(gateElement));
-        }
-
-        return frame;
-    }
-
-    private static EnemyTraceActor ParseActor(JsonElement element, int defaultSlot, bool defaultActive)
-    {
-        int raw = ReadInt(element, "raw", -1);
-
-        // The MAME v8 trace does not write collisionActive for the player,
-        // but it does write the raw 0x6026 byte. In the arcade object layout,
-        // bit 1 is the active / collision-enabled bit. Previously the debug
-        // renderer always forced the player to active, so stale/uninitialized
-        // player coordinates could appear as a strange red "P" near the
-        // top-left of the board when a trace was loaded.
-        bool activeFromRaw = raw >= 0 ? (raw & 0x02) != 0 : defaultActive;
-        bool activeFallback = ReadBool(element, "collisionActive", activeFromRaw);
-
-        int turnTargetX = ReadInt(element, "turnTargetX", ReadInt(element, "targetX", -1));
-        int turnTargetY = ReadInt(element, "turnTargetY", ReadInt(element, "targetY", -1));
-
-        return new EnemyTraceActor
-        {
-            slot = ReadInt(element, "slot", defaultSlot),
-            raw = raw,
-            x = ReadInt(element, "x", 0),
-            y = ReadInt(element, "y", 0),
-            sprite = ReadInt(element, "sprite", -1),
-            attr = ReadInt(element, "attr", -1),
-            turnTargetX = turnTargetX,
-            turnTargetY = turnTargetY,
-            dir = ReadString(element, "dir", ReadString(element, "currentDir", string.Empty)),
-            active = ReadBool(element, "active", activeFallback)
-        };
-    }
-
-    private static EnemyTraceGateState ParseGate(JsonElement element)
-    {
-        int pivotX = -1;
-        int pivotY = -1;
-
-        if (element.TryGetProperty("pivot", out JsonElement pivotElement) && pivotElement.ValueKind == JsonValueKind.Object)
-        {
-            pivotX = ReadInt(pivotElement, "x", -1);
-            pivotY = ReadInt(pivotElement, "y", -1);
-        }
-        else if (element.TryGetProperty("gatePivot", out JsonElement gatePivotElement) && gatePivotElement.ValueKind == JsonValueKind.Object)
-        {
-            pivotX = ReadInt(gatePivotElement, "x", -1);
-            pivotY = ReadInt(gatePivotElement, "y", -1);
-        }
-
-        return new EnemyTraceGateState
-        {
-            gate_id = ReadInt(element, "gate_id", ReadInt(element, "godotGateId", ReadInt(element, "id", -1))),
-            orientation = ReadString(element, "orientation", ReadString(element, "currentOrientation", "Unknown")),
-            pivot_x = pivotX,
-            pivot_y = pivotY
-        };
-    }
-
-    private static int ReadInt(JsonElement element, string propertyName, int fallback)
-    {
-        if (!element.TryGetProperty(propertyName, out JsonElement value))
-            return fallback;
-
-        return value.ValueKind switch
-        {
-            JsonValueKind.Number when value.TryGetInt32(out int n) => n,
-            JsonValueKind.String => ParseIntString(value.GetString(), fallback),
-            JsonValueKind.True => 1,
-            JsonValueKind.False => 0,
-            _ => fallback
-        };
-    }
-
-    private static int ParseIntString(string? text, int fallback)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return fallback;
-
-        string value = text.Trim();
-
-        if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-            return Convert.ToInt32(value[2..], 16);
-
-        bool looksHex = value.Length <= 2;
-        foreach (char c in value)
-        {
-            if (!Uri.IsHexDigit(c))
-            {
-                looksHex = false;
-                break;
-            }
-        }
-
-        if (looksHex)
-            return Convert.ToInt32(value, 16);
-
-        return int.TryParse(value, out int parsed) ? parsed : fallback;
-    }
-
-    private static string ReadString(JsonElement element, string propertyName, string fallback)
-    {
-        if (!element.TryGetProperty(propertyName, out JsonElement value))
-            return fallback;
-
-        return value.ValueKind switch
-        {
-            JsonValueKind.String => value.GetString() ?? fallback,
-            JsonValueKind.Number when value.TryGetInt32(out int n) => n.ToString("X2"),
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
-            _ => fallback
-        };
-    }
-
-    private static bool ReadBool(JsonElement element, string propertyName, bool fallback)
-    {
-        if (!element.TryGetProperty(propertyName, out JsonElement value))
-            return fallback;
-
-        return value.ValueKind switch
-        {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Number when value.TryGetInt32(out int n) => n != 0,
-            JsonValueKind.String => ParseBoolString(value.GetString(), fallback),
-            _ => fallback
-        };
-    }
-
-    private static bool ParseBoolString(string? text, bool fallback)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return fallback;
-
-        if (bool.TryParse(text, out bool parsed))
-            return parsed;
-
-        return ParseIntString(text, fallback ? 1 : 0) != 0;
     }
 
     private void OnTickSpinBoxValueChanged(double value)
@@ -1143,36 +929,4 @@ internal sealed class MameSettingsEditorFields
     public CheckBox FlushEveryTraceLine { get; init; } = null!;
     public CheckBox IncludeFullMemoryEachFrame { get; init; } = null!;
     public CheckBox IncludeLogicalMazeEachFrame { get; init; } = null!;
-}
-
-public sealed class EnemyTraceFrame
-{
-    public int frame { get; set; }
-    public EnemyTraceActor? player { get; set; }
-    public List<EnemyTraceActor>? enemies { get; set; }
-    public List<EnemyTraceGateState>? gates { get; set; }
-}
-
-public sealed class EnemyTraceActor
-{
-    public int slot { get; set; }
-    public int raw { get; set; } = -1;
-    public int x { get; set; }
-    public int y { get; set; }
-    public int sprite { get; set; } = -1;
-    public int attr { get; set; } = -1;
-    public int turnTargetX { get; set; } = -1;
-    public int turnTargetY { get; set; } = -1;
-    public bool HasTurnTarget => turnTargetX >= 0 && turnTargetY >= 0;
-    public bool HasKnownPosition => x != 0 || y != 0;
-    public string? dir { get; set; }
-    public bool active { get; set; } = true;
-}
-
-public sealed class EnemyTraceGateState
-{
-    public int gate_id { get; set; }
-    public string? orientation { get; set; }
-    public int pivot_x { get; set; } = -1;
-    public int pivot_y { get; set; } = -1;
 }
