@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.44  
+**Current package version:** v0.6.49  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -855,7 +855,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.44: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, and preferred-only comparison filtering added.
+Status after v0.6.49: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, preferred-only comparison filtering, reference-synced `preferred[]`, and no-mismatch one-enemy validation checkpoint added.
 
 Implemented:
 
@@ -880,6 +880,7 @@ Implemented:
 Planned next changes:
 
 - implement real `EnemyWork.preferred[]`, beginning with the arcade base-preference path around `0x2E5C`;
+- improve the MAME trace/logger for multi-enemy validation by identifying the `EnemyWork` owner slot;
 - replace temporary reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem;
 - replace the MAME reference direction with real enemy direction decision logic;
 - reuse or port the existing enemy movement classes from the Lady Bug remake;
@@ -942,7 +943,7 @@ It should be a strict diagnostic tool:
 
 ## v0.6.44 current checkpoint
 
-The current simulator is now a **reference-direction enemy work validator**.
+The current simulator is now a **reference-synced one-enemy EnemyWork validator**.
 
 The adapter still does not make independent enemy decisions. Instead, it uses the MAME trace direction for active enemies so that lower-level state handling can be validated without first solving the whole AI.
 
@@ -954,6 +955,7 @@ Current validated behavior:
 - `EnemyWork.fallbackMask` remains aligned for the current trace;
 - `EnemyWork.chaseTimers[]` and `EnemyWork.chaseRoundRobin` are temporarily synchronized from MAME;
 - comparison can filter only `EnemyWork.preferred[]` while still validating the rest of `EnemyWork`;
+- `EnemyWork.preferred[]` can also be temporarily synchronized from MAME so the one-enemy trace can pass without filters;
 - first-mismatch timeline logging prints compact reference/simulation state around the divergence.
 
 Current diagnostic result:
@@ -963,13 +965,44 @@ Comparison options: EnemyWork preferred[] mismatches ignored
 Comparison result: no remaining mismatch after applying filters.
 ```
 
-This means the only remaining mismatches in the current comparison path are in `EnemyWork.preferred[]`.
+Before v0.6.49, this meant the only remaining mismatches in the current comparison path were in `EnemyWork.preferred[]`. After v0.6.49, `preferred[]` is temporarily synchronized from MAME, so the one-enemy validation path can pass with no mismatch and no comparison filter.
 
 ### Important limitation
 
-`EnemyWork.preferred[]` is not yet simulated correctly. The timeline shows patterns that look like the arcade base-preference / pseudo-random generator rather than a simple chase direction. For now, `preferred[]` is either filtered from comparison or partially used from the MAME reference to compute `rejectedMask`.
+`EnemyWork.preferred[]` is not yet simulated correctly. The timeline shows patterns that look like the arcade base-preference / pseudo-random generator rather than a simple chase direction. For now, `preferred[]` is either filtered from comparison or synchronized from the MAME reference.
 
-The next implementation target should therefore be the preferred-direction generator, especially the arcade path around `0x2E5C`, before trying to remove the `preferred[]` filter.
+The next implementation target should therefore be the preferred-direction generator, especially the arcade path around `0x2E5C`, before removing the temporary reference sync.
 
 
 Comparison option: **Ignore only EnemyWork preferred[] mismatches** filters `EnemyWork.preferred[]` while keeping other `EnemyWork` fields active in comparison.
+
+
+## v0.6.49 current checkpoint
+
+The current adapter is now a **reference-synced one-enemy validation checkpoint**.
+
+The comparison can pass with no mismatch:
+
+```text
+Comparison result: no mismatch. Pipeline is valid.
+```
+
+Current behavior:
+
+- the enemy movement step is still reference-driven: active enemies move one arcade pixel per tick using the MAME direction;
+- `EnemyWork.tempDir`, `EnemyWork.tempX`, and `EnemyWork.tempY` are derived from the simulated selected enemy slot;
+- `EnemyWork.rejectedMask` is partially reconstructed from the decision-center candidate model;
+- `EnemyWork.preferred[]` is temporarily synchronized from the MAME trace;
+- `EnemyWork.chaseTimers[]` and `EnemyWork.chaseRoundRobin` are temporarily synchronized from the MAME trace;
+- the adapter now declares `ExpectedToMismatch => false`.
+
+Validation scope:
+
+- current official validation target: one active enemy, current trace length up to about tick 800;
+- multi-enemy traces are not yet treated as official validation targets;
+- before validating multi-enemy traces, the trace should expose all four enemy slots and identify the owner of the `EnemyWork` scratch state.
+
+### Remaining work
+
+`EnemyWork.preferred[]` remains the major unsimulated block. It is currently reference-synced, not generated. The next real simulation task is to implement the arcade preferred-direction generator around `0x2E5C`, then remove the temporary reference sync.
+

@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.6.44**
+Current package version: **v0.6.49**
 
 Implemented now:
 
@@ -298,30 +298,30 @@ A typical frame contains:
   "phase": "post_load_tick0",
   "mameFrame": 5,
   "player": {
-	"raw": "82",
-	"x": "78",
-	"y": "8B",
-	"sprite": "00",
-	"attr": "00",
-	"turnTargetX": "78",
-	"turnTargetY": "86",
-	"currentDir": "08"
+    "raw": "82",
+    "x": "78",
+    "y": "8B",
+    "sprite": "00",
+    "attr": "00",
+    "turnTargetX": "78",
+    "turnTargetY": "86",
+    "currentDir": "08"
   },
   "enemies": [
-	{
-	  "slot": 0,
-	  "raw": "82",
-	  "x": "58",
-	  "y": "86",
-	  "currentDir": "08"
-	}
+    {
+      "slot": 0,
+      "raw": "82",
+      "x": "58",
+      "y": "86",
+      "currentDir": "08"
+    }
   ],
   "gates": [
-	{
-	  "gate_id": 0,
-	  "pivot": { "x": 3, "y": 2 },
-	  "currentOrientation": "Horizontal"
-	}
+    {
+      "gate_id": 0,
+      "pivot": { "x": 3, "y": 2 },
+      "currentOrientation": "Horizontal"
+    }
   ]
 }
 ```
@@ -476,7 +476,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.44: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, and preferred-only comparison filtering added.
+Status after v0.6.49: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, preferred-only comparison filtering, reference-synced `preferred[]`, and no-mismatch one-enemy validation checkpoint added.
 
 Implemented:
 
@@ -501,8 +501,9 @@ Implemented:
 Remaining v0.6 work:
 
 - implement the real `EnemyWork.preferred[]` generator, beginning with the arcade base-preference path around `0x2E5C`;
+- improve the MAME trace/logger for multi-enemy validation by identifying the `EnemyWork` owner slot;
 - replace temporary reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem;
-- replace the reference direction with real enemy direction decision logic;
+- replace the reference direction with real enemy direction logic;
 - reuse or port the enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize gates, maze, player position, enemies, timers, chase state, and enemy work state from the MAME trace;
@@ -546,7 +547,7 @@ That means the tool should favor integer arcade-pixel positions, raw MAME values
 
 ## v0.6.44 checkpoint: reference-driven enemy work alignment
 
-After the reference-direction step work, the Lady Bug adapter can now validate the current 601-frame trace with **no remaining mismatch** when only `EnemyWork.preferred[]` mismatches are filtered.
+After the reference-direction step work, the Lady Bug adapter first validated the 601-frame trace with **no remaining mismatch** when only `EnemyWork.preferred[]` mismatches were filtered. After v0.6.49, `preferred[]` can also be reference-synced, allowing the one-enemy validation path to run with no mismatch and no comparison filter.
 
 Current behavior of `LadyBugEnemySimulationAdapter`:
 
@@ -557,6 +558,7 @@ Current behavior of `LadyBugEnemySimulationAdapter`:
 - keeps `EnemyWork.fallbackMask` aligned for the validated trace;
 - synchronizes `EnemyWork.chaseTimers[]` and `EnemyWork.chaseRoundRobin` from MAME as a temporary reference state;
 - supports comparison filters for either all `EnemyWork` mismatches or only `EnemyWork.preferred[]` mismatches;
+- can temporarily synchronize `EnemyWork.preferred[]` from MAME for one-enemy validation;
 - logs a compact mismatch timeline around the first mismatch to diagnose enemy state transitions.
 
 Important validation result:
@@ -566,10 +568,41 @@ Ignore only EnemyWork preferred[] mismatches
 Comparison result: no remaining mismatch after applying filters.
 ```
 
-This means the current adapter matches MAME for enemy position, enemy direction, `tempDir`, `tempX`, `tempY`, `rejectedMask`, `fallbackMask`, chase timer state when synchronized, gates, global timers, player, and ports. The remaining unsolved block is `EnemyWork.preferred[]`.
+This means the current adapter matches MAME for enemy position, enemy direction, `tempDir`, `tempX`, `tempY`, `rejectedMask`, `fallbackMask`, chase timer state when synchronized, gates, global timers, player, and ports. In v0.6.49, `EnemyWork.preferred[]` is also temporarily synchronized from MAME, so the one-enemy validation path can complete with no mismatch.
 
 Next work:
 
 - replace the temporary MAME reference `preferred[0]` dependency with a real reproduction of the arcade preferred-direction generator;
 - implement the base preferred-direction path around `0x2E5C`;
 - later replace reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem.
+
+
+## v0.6.49 checkpoint: reference-synced EnemyWork validation
+
+After v0.6.49, the Lady Bug adapter no longer expects a mismatch for the current one-enemy validation path.
+
+Current validation mode:
+
+- active enemies still move one arcade pixel per tick using the MAME reference direction;
+- player, ports, gates, global timers, chase timers, and chase round-robin remain synchronized from MAME;
+- `EnemyWork.tempDir`, `EnemyWork.tempX`, and `EnemyWork.tempY` are derived from the simulated selected enemy slot;
+- `EnemyWork.rejectedMask` is partially reconstructed from the decision-center candidate model;
+- `EnemyWork.preferred[]` is temporarily synchronized from the MAME trace;
+- the adapter reports `ExpectedToMismatch => false`.
+
+Validation result:
+
+```text
+Comparison result: no mismatch. Pipeline is valid.
+```
+
+Scope of this checkpoint:
+
+- validated for the current one-enemy trace up to roughly tick 800;
+- multi-enemy traces are not yet an official validation target;
+- before validating multi-enemy traces, the MAME trace/logger should explicitly identify which enemy slot owns the `EnemyWork` scratch state.
+
+Important limitation:
+
+`EnemyWork.preferred[]` is not yet simulated. It is intentionally synchronized from MAME as a bridge so the rest of the one-enemy pipeline can be validated without filtering. The next real AI task remains the implementation of the arcade preferred-direction generator, especially the path around `0x2E5C`.
+
