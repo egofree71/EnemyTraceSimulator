@@ -58,7 +58,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.3.0: trace model and JSONL loader extracted. Ctrl+E toggles inactive enemy slots for diagnostics.");
+        Log("v0.3.2: trace diagnostic blocks parsed. Ctrl+E toggles inactive enemy slots for diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -341,8 +341,32 @@ public partial class EnemyTraceSimulatorWindow : Control
                 parts.Add($"E{enemy.slot}:{activeFlag}{knownFlag} raw={enemy.raw:X2} mame=({enemy.x:X2},{enemy.y:X2}) godot=({enemy.x:X2},{MameTraceCoordinates.MameToGodotArcadeY(enemy.y):X2}) dir={enemy.dir}");
             }
 
-            Log($"  idx={i} tick={frame.frame}: {string.Join(" | ", parts)}");
+            string workText = FormatEnemyWork(frame.enemyWork);
+            Log($"  idx={i} tick={frame.frame}: {string.Join(" | ", parts)}{workText}");
         }
+    }
+
+    private static string FormatEnemyWork(EnemyTraceEnemyWorkState? enemyWork)
+    {
+        if (enemyWork == null)
+            return string.Empty;
+
+        return $" | work tmp={enemyWork.tempDir:X2}:({enemyWork.tempX:X2},{enemyWork.tempY:X2}) " +
+               $"rej={enemyWork.rejectedMask:X2} fb={enemyWork.fallbackMask:X2} " +
+               $"pref=[{FormatHexList(enemyWork.preferred)}] chase=[{FormatHexList(enemyWork.chaseTimers)}] " +
+               $"rr={enemyWork.chaseRoundRobin:X2}";
+    }
+
+    private static string FormatHexList(List<int>? values)
+    {
+        if (values == null || values.Count == 0)
+            return string.Empty;
+
+        var formatted = new List<string>(values.Count);
+        foreach (int value in values)
+            formatted.Add(value < 0 ? "--" : value.ToString("X2"));
+
+        return string.Join(",", formatted);
     }
 
     private void OnSettingsPressed()

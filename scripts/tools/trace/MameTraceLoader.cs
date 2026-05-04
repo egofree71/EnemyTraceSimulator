@@ -63,7 +63,13 @@ public static class MameTraceLoader
     {
         var frame = new EnemyTraceFrame
         {
-            frame = ReadInt(element, "frame", ReadInt(element, "tick", 0))
+            schema = ReadString(element, "schema", string.Empty),
+            frame = ReadInt(element, "frame", ReadInt(element, "tick", 0)),
+            phase = ReadString(element, "phase", string.Empty),
+            mameFrame = ReadInt(element, "mameFrame", -1),
+            pc = ReadString(element, "pc", string.Empty),
+            r = ReadString(element, "r", string.Empty),
+            logicalMaze6200_62AF = ReadString(element, "logicalMaze6200_62AF", string.Empty)
         };
 
         if (element.TryGetProperty("player", out JsonElement playerElement))
@@ -82,6 +88,15 @@ public static class MameTraceLoader
             foreach (JsonElement gateElement in gatesElement.EnumerateArray())
                 frame.gates.Add(ParseGate(gateElement));
         }
+
+        if (element.TryGetProperty("enemyWork", out JsonElement enemyWorkElement) && enemyWorkElement.ValueKind == JsonValueKind.Object)
+            frame.enemyWork = ParseEnemyWork(enemyWorkElement);
+
+        if (element.TryGetProperty("timers", out JsonElement timersElement) && timersElement.ValueKind == JsonValueKind.Object)
+            frame.timers = ParseTimers(timersElement);
+
+        if (element.TryGetProperty("ports", out JsonElement portsElement) && portsElement.ValueKind == JsonValueKind.Object)
+            frame.ports = ParsePorts(portsElement);
 
         return frame;
     }
@@ -136,6 +151,69 @@ public static class MameTraceLoader
             pivot_x = pivotX,
             pivot_y = pivotY
         };
+    }
+
+    private static EnemyTraceEnemyWorkState ParseEnemyWork(JsonElement element)
+    {
+        return new EnemyTraceEnemyWorkState
+        {
+            tempDir = ReadInt(element, "tempDir", -1),
+            tempX = ReadInt(element, "tempX", -1),
+            tempY = ReadInt(element, "tempY", -1),
+            rejectedMask = ReadInt(element, "rejectedMask", -1),
+            fallbackMask = ReadInt(element, "fallbackMask", -1),
+            preferred = ReadIntArray(element, "preferred"),
+            chaseTimers = ReadIntArray(element, "chaseTimers"),
+            chaseRoundRobin = ReadInt(element, "chaseRoundRobin", -1)
+        };
+    }
+
+    private static EnemyTraceTimersState ParseTimers(JsonElement element)
+    {
+        return new EnemyTraceTimersState
+        {
+            timer61B4 = ReadInt(element, "61B4", -1),
+            timer61B5 = ReadInt(element, "61B5", -1),
+            timer61B6 = ReadInt(element, "61B6", -1),
+            timer61B7 = ReadInt(element, "61B7", -1),
+            timer61B8 = ReadInt(element, "61B8", -1),
+            timer61B9 = ReadInt(element, "61B9", -1),
+            freeze61E1 = ReadInt(element, "freeze61E1", -1),
+            collectibleColorCounter6199 = ReadInt(element, "collectibleColorCounter6199", -1)
+        };
+    }
+
+    private static EnemyTracePortsState ParsePorts(JsonElement element)
+    {
+        return new EnemyTracePortsState
+        {
+            in0_9000 = ReadInt(element, "in0_9000", -1),
+            in1_9001 = ReadInt(element, "in1_9001", -1),
+            dsw0_9002 = ReadInt(element, "dsw0_9002", -1),
+            dsw1_9003 = ReadInt(element, "dsw1_9003", -1)
+        };
+    }
+
+    private static List<int> ReadIntArray(JsonElement element, string propertyName)
+    {
+        var result = new List<int>();
+
+        if (!element.TryGetProperty(propertyName, out JsonElement value) || value.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            result.Add(item.ValueKind switch
+            {
+                JsonValueKind.Number when item.TryGetInt32(out int n) => n,
+                JsonValueKind.String => ParseIntString(item.GetString(), -1),
+                JsonValueKind.True => 1,
+                JsonValueKind.False => 0,
+                _ => -1
+            });
+        }
+
+        return result;
     }
 
     private static int ReadInt(JsonElement element, string propertyName, int fallback)

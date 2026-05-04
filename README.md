@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.3.0**
+Current package version: **v0.3.2**
 
 Implemented now:
 
@@ -28,6 +28,7 @@ Implemented now:
 - MAME save-state loading through MAME command-line options;
 - JSONL trace loading through `MameTraceLoader`;
 - trace model classes extracted under `scripts/tools/trace/`;
+- diagnostic trace blocks parsed into dedicated classes: `EnemyTraceEnemyWorkState`, `EnemyTraceTimersState`, and `EnemyTracePortsState`;
 - centralized MAME-to-Godot actor Y conversion through `MameTraceCoordinates`;
 - debug rendering of the logical 11 x 11 maze from `data/maze.json`;
 - rendering of rotating gates from the loaded trace;
@@ -188,6 +189,9 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │        ├─ EnemyTraceActor.cs
 │        ├─ EnemyTraceFrame.cs
 │        ├─ EnemyTraceGateState.cs
+│        ├─ EnemyTraceEnemyWorkState.cs
+│        ├─ EnemyTraceTimersState.cs
+│        ├─ EnemyTracePortsState.cs
 │        ├─ MameTraceCoordinates.cs
 │        └─ MameTraceLoader.cs
 ├─ tools/
@@ -321,7 +325,7 @@ The next steps should now focus less on UI polish and more on making the trace p
 
 ### v0.3: trace model cleanup and loader extraction
 
-Status after v0.3.0: initial extraction done.
+Status after v0.3.2: trace model extraction and first diagnostic DTO pass done.
 
 Implemented:
 
@@ -329,11 +333,13 @@ Implemented:
 - dedicated `MameTraceLoader` added;
 - current JSONL trace loading kept unchanged from the UI point of view;
 - MAME-to-Godot actor Y conversion centralized in `MameTraceCoordinates`;
-- `EnemyTraceSimulatorWindow.cs` no longer owns JSON / JSONL parsing or trace DTO definitions.
+- `EnemyTraceSimulatorWindow.cs` no longer owns JSON / JSONL parsing or trace DTO definitions;
+- `enemyWork`, `timers`, and `ports` are now parsed into dedicated classes;
+- the first-frame enemy scan now logs compact enemy-work diagnostics, including temporary direction, rejection mask, fallback mask, preferred directions, and chase timers.
 
 Remaining v0.3 cleanup:
 
-- add explicit DTOs for timers, enemy work RAM, ports, and metadata;
+- add explicit DTOs for top-level metadata and optional raw memory blocks;
 - document which trace fields are source-of-truth and which are only visual/debug fields;
 - add small loader-focused tests or sample trace checks when the project structure is ready for tests.
 
