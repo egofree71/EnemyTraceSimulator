@@ -61,7 +61,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.4.4: trace navigation helpers added.");
+        Log("v0.4.6: gate-change diagnostics added.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -986,6 +986,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         AppendPlayerDump(sb, frame.player);
         AppendEnemiesDump(sb, frame);
         AppendGatesDump(sb, frame);
+        AppendGateChangesDump(sb, frameIndex);
         AppendEnemyWorkDump(sb, frame.enemyWork);
         AppendTimersDump(sb, frame.timers);
         AppendPortsDump(sb, frame.ports);
@@ -1058,6 +1059,83 @@ public partial class EnemyTraceSimulatorWindow : Control
             sb.AppendLine($"  ... {frame.gates.Count - max} more gates not shown");
 
         sb.AppendLine();
+    }
+
+    private void AppendGateChangesDump(StringBuilder sb, int frameIndex)
+    {
+        List<GateChange> changes = GetGateChangesFromPreviousFrame(frameIndex);
+
+        if (changes.Count == 0)
+        {
+            sb.AppendLine("Gate changes from previous frame: none");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine($"Gate changes from previous frame: {changes.Count}");
+        foreach (GateChange change in changes)
+        {
+            sb.AppendLine($"  Gate {change.GateId}: {change.PreviousOrientation} -> {change.CurrentOrientation} pivot=({change.PivotX},{change.PivotY})");
+        }
+
+        sb.AppendLine();
+    }
+
+    private string BuildGateChangeSummary(int frameIndex)
+    {
+        if (frameIndex <= 0 || frameIndex >= _frames.Count)
+            return "Gate changes: none";
+
+        EnemyTraceFrame frame = _frames[frameIndex];
+        List<GateChange> changes = GetGateChangesFromPreviousFrame(frameIndex);
+
+        if (changes.Count == 0)
+            return $"Gate changes at tick {frame.frame}: none";
+
+        var parts = new List<string>(changes.Count);
+        foreach (GateChange change in changes)
+            parts.Add($"G{change.GateId}:{change.PreviousOrientation}->{change.CurrentOrientation}");
+
+        return $"Gate changes at tick {frame.frame}: {string.Join(", ", parts)}";
+    }
+
+    private List<GateChange> GetGateChangesFromPreviousFrame(int frameIndex)
+    {
+        var changes = new List<GateChange>();
+
+        if (frameIndex <= 0 || frameIndex >= _frames.Count)
+            return changes;
+
+        List<EnemyTraceGateState>? previousGates = _frames[frameIndex - 1].gates;
+        List<EnemyTraceGateState>? currentGates = _frames[frameIndex].gates;
+
+        if (previousGates == null || currentGates == null)
+            return changes;
+
+        var previousById = new Dictionary<int, EnemyTraceGateState>();
+        foreach (EnemyTraceGateState previousGate in previousGates)
+            previousById[previousGate.gate_id] = previousGate;
+
+        foreach (EnemyTraceGateState currentGate in currentGates)
+        {
+            if (!previousById.TryGetValue(currentGate.gate_id, out EnemyTraceGateState? previousGate))
+                continue;
+
+            string previousOrientation = previousGate.orientation ?? string.Empty;
+            string currentOrientation = currentGate.orientation ?? string.Empty;
+
+            if (string.Equals(previousOrientation, currentOrientation, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            changes.Add(new GateChange(
+                currentGate.gate_id,
+                previousOrientation,
+                currentOrientation,
+                currentGate.pivot_x,
+                currentGate.pivot_y));
+        }
+
+        return changes;
     }
 
     private static void AppendEnemyWorkDump(StringBuilder sb, EnemyTraceEnemyWorkState? enemyWork)
@@ -1201,7 +1279,7 @@ public partial class EnemyTraceSimulatorWindow : Control
             JumpToFoundFrame($"first direction change for slot {(int)slotSpin.Value}", FindFirstEnemyDirectionChangeFrameForSlot((int)slotSpin.Value)));
 
         AddFindButton(buttonGrid, "First gate change", () =>
-            JumpToFoundFrame("first gate change", FindFirstGateChangeFrame()));
+            JumpToFirstGateChangeFrame());
 
         AddFindButton(buttonGrid, "Current frame dump", () =>
             ShowDumpWindow(_currentFrameIndex));
@@ -1224,6 +1302,15 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         AddChild(findWindow);
         findWindow.PopupCentered(new Vector2I(520, 360));
+    }
+
+    private void JumpToFirstGateChangeFrame()
+    {
+        int frameIndex = FindFirstGateChangeFrame();
+        JumpToFoundFrame("first gate change", frameIndex);
+
+        if (frameIndex >= 0)
+            Log(BuildGateChangeSummary(frameIndex));
     }
 
     private static void AddFindButton(GridContainer grid, string text, Action handler)
@@ -1336,26 +1423,10 @@ public partial class EnemyTraceSimulatorWindow : Control
 
     private int FindFirstGateChangeFrame()
     {
-        Dictionary<int, string> previous = new();
-
-        for (int i = 0; i < _frames.Count; i++)
+        for (int i = 1; i < _frames.Count; i++)
         {
-            EnemyTraceFrame frame = _frames[i];
-            if (frame.gates == null)
-                continue;
-
-            foreach (EnemyTraceGateState gate in frame.gates)
-            {
-                string orientation = gate.orientation ?? string.Empty;
-
-                if (previous.TryGetValue(gate.gate_id, out string? previousOrientation) &&
-                    !string.Equals(previousOrientation, orientation, StringComparison.OrdinalIgnoreCase))
-                {
-                    return i;
-                }
-
-                previous[gate.gate_id] = orientation;
-            }
+            if (GetGateChangesFromPreviousFrame(i).Count > 0)
+                return i;
         }
 
         return -1;
@@ -1374,6 +1445,13 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         return null;
     }
+
+    private readonly record struct GateChange(
+        int GateId,
+        string PreviousOrientation,
+        string CurrentOrientation,
+        int PivotX,
+        int PivotY);
 
     private void OnRunSimulationPressed()
     {
