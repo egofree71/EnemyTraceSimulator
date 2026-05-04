@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.5.6**
+Current package version: **v0.6.0**
 
 Implemented now:
 
@@ -161,6 +161,8 @@ The **Compare** button opens a comparison test window. For now, it can run two c
 
 The comparison runner now checks actors, gates, frame metadata, `enemyWork`, timers, and ports. This gives the future simulation adapter a broader target than just enemy coordinates.
 
+The temporary comparison sources now implement `IEnemySimulationAdapter`. This keeps the **Compare** window independent from any specific simulation source and prepares the project for a future `LadyBugEnemySimulationAdapter` backed by the real C# enemy movement logic.
+
 The status line is displayed below the two board views, not inside the toolbar. This keeps the toolbar stable even after a large trace is loaded.
 
 ## Important Godot .NET rebuild note
@@ -211,18 +213,23 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │     │  ├─ EnemyTraceRawMemoryState.cs
 │     │  ├─ MameTraceCoordinates.cs
 │     │  └─ MameTraceLoader.cs
-│     └─ comparison/
-│        ├─ SimulationFrame.cs
-│        ├─ SimulationActorState.cs
-│        ├─ SimulationGateState.cs
-│        ├─ SimulationEnemyWorkState.cs
-│        ├─ SimulationTimersState.cs
-│        ├─ SimulationPortsState.cs
-│        ├─ ComparisonFrame.cs
-│        ├─ TraceMismatch.cs
-│        ├─ TraceComparisonResult.cs
-│        ├─ TraceSimulationStub.cs
-│        └─ TraceComparisonRunner.cs
+│     ├─ comparison/
+│     │  ├─ SimulationFrame.cs
+│     │  ├─ SimulationActorState.cs
+│     │  ├─ SimulationGateState.cs
+│     │  ├─ SimulationEnemyWorkState.cs
+│     │  ├─ SimulationTimersState.cs
+│     │  ├─ SimulationPortsState.cs
+│     │  ├─ ComparisonFrame.cs
+│     │  ├─ TraceMismatch.cs
+│     │  ├─ TraceComparisonResult.cs
+│     │  ├─ TraceSimulationStub.cs
+│     │  └─ TraceComparisonRunner.cs
+│     └─ simulation/
+│        ├─ IEnemySimulationAdapter.cs
+│        ├─ SimulationAdapterResult.cs
+│        ├─ IdentityTraceSimulationAdapter.cs
+│        └─ InjectedMismatchSimulationAdapter.cs
 ├─ tools/
 │  └─ mame/
 │     ├─ lua/
@@ -408,6 +415,8 @@ Implemented:
 - temporary identity simulation source;
 - injected mismatch test source for validating mismatch detection;
 - comparison support for frame metadata, enemyWork, timers, and ports;
+- simulation adapter interface under `scripts/tools/simulation/`;
+- temporary comparison sources converted into simulation adapters;
 - status line moved below the two boards to avoid toolbar overflow.
 
 Remaining v0.4 work:
@@ -442,10 +451,19 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Goal: connect the simulator to the real C# enemy movement logic.
+Status after v0.6.0: simulation adapter interface added.
 
-Planned work:
+Implemented:
 
+- `IEnemySimulationAdapter` interface;
+- `SimulationAdapterResult`;
+- `IdentityTraceSimulationAdapter`;
+- `InjectedMismatchSimulationAdapter`;
+- **Compare** window now runs adapters instead of calling the temporary stub directly.
+
+Remaining v0.6 work:
+
+- create a first `LadyBugEnemySimulationAdapter` skeleton;
 - reuse or port the enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize gates, maze, player position, enemies, timers, chase state, and enemy work state from the MAME trace;

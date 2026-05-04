@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.5.6: diagnostic state comparison added.");
+        Log("v0.6.0: simulation adapter interface added.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -938,31 +938,8 @@ public partial class EnemyTraceSimulatorWindow : Control
         };
         root.AddChild(explanation);
 
-        var identityButton = new Button
-        {
-            Text = "Run identity comparison",
-            CustomMinimumSize = new Vector2(240, 38),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
-        };
-        identityButton.Pressed += () =>
-            RunComparison(
-                "identity comparison",
-                TraceSimulationStub.CreateIdentitySimulation(_frames),
-                expectMismatch: false);
-        root.AddChild(identityButton);
-
-        var injectedMismatchButton = new Button
-        {
-            Text = "Run injected mismatch test",
-            CustomMinimumSize = new Vector2(240, 38),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
-        };
-        injectedMismatchButton.Pressed += () =>
-            RunComparison(
-                "injected mismatch test",
-                TraceSimulationStub.CreateFirstActiveEnemyXMismatchSimulation(_frames),
-                expectMismatch: true);
-        root.AddChild(injectedMismatchButton);
+        AddSimulationAdapterButton(root, new IdentityTraceSimulationAdapter(), "Run identity comparison");
+        AddSimulationAdapterButton(root, new InjectedMismatchSimulationAdapter(), "Run injected mismatch test");
 
         var closeRow = new HBoxContainer
         {
@@ -984,16 +961,34 @@ public partial class EnemyTraceSimulatorWindow : Control
         compareWindow.PopupCentered(new Vector2I(540, 300));
     }
 
-    private void RunComparison(string label, List<SimulationFrame> simulationFrames, bool expectMismatch)
+    private void AddSimulationAdapterButton(VBoxContainer root, IEnemySimulationAdapter adapter, string text)
     {
-        TraceComparisonResult result = TraceComparisonRunner.Compare(_frames, simulationFrames);
+        var button = new Button
+        {
+            Text = text,
+            TooltipText = adapter.Description,
+            CustomMinimumSize = new Vector2(240, 38),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
 
-        Log($"Comparison [{label}]: comparedFrames={result.ComparedFrameCount}, mismatches={result.MismatchCount}");
+        button.Pressed += () => RunComparison(adapter);
+        root.AddChild(button);
+    }
+
+    private void RunComparison(IEnemySimulationAdapter adapter)
+    {
+        SimulationAdapterResult simulationResult = adapter.Run(_frames);
+        TraceComparisonResult result = TraceComparisonRunner.Compare(_frames, simulationResult.Frames);
+
+        Log($"Comparison [{adapter.Name}]: comparedFrames={result.ComparedFrameCount}, mismatches={result.MismatchCount}");
+
+        if (!string.IsNullOrWhiteSpace(simulationResult.Summary))
+            Log($"Simulation source: {simulationResult.Summary}");
 
         if (!result.HasMismatch || result.FirstMismatch == null)
         {
-            Log(expectMismatch
-                ? "Comparison result: no mismatch found, but this test expected one."
+            Log(adapter.ExpectedToMismatch
+                ? "Comparison result: no mismatch found, but this adapter expected one."
                 : "Comparison result: no mismatch. Pipeline is valid.");
             return;
         }

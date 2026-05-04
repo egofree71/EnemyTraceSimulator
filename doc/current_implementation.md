@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.5.6  
+**Current package version:** v0.6.0  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -162,6 +162,7 @@ Current role:
 - runs an initial comparison pipeline through the Compare button;
 - opens a comparison test window with identity and injected-mismatch checks;
 - compares frame metadata, enemyWork, timers, and ports;
+- routes comparison through `IEnemySimulationAdapter` implementations;
 - displays the status line below the two boards to avoid toolbar overflow;
 - writes messages to the bottom console and to Godot output.
 
@@ -574,9 +575,10 @@ When **Find** is pressed:
 When **Compare** is pressed:
 
 - a separate **Trace comparison** window opens;
-- **Run identity comparison** compares the loaded MAME trace against an identity simulation generated from the same trace;
+- each button runs an `IEnemySimulationAdapter`;
+- **Run identity comparison** uses `IdentityTraceSimulationAdapter` and compares the loaded MAME trace against an identity simulation generated from the same trace;
 - the expected identity result is zero mismatches;
-- **Run injected mismatch test** deliberately alters the first active enemy X coordinate by one pixel;
+- **Run injected mismatch test** uses `InjectedMismatchSimulationAdapter` and deliberately alters the first active enemy X coordinate by one pixel;
 - the injected test is expected to report a mismatch;
 - the console reports compared frame count and mismatch count;
 - comparison currently covers actors, gates, metadata, `enemyWork`, timers, and ports;
@@ -632,6 +634,7 @@ Use `Ctrl + Home` to restore that default.
 - Identity trace comparison through the Compare button.
 - Injected mismatch comparison test.
 - Diagnostic state comparison: metadata, enemyWork, timers, ports.
+- Simulation adapter interface for comparison sources.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -838,11 +841,19 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Goal:
-- connect the diagnostic tool to the real C# enemy movement logic.
+Status after v0.6.0: simulation adapter interface added.
 
-Planned changes:
+Implemented:
 
+- `IEnemySimulationAdapter`;
+- `SimulationAdapterResult`;
+- `IdentityTraceSimulationAdapter`;
+- `InjectedMismatchSimulationAdapter`;
+- comparison window now runs adapters instead of directly calling the temporary trace stub.
+
+Planned next changes:
+
+- create a first `LadyBugEnemySimulationAdapter` skeleton;
 - reuse or port the existing enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize the simulation from the MAME trace:
