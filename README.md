@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.2.32**
+Current package version: **v0.2.34**
 
 Implemented now:
 
@@ -39,6 +39,7 @@ assets/sprites/enemies/enemy_level1.png` when available;
 - inactive enemy slots hidden by default, with an optional diagnostic toggle;
 - MAME-to-Godot actor Y mirroring with `0xDD - mameY`;
 - playback controls: restart, pause/resume, step one tick;
+- direct tick jump field in the toolbar;
 - two synchronized boards: left for future C# simulation, right for MAME trace;
 - bottom console area for runtime messages;
 - `.gitignore` rules for generated traces, logs, runtime files, and local MAME state files.
@@ -130,7 +131,7 @@ Charger trace
 
 to load the generated trace.
 
-7. Use the playback buttons:
+7. Use the playback controls:
 
 ```text
 ⚙    edit MAME trace settings
@@ -138,7 +139,10 @@ to load the generated trace.
 ▶    resume playback
 ❚❚   pause playback
 ▶|   advance one tick
+Tick jump to the requested trace tick
 ```
+
+The tick field is synchronized with playback. If the requested tick is not present in the trace, the viewer shows the nearest available frame and writes a message to the console.
 
 ## Important Godot .NET rebuild note
 
@@ -219,30 +223,30 @@ A typical frame contains:
   "phase": "post_load_tick0",
   "mameFrame": 5,
   "player": {
-	"raw": "82",
-	"x": "78",
-	"y": "8B",
-	"sprite": "00",
-	"attr": "00",
-	"turnTargetX": "78",
-	"turnTargetY": "86",
-	"currentDir": "08"
+    "raw": "82",
+    "x": "78",
+    "y": "8B",
+    "sprite": "00",
+    "attr": "00",
+    "turnTargetX": "78",
+    "turnTargetY": "86",
+    "currentDir": "08"
   },
   "enemies": [
-	{
-	  "slot": 0,
-	  "raw": "82",
-	  "x": "58",
-	  "y": "86",
-	  "currentDir": "08"
-	}
+    {
+      "slot": 0,
+      "raw": "82",
+      "x": "58",
+      "y": "86",
+      "currentDir": "08"
+    }
   ],
   "gates": [
-	{
-	  "gate_id": 0,
-	  "pivot": { "x": 3, "y": 2 },
-	  "currentOrientation": "Horizontal"
-	}
+    {
+      "gate_id": 0,
+      "pivot": { "x": 3, "y": 2 },
+      "currentOrientation": "Horizontal"
+    }
   ]
 }
 ```

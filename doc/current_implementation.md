@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.2.32  
+**Current package version:** v0.2.34  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -98,6 +98,8 @@ EnemyTraceSimulator (Control)
       │  ├─ RunSimulationButton (Button)
       │  ├─ PauseResumeButton (Button)
       │  ├─ StepButton (Button)
+      │  ├─ TickLabel (Label)
+      │  ├─ TickSpinBox (SpinBox)
       │  └─ StatusLabel (Label)
       ├─ BoardComparison (HBoxContainer)
       │  ├─ SimulationBoard (Control + EnemyTraceBoardView.cs)
@@ -128,6 +130,7 @@ Current role:
 - supports manual single-frame stepping;
 - supports runtime player debug controls;
 - supports inactive enemy slot diagnostic toggling;
+- supports direct tick navigation through the toolbar tick field;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -144,6 +147,7 @@ Current toolbar / playback buttons:
 ▶    resume playback
 ❚❚   pause playback
 ▶|   advance one tick
+Tick jump to the requested trace tick
 ```
 
 Current debug shortcuts:
@@ -455,6 +459,8 @@ When **Charger trace** is pressed:
 
 ### 8.5 Playback
 
+The toolbar includes a tick field after the step button. After a trace is loaded, it displays the current trace tick. Entering a tick jumps directly to the corresponding frame. If the exact tick is not present, the nearest frame is displayed and a console message explains the fallback.
+
 When **↺** is pressed:
 
 - playback restarts from the first frame;
@@ -508,6 +514,7 @@ Use `Ctrl + Home` to restore that default.
 - JSONL trace loading.
 - Frame playback at 60 Hz.
 - Manual tick/frame stepping.
+- Direct tick jump field.
 - Logical maze rendering.
 - Rotating gate debug rendering.
 - Player sprite rendering with optional debug markers.
