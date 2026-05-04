@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.0  
+**Current package version:** v0.6.3  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -163,6 +163,7 @@ Current role:
 - opens a comparison test window with identity and injected-mismatch checks;
 - compares frame metadata, enemyWork, timers, and ports;
 - routes comparison through `IEnemySimulationAdapter` implementations;
+- includes a first `LadyBugEnemySimulationAdapter` skeleton;
 - displays the status line below the two boards to avoid toolbar overflow;
 - writes messages to the bottom console and to Godot output.
 
@@ -580,6 +581,7 @@ When **Compare** is pressed:
 - the expected identity result is zero mismatches;
 - **Run injected mismatch test** uses `InjectedMismatchSimulationAdapter` and deliberately alters the first active enemy X coordinate by one pixel;
 - the injected test is expected to report a mismatch;
+- **Run Lady Bug adapter skeleton** uses `LadyBugEnemySimulationAdapter`; it builds a typed initial state but still mirrors the MAME trace as output;
 - the console reports compared frame count and mismatch count;
 - comparison currently covers actors, gates, metadata, `enemyWork`, timers, and ports;
 - if a mismatch is found, the first mismatch is reported and the viewer jumps to that frame.
@@ -635,6 +637,7 @@ Use `Ctrl + Home` to restore that default.
 - Injected mismatch comparison test.
 - Diagnostic state comparison: metadata, enemyWork, timers, ports.
 - Simulation adapter interface for comparison sources.
+- First Lady Bug simulation adapter skeleton.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -841,7 +844,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.0: simulation adapter interface added.
+Status after v0.6.3: simulation adapter interface and first Lady Bug adapter skeleton added.
 
 Implemented:
 
@@ -849,11 +852,13 @@ Implemented:
 - `SimulationAdapterResult`;
 - `IdentityTraceSimulationAdapter`;
 - `InjectedMismatchSimulationAdapter`;
-- comparison window now runs adapters instead of directly calling the temporary trace stub.
+- `LadyBugSimulationInitialState`;
+- `LadyBugEnemySimulationAdapter` skeleton;
+- comparison window now runs adapters instead of directly calling the temporary trace stub;
+- comparison window includes **Run Lady Bug adapter skeleton**.
 
 Planned next changes:
 
-- create a first `LadyBugEnemySimulationAdapter` skeleton;
 - reuse or port the existing enemy movement classes from the Lady Bug remake;
 - create a standalone simulation adapter independent of the normal game scene;
 - initialize the simulation from the MAME trace:
@@ -865,6 +870,7 @@ Planned next changes:
   - chase state;
   - enemy work state, if required;
 - advance one tick at a time;
+- replace the skeleton identity output with real simulation frames;
 - compare simulated enemy positions and directions to MAME.
 
 ### v0.7: mismatch visualization

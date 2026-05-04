@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.0: simulation adapter interface added.");
+        Log("v0.6.2: Lady Bug simulation adapter skeleton added.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -912,7 +912,7 @@ public partial class EnemyTraceSimulatorWindow : Control
             Transient = false,
             Exclusive = false,
             Unresizable = false,
-            MinSize = new Vector2I(480, 260)
+            MinSize = new Vector2I(520, 310)
         };
 
         var margin = new MarginContainer();
@@ -933,13 +933,14 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "v0.5 validates the comparison pipeline before the real C# enemy simulation adapter is connected.",
+            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current Lady Bug adapter is still a skeleton.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
 
         AddSimulationAdapterButton(root, new IdentityTraceSimulationAdapter(), "Run identity comparison");
         AddSimulationAdapterButton(root, new InjectedMismatchSimulationAdapter(), "Run injected mismatch test");
+        AddSimulationAdapterButton(root, new LadyBugEnemySimulationAdapter(), "Run Lady Bug adapter skeleton");
 
         var closeRow = new HBoxContainer
         {
@@ -958,7 +959,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         closeRow.AddChild(closeButton);
 
         AddChild(compareWindow);
-        compareWindow.PopupCentered(new Vector2I(540, 300));
+        compareWindow.PopupCentered(new Vector2I(600, 360));
     }
 
     private void AddSimulationAdapterButton(VBoxContainer root, IEnemySimulationAdapter adapter, string text)
