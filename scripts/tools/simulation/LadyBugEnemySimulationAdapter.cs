@@ -5,7 +5,7 @@ using System.Collections.Generic;
 ///
 /// The adapter now creates frames from its own mutable simulation state instead of
 /// directly returning an identity trace. It advances through the reference trace
-/// with a first minimal tick hook, but no real enemy movement is applied yet.
+/// with a first minimal tick hook. Player, ports, gates, and timers are synced from MAME; real enemy movement is not applied yet.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -13,7 +13,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick currently syncs external player/port inputs only.";
+        "AdvanceOneTick currently syncs external player, ports, gates, and timers.";
 
     public bool ExpectedToMismatch => true;
 
@@ -40,7 +40,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
         return new SimulationAdapterResult(
             frames,
             "Lady Bug adapter skeleton; initial state: " + initialState.Summary +
-            "; AdvanceOneTick currently syncs external player/port inputs only; " +
-            "enemy, gate, timer, and enemyWork logic are not implemented yet");
+            "; AdvanceOneTick currently syncs external player, ports, gates, and timers; " +
+            "enemy and enemyWork logic are not implemented yet");
     }
 }

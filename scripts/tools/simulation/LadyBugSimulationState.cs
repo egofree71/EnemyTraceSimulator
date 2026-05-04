@@ -4,7 +4,7 @@ using System.Collections.Generic;
 /// Mutable state owned by the future Lady Bug enemy simulation adapter.
 ///
 /// v0.6.7 adds the first tick-advance hook. It currently syncs external
-/// player/port inputs from the reference trace but does not move enemies yet.
+/// player, port, gate, and timer state from the reference trace but does not move enemies yet.
 /// </summary>
 public sealed class LadyBugSimulationState
 {
@@ -36,6 +36,19 @@ public sealed class LadyBugSimulationState
 
     public void AdvanceOneTick(EnemyTraceFrame referenceFrame)
     {
+        SyncReferenceInputs(referenceFrame);
+        SyncReferenceEnvironment(referenceFrame);
+
+        // Intentionally not updated yet:
+        // - enemies
+        // - enemyWork
+        //
+        // Later patches should replace this placeholder with the real Lady Bug
+        // enemy movement and enemy-work update sequence.
+    }
+
+    private void SyncReferenceInputs(EnemyTraceFrame referenceFrame)
+    {
         // The player position and input ports are treated as external inputs for enemy
         // validation. This lets the future enemy simulation chase the same player state
         // observed in MAME while still owning enemy movement internally.
@@ -46,15 +59,23 @@ public sealed class LadyBugSimulationState
         Ports = referenceFrame.ports == null
             ? null
             : CopyPorts(referenceFrame.ports);
+    }
 
-        // Intentionally not updated yet:
-        // - enemies
-        // - gates
-        // - enemyWork
-        // - timers
-        //
-        // Later patches should replace this placeholder with the real Lady Bug
-        // enemy movement/timer/gate update sequence.
+    private void SyncReferenceEnvironment(EnemyTraceFrame referenceFrame)
+    {
+        // Gates and global timers are synced from MAME for now so the first real
+        // validation target can focus on enemy movement. Once enemy movement matches,
+        // these can be replaced by simulated gate/timer logic.
+        Gates.Clear();
+        if (referenceFrame.gates != null)
+        {
+            foreach (EnemyTraceGateState gate in referenceFrame.gates)
+                Gates.Add(CopyGate(gate));
+        }
+
+        Timers = referenceFrame.timers == null
+            ? null
+            : CopyTimers(referenceFrame.timers);
     }
 
     public SimulationFrame BuildFrame(int frameIndex, EnemyTraceFrame referenceFrame)
@@ -81,6 +102,32 @@ public sealed class LadyBugSimulationState
             frame.Gates.Add(CloneGate(gate));
 
         return frame;
+    }
+
+    private static SimulationGateState CopyGate(EnemyTraceGateState gate)
+    {
+        return new SimulationGateState
+        {
+            GateId = gate.gate_id,
+            Orientation = gate.orientation,
+            PivotX = gate.pivot_x,
+            PivotY = gate.pivot_y
+        };
+    }
+
+    private static SimulationTimersState CopyTimers(EnemyTraceTimersState timers)
+    {
+        return new SimulationTimersState
+        {
+            Timer61B4 = timers.timer61B4,
+            Timer61B5 = timers.timer61B5,
+            Timer61B6 = timers.timer61B6,
+            Timer61B7 = timers.timer61B7,
+            Timer61B8 = timers.timer61B8,
+            Timer61B9 = timers.timer61B9,
+            Freeze61E1 = timers.freeze61E1,
+            CollectibleColorCounter6199 = timers.collectibleColorCounter6199
+        };
     }
 
     private static SimulationActorState CopyActor(EnemyTraceActor actor)

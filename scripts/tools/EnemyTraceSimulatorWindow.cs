@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.2: Lady Bug simulation adapter skeleton added.");
+        Log("v0.6.10: Lady Bug adapter syncs reference player, ports, gates, and timers.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -933,7 +933,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current Lady Bug adapter is still a skeleton.",
+            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current Lady Bug adapter syncs reference player, ports, gates, and timers, but enemy movement is still a skeleton.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
