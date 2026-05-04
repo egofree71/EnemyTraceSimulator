@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.4.4  
+**Current package version:** v0.4.6  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -155,6 +155,7 @@ Current role:
 - supports direct tick navigation through the toolbar tick field;
 - opens a separate current-frame diagnostic dump window;
 - opens a separate trace navigation helper window;
+- reports gate orientation changes between the selected frame and the previous frame;
 - writes messages to the bottom console and to Godot output.
 
 Current playback constant:
@@ -548,7 +549,7 @@ When **Dump** is pressed:
 
 - a separate diagnostic window opens for the current frame;
 - the main console receives only a short activity message;
-- the dump window shows metadata, player state, enemy slots, gates, enemy work RAM, timers, ports, and memory block sizes.
+- the dump window shows metadata, player state, enemy slots, gates, gate changes from the previous frame, enemy work RAM, timers, ports, and memory block sizes.
 
 When **Find** is pressed:
 
@@ -558,6 +559,7 @@ When **Find** is pressed:
 - the user can search the first active frame for a selected enemy slot;
 - the user can search the first direction change for a selected enemy slot;
 - the user can jump to the first gate change;
+- when jumping to the first gate change, the console reports the changed gate ids and orientation transitions;
 - the selected frame is displayed immediately and playback is paused.
 
 ### 8.6 Player debug workflow
@@ -604,6 +606,7 @@ Use `Ctrl + Home` to restore that default.
 - Direct tick jump field.
 - Current-frame diagnostic dump window.
 - Trace navigation helper window.
+- Gate-change diagnostics in frame dumps and Find results.
 - Native subwindows for diagnostic windows.
 - Logical maze rendering.
 - Rotating gate debug rendering.
@@ -758,7 +761,7 @@ Remaining v0.3 cleanup:
 
 ### v0.4: trace inspection and diagnostic state
 
-Status after v0.4.4: current-frame dump window and trace navigation helpers implemented.
+Status after v0.4.6: current-frame dump window, trace navigation helpers, and gate-change diagnostics implemented.
 
 Implemented:
 
@@ -768,11 +771,12 @@ Implemented:
 - compact main console;
 - native subwindows so diagnostic windows are not trapped inside the main viewport;
 - toolbar **Find** button;
-- navigation helpers for first active enemy, first direction change, selected-slot first active frame, selected-slot first direction change, and first gate change.
+- navigation helpers for first active enemy, first direction change, selected-slot first active frame, selected-slot first direction change, and first gate change;
+- gate-change diagnostics comparing the selected frame to the previous frame;
+- console summary of gate ids and orientation transitions after **Find → First gate change**.
 
 Remaining v0.4 work:
 
-- show which exact gate changed at the selected tick;
 - add a more generic condition-based search, if it becomes useful;
 - keep this phase read-only.
 

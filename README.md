@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.4.4**
+Current package version: **v0.4.6**
 
 Implemented now:
 
@@ -153,7 +153,7 @@ The tick field is synchronized with playback. If the requested tick is not prese
 
 The **Dump** button opens a separate diagnostic window for the current frame. It includes metadata, player state, enemy slots, gates, enemy work RAM, timers, ports, and raw-memory block sizes. The main console remains a concise activity log.
 
-The **Find** button opens a separate navigation helper window. It can jump to the first active enemy, the first enemy direction change, the first active frame for a selected slot, the first direction change for a selected slot, and the first gate change.
+The **Find** button opens a separate navigation helper window. It can jump to the first active enemy, the first enemy direction change, the first active frame for a selected slot, the first direction change for a selected slot, and the first gate change. When jumping to the first gate change, the console now reports which gates changed orientation.
 
 ## Important Godot .NET rebuild note
 
@@ -255,30 +255,30 @@ A typical frame contains:
   "phase": "post_load_tick0",
   "mameFrame": 5,
   "player": {
-	"raw": "82",
-	"x": "78",
-	"y": "8B",
-	"sprite": "00",
-	"attr": "00",
-	"turnTargetX": "78",
-	"turnTargetY": "86",
-	"currentDir": "08"
+    "raw": "82",
+    "x": "78",
+    "y": "8B",
+    "sprite": "00",
+    "attr": "00",
+    "turnTargetX": "78",
+    "turnTargetY": "86",
+    "currentDir": "08"
   },
   "enemies": [
-	{
-	  "slot": 0,
-	  "raw": "82",
-	  "x": "58",
-	  "y": "86",
-	  "currentDir": "08"
-	}
+    {
+      "slot": 0,
+      "raw": "82",
+      "x": "58",
+      "y": "86",
+      "currentDir": "08"
+    }
   ],
   "gates": [
-	{
-	  "gate_id": 0,
-	  "pivot": { "x": 3, "y": 2 },
-	  "currentOrientation": "Horizontal"
-	}
+    {
+      "gate_id": 0,
+      "pivot": { "x": 3, "y": 2 },
+      "currentOrientation": "Horizontal"
+    }
   ]
 }
 ```
@@ -367,7 +367,7 @@ Remaining v0.3 cleanup:
 
 ### v0.4: trace inspection and diagnostic state
 
-Status after v0.4.4: current-frame dump window and trace navigation helpers implemented.
+Status after v0.4.6: current-frame dump window, trace navigation helpers, and gate-change diagnostics implemented.
 
 Implemented:
 
@@ -379,7 +379,9 @@ Implemented:
 - compact status label to avoid toolbar overflow;
 - toolbar **Find** button;
 - separate trace navigation helper window;
-- helpers for first active enemy, first direction change, first active frame for a selected slot, first direction change for a selected slot, and first gate change.
+- helpers for first active enemy, first direction change, first active frame for a selected slot, first direction change for a selected slot, and first gate change;
+- gate-change diagnostics in the Dump window, comparing the selected frame with the previous frame;
+- console summary of the gates that changed when using **Find → First gate change**.
 
 Remaining v0.4 work:
 
