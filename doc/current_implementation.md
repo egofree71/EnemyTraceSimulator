@@ -627,37 +627,144 @@ git add .gitignore
 
 ## 13. Planned next steps
 
-### v0.3: trace model cleanup
+The original roadmap has been refreshed after the v0.2.x implementation work.
 
-- Move trace model classes into separate files.
-- Add `MameTraceLoader`.
-- Add explicit DTOs for trace frames, actors, gates, and metadata.
-- Define one canonical JSONL trace schema.
-- Make the actor coordinate conversion explicit and testable.
+Already implemented before the next phase:
 
-### v0.4: comparison architecture
+- MAME/Lua launch from Godot;
+- settings dialog for `config/mame_trace_settings.json`;
+- JSONL trace loading;
+- tick playback and direct tick jump;
+- maze and gate rendering;
+- player sprite rendering;
+- level-1 enemy sprite rendering;
+- MAME Y mirror conversion for actor rendering;
+- optional player and inactive-enemy diagnostics.
 
-- Add `SimulationFrame` / `ComparisonFrame` types.
-- Add mismatch types.
-- Add `TraceComparisonRunner`.
-- Add a first textual mismatch report.
-- Keep the simulation side simple until the comparison plumbing is stable.
+The next steps should focus on making the trace and comparison architecture cleaner, rather than adding more visual features first.
 
-### v0.5: C# simulation adapter
+### v0.3: trace model cleanup and loader extraction
 
-- Create a simulation adapter independent of the normal game scene.
-- Reuse or port the existing enemy movement classes from the Lady Bug remake.
-- Initialize the simulation from the trace initial state.
-- Advance one tick at a time.
-- Compare each simulated frame to the MAME frame.
+Current issue:
+- `EnemyTraceSimulatorWindow.cs` still owns too much parsing and trace model code.
 
-### v0.6: diagnostic improvements
+Planned changes:
 
-- Highlight mismatching actors or gates.
-- Add a frame scrubber.
-- Add first-mismatch jump.
-- Add exportable mismatch reports.
-- Add focused test scenarios for center decisions, fallback, door-local rejection, forced reversal, and chase/BFS overrides.
+- move `EnemyTraceFrame`, `EnemyTraceActor`, and `EnemyTraceGateState` into separate files;
+- add a dedicated `MameTraceLoader`;
+- add explicit DTOs for:
+  - frame metadata;
+  - player state;
+  - enemy slots;
+  - gates;
+  - timers;
+  - enemy work RAM;
+  - ports;
+  - optional raw memory blocks;
+- centralize JSONL parsing;
+- centralize MAME-to-Godot coordinate conversion;
+- document the `0xDD - mameY` actor Y mirror;
+- keep the current UI behavior unchanged.
+
+### v0.4: trace inspection and diagnostic state
+
+Goal:
+- make the loaded MAME trace easier to understand before simulation begins.
+
+Planned changes:
+
+- add a selected-frame diagnostic view or structured console dump;
+- show for each enemy slot:
+  - active flag;
+  - raw byte;
+  - MAME coordinate;
+  - converted Godot/debug coordinate;
+  - direction;
+  - sprite;
+  - attr;
+- expose `enemyWork` fields:
+  - temporary direction;
+  - temporary position;
+  - rejected mask;
+  - fallback mask;
+  - preferred directions;
+  - chase timers;
+  - chase round-robin value;
+- add helper navigation:
+  - first active enemy frame;
+  - first direction change;
+  - first frame for a given enemy slot;
+  - first frame matching a simple condition;
+- keep this phase read-only.
+
+### v0.5: comparison data model
+
+Goal:
+- build the comparison pipeline before connecting the real enemy AI.
+
+Planned changes:
+
+- add `SimulationFrame`;
+- add `ComparisonFrame`;
+- add mismatch types for:
+  - player;
+  - enemies;
+  - gates;
+  - timers;
+  - metadata;
+- add `TraceComparisonRunner`;
+- compare two frame sequences with the same shape;
+- report the first mismatch in the console;
+- initially test the comparison runner with a fake simulation source.
+
+### v0.6: C# enemy simulation adapter
+
+Goal:
+- connect the diagnostic tool to the real C# enemy movement logic.
+
+Planned changes:
+
+- reuse or port the existing enemy movement classes from the Lady Bug remake;
+- create a standalone simulation adapter independent of the normal game scene;
+- initialize the simulation from the MAME trace:
+  - maze;
+  - gates;
+  - player position;
+  - enemy slots;
+  - timers;
+  - chase state;
+  - enemy work state, if required;
+- advance one tick at a time;
+- compare simulated enemy positions and directions to MAME.
+
+### v0.7: mismatch visualization
+
+Goal:
+- make divergences obvious in the UI.
+
+Planned changes:
+
+- highlight mismatching enemies or gates;
+- add first-mismatch navigation;
+- add previous/next mismatch navigation;
+- add exportable mismatch reports;
+- add focused scenarios for:
+  - center decisions;
+  - fallback;
+  - door-local rejection;
+  - forced reversal;
+  - chase/BFS overrides.
+
+### Later improvements
+
+Possible later additions:
+
+- original gate sprite rendering;
+- level 2+ enemy sprite selection;
+- file/directory picker buttons in the settings dialog;
+- trace schema versioning and validation;
+- frame scrubber or timeline view;
+- side-by-side MAME screenshot reference support, if useful.
 
 ## 14. Design principle
 
