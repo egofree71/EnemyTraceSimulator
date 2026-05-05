@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.69  
+**Current package version:** v0.6.70  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -32,7 +32,8 @@ The current implementation can:
 - load and replay JSONL traces visually;
 - run a comparison pipeline;
 - validate the current one-enemy reference-synced adapter path;
-- analyze exact-PC preferred[] diagnostic logs.
+- analyze exact-PC preferred[] diagnostic logs;
+- validate a first standalone C# model of the preferred-direction generator.
 
 The project does not yet run fully independent arcade enemy AI.
 
@@ -69,7 +70,8 @@ Used for:
 
 - reverse-engineering exact writes to `EnemyWork.preferred[]`;
 - identifying the CPU instruction that wrote a byte;
-- capturing `R`, `A`, `HL`, `IY`, chase timers, and existing preferred[] values at the breakpoint.
+- capturing `R`, `A`, `HL`, `IY`, chase timers, and existing preferred[] values at the breakpoint;
+- validating the standalone `LadyBugMonsterPreferenceSystem`.
 
 Raw output:
 
@@ -115,7 +117,8 @@ This is not the normal comparison format. It is an exact-PC reverse-engineering 
 │        ├─ LadyBugSimulationState.cs
 │        ├─ LadyBugEnemySimulationAdapter.cs
 │        ├─ LadyBugPreferredGeneratorDiagnostics.cs
-│        └─ LadyBugPreferredPcLogAnalyzer.cs
+│        ├─ LadyBugPreferredPcLogAnalyzer.cs
+│        └─ LadyBugMonsterPreferenceSystem.cs
 ├─ tools/
 │  └─ mame/
 │     ├─ lua/
@@ -388,7 +391,8 @@ Current role:
 
 - contains the adapter abstraction;
 - contains the Lady Bug simulation skeleton;
-- contains preferred[] diagnostics.
+- contains preferred[] diagnostics;
+- contains the first standalone preferred-direction model.
 
 Important files:
 
@@ -402,11 +406,14 @@ LadyBugSimulationState.cs
 LadyBugEnemySimulationAdapter.cs
 LadyBugPreferredGeneratorDiagnostics.cs
 LadyBugPreferredPcLogAnalyzer.cs
+LadyBugMonsterPreferenceSystem.cs
 ```
 
 `LadyBugPreferredGeneratorDiagnostics` analyzes JSONL `preferredChangeEvents`.
 
 `LadyBugPreferredPcLogAnalyzer` analyzes exact-PC `error.log / LBPREF` data and produces a human-readable report.
+
+`LadyBugMonsterPreferenceSystem` models the arcade preferred-direction generator for the validated one-enemy diagnostic window. It is currently side-effect free and is not yet used by `LadyBugEnemySimulationAdapter`.
 
 ## 8. Current MAME Lua scripts
 
@@ -457,29 +464,29 @@ Relevant arcade RAM:
 Latest exact-PC report:
 
 ```text
-LBPREF hits: 2901
+LBPREF hits: 2886
 2EC7_RANDOM_WRITE: 1636
-2E97_ROTATE_WRITE: 1060
-477D_BFS_WRITE: 205
+2E97_ROTATE_WRITE: 1048
+477D_BFS_WRITE: 202
 ```
 
 Slot counts:
 
 ```text
-slot 0 / 0x61C4: 879
-slot 1 / 0x61C5: 674
-slot 2 / 0x61C6: 674
-slot 3 / 0x61C7: 674
+slot 0 / 0x61C4: 873
+slot 1 / 0x61C5: 671
+slot 2 / 0x61C6: 671
+slot 3 / 0x61C7: 671
 ```
 
 Slot/BFS correlation:
 
 ```text
-base writes 2EC7+2E97: 2696
-expected base writes per slot: 674
-slot0 extra over slot1: 205
-slot0 extra over base-per-slot: 205
-477D_BFS_WRITE hits: 205
+base writes 2EC7+2E97: 2684
+expected base writes per slot: 671
+slot0 extra over slot1: 202
+slot0 extra over base-per-slot: 202
+477D_BFS_WRITE hits: 202
 ```
 
 Conclusion:
@@ -493,7 +500,7 @@ Base tuple counts:
 
 ```text
 2EC7_RANDOM_WRITE: 409 complete 4-write tuples
-2E97_ROTATE_WRITE: 265 complete 4-write tuples
+2E97_ROTATE_WRITE: 262 complete 4-write tuples
 ```
 
 Rotate branch result in the current capture:
@@ -529,7 +536,89 @@ active chase timer: chase0
 round robin: rr=01
 ```
 
-## 10. Current comparison behavior
+## 10. MonsterPreferenceSystem status
+
+The first standalone model is implemented in:
+
+```text
+scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
+```
+
+Implemented pieces:
+
+### 10.1 Rotate branch
+
+Validated model:
+
+```text
+GenerateRotateBranch(playerDirectionCurrent)
+```
+
+For the current capture:
+
+```text
+PLAYER_DIR_CURRENT = 08
+prediction         = [04,02,01,08]
+```
+
+Exact-PC validation result:
+
+```text
+2E97 rotate model from PLAYER_DIR_CURRENT=08 matches: 262/262
+```
+
+### 10.2 Random branch
+
+Validated model:
+
+```text
+GenerateRandomBranchFromUsedRLow(usedRLowStart)
+```
+
+It uses:
+
+```text
+DirectionFromRandomNibble(rLow)
+AdvanceUsedRLowAfterDirection(rLow, generatedDirection)
+ReconstructUsedRLowFromWritePcR(rAtWritePc, finalDirection)
+```
+
+Exact-PC validation result:
+
+```text
+2EC7 random model matches: 409/409
+```
+
+### 10.3 BFS override helper
+
+Implemented helper:
+
+```text
+TryApplyBfsOverride(preferred, iyAddress, direction)
+```
+
+Current exact-PC capture proves that the observed BFS/chase writes target:
+
+```text
+IY = 61C4
+preferred[0]
+```
+
+The helper is not yet used by the simulation adapter.
+
+### 10.4 Integration status
+
+`LadyBugMonsterPreferenceSystem` is currently a diagnostic model only.
+
+It is not yet wired into:
+
+```text
+LadyBugEnemySimulationAdapter.cs
+```
+
+The adapter still reference-syncs `EnemyWork.preferred[]` from MAME.
+
+## 11. Current comparison behavior
 
 The Lady Bug adapter currently validates a one-enemy path with reference synchronization.
 
@@ -548,29 +637,29 @@ Partially reconstructed:
 
 The adapter still does not independently decide enemy direction.
 
-## 11. Current limitations
+## 12. Current limitations
 
-### 11.1 Multi-enemy traces are not official yet
+### 12.1 Multi-enemy traces are not official yet
 
 The current validation target is one active enemy. Multi-enemy traces are deferred until the shared `EnemyWork` scratch state can be attributed to enemy slots more explicitly.
 
-### 11.2 preferred[] is still reference-synced in the adapter
+### 12.2 preferred[] is still reference-synced in the adapter
 
-The exact-PC diagnostics are now strong enough to start implementation, but the simulation adapter has not yet replaced the MAME reference-sync for `preferred[]`.
+The standalone model is validated against exact-PC logs, but the simulation adapter has not yet replaced the MAME reference-sync for `preferred[]`.
 
-### 11.3 chase state is still reference-synced
+### 12.3 chase state is still reference-synced
 
 `chaseTimers[]` and `chaseRoundRobin` remain synchronized from MAME. The exact-PC diagnostic currently proves how BFS writes into preferred[0], but not the full independent chase activation logic.
 
-### 11.4 Actor coordinate rendering is still diagnostic
+### 12.4 Actor coordinate rendering is still diagnostic
 
 The MAME Y mirror is good enough for the current viewer, but rendering offsets are not gameplay coordinates.
 
-### 11.5 Generated logs are local artifacts
+### 12.5 Generated logs are local artifacts
 
 Generated logs and reports should not normally be committed.
 
-## 12. Git ignore policy
+## 13. Git ignore policy
 
 Keep source, scripts, configuration templates, and documentation.
 
@@ -594,21 +683,18 @@ If a generated file was committed accidentally, remove it from Git tracking with
 git rm --cached path/to/generated/file
 ```
 
-## 13. Planned next steps
+## 14. Planned next steps
 
-### v0.6 next: MonsterPreferenceSystem
+### v0.6 next: adapter integration in diagnostic/fallback mode
 
-The next implementation target is a first C# reproduction of the arcade preferred-direction generator.
+The next implementation target is to wire `LadyBugMonsterPreferenceSystem` into the comparison pipeline without breaking the current validated path.
 
 Suggested order:
 
-1. create a `MonsterPreferenceSystem`;
-2. implement the base preferred[] generator around `0x2E5C`;
-3. implement the `2E97` rotation branch;
-4. implement the `2EC7` random branch using the reconstructed internal-R model;
-5. apply the `477D` BFS/chase override as a separate phase;
-6. compare against JSONL `EnemyWork.preferred[]`;
-7. remove or reduce the temporary MAME reference-sync for `preferred[]`.
+1. keep the current MAME reference-sync for `preferred[]` available;
+2. compute simulated preferred[] in parallel;
+3. report mismatches between simulated preferred[] and MAME preferred[];
+4. only after clean diagnostics, switch the adapter to use the simulated preferred[].
 
 ### Later work
 

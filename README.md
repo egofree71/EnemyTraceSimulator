@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.69**
+Current checkpoint: **v0.6.70**
 
 The project currently supports two complementary workflows:
 
@@ -44,7 +44,8 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - one-active-enemy validation path;
 - JSONL diagnostics for `EnemyWork.preferred[]`;
 - exact-PC diagnostics for `EnemyWork.preferred[]`;
-- automatic analysis of MAME `error.log` preferred[] events.
+- automatic analysis of MAME `error.log` preferred[] events;
+- first standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs.
 
 ## Current validation checkpoint
 
@@ -63,7 +64,9 @@ The current reverse-engineering focus is:
 EnemyWork.preferred[] = 0x61C4..0x61C7
 ```
 
-The exact-PC diagnostic has confirmed that `preferred[]` is produced by a base generator and then may be overridden by chase/BFS logic. The detailed findings are documented in:
+The exact-PC diagnostic has confirmed that `preferred[]` is produced by a base generator and then may be overridden by chase/BFS logic.
+
+The first standalone C# model of this generator is now validated against the exact-PC report, but it is not yet wired into the comparison adapter. The detailed findings are documented in:
 
 ```text
 doc/current_implementation.md
@@ -163,6 +166,7 @@ scenes/tools/EnemyTraceSimulator.tscn
 scripts/tools/EnemyTraceSimulatorWindow.cs
 scripts/tools/MameTraceLauncher.cs
 scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
+scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
 scripts/tools/simulation/LadyBugPreferredPcLogAnalyzer.cs
 tools/mame/lua/ladybug_sequence_trace.lua
 tools/mame/lua/ladybug_preferred_pc_trace.lua
@@ -192,17 +196,16 @@ tools/mame/states/**/*.sta
 - Multi-enemy validation is planned but not yet stable.
 - `EnemyWork.preferred[]` is still reference-synced in the comparison adapter.
 - Chase timers and round-robin state are still reference-synced.
+- The standalone `LadyBugMonsterPreferenceSystem` is validated by diagnostics but not yet integrated into the adapter.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
 
 ## Roadmap
 
 Near-term:
 
-1. implement a C# `MonsterPreferenceSystem`;
-2. reproduce the base `preferred[]` generator;
-3. apply the chase/BFS override separately;
-4. compare against the standard JSONL trace;
-5. remove the temporary MAME reference-sync for `preferred[]`.
+1. integrate `LadyBugMonsterPreferenceSystem` into the simulation adapter in diagnostic/fallback mode;
+2. compare simulated `preferred[]` against the standard JSONL trace;
+3. remove the temporary MAME reference-sync for `preferred[]` when safe.
 
 Later:
 
