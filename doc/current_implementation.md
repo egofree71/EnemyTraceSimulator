@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.70  
+**Current package version:** v0.6.71  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -33,7 +33,8 @@ The current implementation can:
 - run a comparison pipeline;
 - validate the current one-enemy reference-synced adapter path;
 - analyze exact-PC preferred[] diagnostic logs;
-- validate a first standalone C# model of the preferred-direction generator.
+- validate a first standalone C# model of the preferred-direction generator;
+- shadow-replay the exact-PC preferred[] write stream against MAME snapshots.
 
 The project does not yet run fully independent arcade enemy AI.
 
@@ -71,7 +72,8 @@ Used for:
 - reverse-engineering exact writes to `EnemyWork.preferred[]`;
 - identifying the CPU instruction that wrote a byte;
 - capturing `R`, `A`, `HL`, `IY`, chase timers, and existing preferred[] values at the breakpoint;
-- validating the standalone `LadyBugMonsterPreferenceSystem`.
+- validating the standalone `LadyBugMonsterPreferenceSystem`;
+- shadow-replaying the preferred[] write stream before adapter integration.
 
 Raw output:
 
@@ -606,7 +608,27 @@ preferred[0]
 
 The helper is not yet used by the simulation adapter.
 
-### 10.4 Integration status
+### 10.4 Shadow replay validation
+
+`LadyBugPreferredPcLogAnalyzer` now performs a shadow replay of the complete exact-PC `LBPREF` stream.
+
+Current result:
+
+```text
+pre-write state matches p0..p3: 2886/2886
+modeled base write values match observed A: 2684/2684
+BFS overrides applied from observed 477D hits: 202
+final shadow preferred[] state: [02,02,01,08]
+```
+
+Meaning:
+
+- the modeled base generator can replay every `2EC7` and `2E97` write in the captured stream;
+- the reconstructed preferred[] state matches MAME's `p0..p3` snapshot before every logged write;
+- observed `477D` BFS/chase writes can be applied as one-slot overrides;
+- full BFS pathfinding is still not implemented, because BFS direction is currently taken from the observed `477D` hit.
+
+### 10.5 Integration status
 
 `LadyBugMonsterPreferenceSystem` is currently a diagnostic model only.
 
@@ -651,11 +673,15 @@ The standalone model is validated against exact-PC logs, but the simulation adap
 
 `chaseTimers[]` and `chaseRoundRobin` remain synchronized from MAME. The exact-PC diagnostic currently proves how BFS writes into preferred[0], but not the full independent chase activation logic.
 
-### 12.4 Actor coordinate rendering is still diagnostic
+### 12.4 BFS pathfinding is not yet implemented
+
+The shadow replay applies BFS/chase overrides from observed `477D` hits. It does not yet compute the BFS direction independently.
+
+### 12.5 Actor coordinate rendering is still diagnostic
 
 The MAME Y mirror is good enough for the current viewer, but rendering offsets are not gameplay coordinates.
 
-### 12.5 Generated logs are local artifacts
+### 12.6 Generated logs are local artifacts
 
 Generated logs and reports should not normally be committed.
 
@@ -700,6 +726,7 @@ Suggested order:
 
 - implement chase activation and timer behavior;
 - implement round-robin behavior independently;
+- implement full BFS/chase direction selection;
 - implement real enemy direction decision;
 - remove reference-sync for enemy direction;
 - expand validation to multiple active enemies;

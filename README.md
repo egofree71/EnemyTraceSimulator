@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.70**
+Current checkpoint: **v0.6.71**
 
 The project currently supports two complementary workflows:
 
@@ -45,7 +45,8 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - JSONL diagnostics for `EnemyWork.preferred[]`;
 - exact-PC diagnostics for `EnemyWork.preferred[]`;
 - automatic analysis of MAME `error.log` preferred[] events;
-- first standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs.
+- first standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs;
+- preferred[] shadow replay diagnostic validating the modeled write sequence against MAME snapshots.
 
 ## Current validation checkpoint
 
@@ -66,7 +67,7 @@ EnemyWork.preferred[] = 0x61C4..0x61C7
 
 The exact-PC diagnostic has confirmed that `preferred[]` is produced by a base generator and then may be overridden by chase/BFS logic.
 
-The first standalone C# model of this generator is now validated against the exact-PC report, but it is not yet wired into the comparison adapter. The detailed findings are documented in:
+The standalone C# model can now replay the full exact-PC `preferred[]` stream for the current one-enemy diagnostic capture, including observed BFS overrides, while matching the MAME pre-write snapshots. The detailed findings are documented in:
 
 ```text
 doc/current_implementation.md
@@ -197,6 +198,7 @@ tools/mame/states/**/*.sta
 - `EnemyWork.preferred[]` is still reference-synced in the comparison adapter.
 - Chase timers and round-robin state are still reference-synced.
 - The standalone `LadyBugMonsterPreferenceSystem` is validated by diagnostics but not yet integrated into the adapter.
+- BFS direction is still observed from `477D` in the shadow replay; full BFS pathfinding is not yet implemented.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
 
 ## Roadmap
@@ -210,6 +212,7 @@ Near-term:
 Later:
 
 - implement chase timer and round-robin behavior;
+- implement full BFS/chase direction selection;
 - implement independent enemy direction decisions;
 - expand validation to multi-enemy traces;
 - add stable regression traces or test fixtures.
