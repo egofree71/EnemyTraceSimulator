@@ -8,7 +8,7 @@
   "luaScriptPath": "res://tools/mame/lua/ladybug_sequence_trace.lua",
   "outputDirectory": "res://traces/mame",
   "outputPrefix": "ladybug_sequence_v8",
-  "framesAfterTick0": 600,
+  "framesAfterTick0": 800,
   "windowed": true,
   "autobootDelay": 1,
   "exitWhenDone": true,

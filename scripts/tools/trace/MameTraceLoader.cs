@@ -5,6 +5,9 @@ using System.Text.Json;
 /// <summary>
 /// Loads the current Lady Bug MAME JSON / JSONL trace format into strongly typed
 /// trace model objects used by the simulator UI.
+///
+/// The loader is intentionally permissive because the trace schema is evolving.
+/// New diagnostic fields should be parsed here rather than inside the UI.
 /// </summary>
 public static class MameTraceLoader
 {
@@ -92,6 +95,14 @@ public static class MameTraceLoader
         if (element.TryGetProperty("enemyWork", out JsonElement enemyWorkElement) && enemyWorkElement.ValueKind == JsonValueKind.Object)
             frame.enemyWork = ParseEnemyWork(enemyWorkElement);
 
+        if (element.TryGetProperty("preferredChangeEvents", out JsonElement preferredChangeEventsElement) &&
+            preferredChangeEventsElement.ValueKind == JsonValueKind.Array)
+        {
+            frame.preferredChangeEvents = new List<EnemyTracePreferredChangeEvent>();
+            foreach (JsonElement eventElement in preferredChangeEventsElement.EnumerateArray())
+                frame.preferredChangeEvents.Add(ParsePreferredChangeEvent(eventElement));
+        }
+
         if (element.TryGetProperty("timers", out JsonElement timersElement) && timersElement.ValueKind == JsonValueKind.Object)
             frame.timers = ParseTimers(timersElement);
 
@@ -153,6 +164,35 @@ public static class MameTraceLoader
             pivot_x = pivotX,
             pivot_y = pivotY
         };
+    }
+
+    /// <summary>
+    /// Parses one safe polling-diff preferred[] transition.
+    ///
+    /// Note that these events are not exact write-tap events. The Lua script only
+    /// knows the before/after frame snapshots.
+    /// </summary>
+    private static EnemyTracePreferredChangeEvent ParsePreferredChangeEvent(JsonElement element)
+    {
+        var changeEvent = new EnemyTracePreferredChangeEvent
+        {
+            tick = ReadInt(element, "tick", 0),
+            mameFrame = ReadInt(element, "mameFrame", -1),
+            pc = ReadString(element, "pc", string.Empty),
+            r = ReadString(element, "r", string.Empty),
+            addr = ReadString(element, "addr", string.Empty),
+            slot = ReadInt(element, "slot", 0),
+            old = ReadInt(element, "old", -1),
+            @new = ReadInt(element, "new", -1)
+        };
+
+        if (element.TryGetProperty("preferredBefore", out JsonElement beforeElement) && beforeElement.ValueKind == JsonValueKind.Array)
+            changeEvent.preferredBefore = ParseIntArray(beforeElement);
+
+        if (element.TryGetProperty("preferredAfter", out JsonElement afterElement) && afterElement.ValueKind == JsonValueKind.Array)
+            changeEvent.preferredAfter = ParseIntArray(afterElement);
+
+        return changeEvent;
     }
 
     private static EnemyTraceEnemyWorkState ParseEnemyWork(JsonElement element)
@@ -255,6 +295,32 @@ public static class MameTraceLoader
             JsonValueKind.False => 0,
             _ => fallback
         };
+    }
+
+    /// <summary>
+    /// Parses an array that may contain either JSON numbers or compact hex strings.
+    /// MAME traces commonly encode bytes as two-character hex strings.
+    /// </summary>
+    private static List<int> ParseIntArray(JsonElement arrayElement)
+    {
+        var values = new List<int>();
+
+        if (arrayElement.ValueKind != JsonValueKind.Array)
+            return values;
+
+        foreach (JsonElement item in arrayElement.EnumerateArray())
+        {
+            values.Add(item.ValueKind switch
+            {
+                JsonValueKind.Number when item.TryGetInt32(out int n) => n,
+                JsonValueKind.String => ParseIntString(item.GetString(), -1),
+                JsonValueKind.True => 1,
+                JsonValueKind.False => 0,
+                _ => -1
+            });
+        }
+
+        return values;
     }
 
     private static int ParseIntString(string? text, int fallback)

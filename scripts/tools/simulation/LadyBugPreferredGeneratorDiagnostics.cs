@@ -5,9 +5,12 @@ using System.Collections.Generic;
 /// Diagnostics for the remaining unsimulated EnemyWork.preferred[] generator.
 ///
 /// This does not change the simulation checkpoint. It compares simple candidate
-/// generators against the preferred[] values captured from MAME so the future
-/// implementation of the arcade 0x2E5C path can be guided by evidence instead
-/// of hard-coded trace fixes.
+/// generators against the preferred[] values captured from MAME and summarizes
+/// safe polling-diff preferredChangeEvents.
+///
+/// The purpose is not to guess the final algorithm in this file. It is to expose
+/// enough evidence to implement the real arcade generator later, likely starting
+/// around the 0x2E5C path.
 /// </summary>
 public static class LadyBugPreferredGeneratorDiagnostics
 {
@@ -68,7 +71,80 @@ public static class LadyBugPreferredGeneratorDiagnostics
                 $"preferred=[{FormatDirections(sample.Expected)}]");
         }
 
+        AppendPreferredChangeEventReport(lines, frames);
+
         return lines;
+    }
+
+    /// <summary>
+    /// Summarizes the frame-to-frame changes captured by the safe Lua polling trace.
+    ///
+    /// These events are reliable for transition analysis, but not for exact PC/R
+    /// attribution because they are sampled at the frame boundary.
+    /// </summary>
+    private static void AppendPreferredChangeEventReport(List<string> lines, IReadOnlyList<EnemyTraceFrame> frames)
+    {
+        var frameEvents = new List<PreferredFrameChange>();
+
+        foreach (EnemyTraceFrame frame in frames)
+        {
+            if (frame.frame > MaxOfficialOneEnemyTick)
+                break;
+
+            if (CountActiveEnemies(frame) != 1)
+                continue;
+
+            if (frame.preferredChangeEvents == null || frame.preferredChangeEvents.Count == 0)
+                continue;
+
+            frameEvents.Add(new PreferredFrameChange(frame));
+        }
+
+        lines.Add($"preferred[] change events: framesWithChanges={frameEvents.Count}, activeEnemies=1 only");
+
+        if (frameEvents.Count == 0)
+        {
+            lines.Add("preferred[] change events: none found. Regenerate the trace with the safe polling diagnostics script.");
+            return;
+        }
+
+        var transitionCounts = new Dictionary<string, int>();
+        var slotCounts = new Dictionary<int, int>();
+
+        foreach (PreferredFrameChange change in frameEvents)
+        {
+            string key = $"[{FormatDirections(change.Before)}] -> [{FormatDirections(change.After)}]";
+            transitionCounts.TryGetValue(key, out int count);
+            transitionCounts[key] = count + 1;
+
+            foreach (EnemyTracePreferredChangeEvent e in change.Events)
+            {
+                slotCounts.TryGetValue(e.slot, out int slotCount);
+                slotCounts[e.slot] = slotCount + 1;
+            }
+        }
+
+        lines.Add("preferred[] change events: first transitions");
+        int firstCount = Math.Min(16, frameEvents.Count);
+        for (int i = 0; i < firstCount; i++)
+        {
+            PreferredFrameChange change = frameEvents[i];
+            lines.Add(
+                $"  tick={change.Tick} r={change.RText ?? "--"} changes={change.Events.Count} " +
+                $"[{FormatDirections(change.Before)}] -> [{FormatDirections(change.After)}] " +
+                $"slots={FormatChangedSlots(change.Events)}");
+        }
+
+        lines.Add("preferred[] change events: top transitions");
+        foreach (KeyValuePair<string, int> pair in TopCounts(transitionCounts, 12))
+            lines.Add($"  {pair.Value}x {pair.Key}");
+
+        lines.Add("preferred[] change events: slot write counts");
+        for (int i = 0; i < 4; i++)
+        {
+            slotCounts.TryGetValue(i, out int count);
+            lines.Add($"  slot {i} / 0x{0x61C4 + i:X4}: {count}");
+        }
     }
 
     private static List<PreferredSample> CollectSamples(IReadOnlyList<EnemyTraceFrame> frames)
@@ -119,6 +195,7 @@ public static class LadyBugPreferredGeneratorDiagnostics
         AddCandidate(scores, samples, "rotate-left from tempDir", sample =>
             GenerateRotateLeftSequence(sample.TempDir));
 
+        // Diagnostic hypothesis only:
         // The random branch at 0x2E9E uses LD A,R, AND 0x0F, SRL, INC, then
         // maps ranges to 01/02/04/08. We only have one sampled R value per trace
         // frame, not the internal R values at each LD A,R. Try a small grid of
@@ -323,6 +400,61 @@ public static class LadyBugPreferredGeneratorDiagnostics
             parts.Add(value < 0 ? "--" : value.ToString("X2"));
 
         return string.Join(",", parts);
+    }
+
+    private static string FormatChangedSlots(IReadOnlyList<EnemyTracePreferredChangeEvent> events)
+    {
+        var parts = new List<string>(events.Count);
+
+        foreach (EnemyTracePreferredChangeEvent e in events)
+            parts.Add($"{e.slot}:{e.old:X2}->{e.@new:X2}");
+
+        return string.Join(" ", parts);
+    }
+
+    private static List<KeyValuePair<string, int>> TopCounts(Dictionary<string, int> counts, int limit)
+    {
+        var pairs = new List<KeyValuePair<string, int>>(counts);
+        pairs.Sort((a, b) =>
+        {
+            int countCompare = b.Value.CompareTo(a.Value);
+            if (countCompare != 0)
+                return countCompare;
+
+            return string.Compare(a.Key, b.Key, StringComparison.Ordinal);
+        });
+
+        if (pairs.Count <= limit)
+            return pairs;
+
+        return pairs.GetRange(0, limit);
+    }
+
+    private sealed class PreferredFrameChange
+    {
+        public PreferredFrameChange(EnemyTraceFrame frame)
+        {
+            Tick = frame.frame;
+            RText = frame.r;
+            Events = frame.preferredChangeEvents ?? new List<EnemyTracePreferredChangeEvent>();
+
+            EnemyTracePreferredChangeEvent first = Events[0];
+
+            Before.AddRange(first.preferredBefore);
+            After.AddRange(first.preferredAfter);
+
+            if (Before.Count == 0 && frame.enemyWork != null)
+                Before.AddRange(frame.enemyWork.preferred);
+
+            if (After.Count == 0 && frame.enemyWork != null)
+                After.AddRange(frame.enemyWork.preferred);
+        }
+
+        public int Tick { get; }
+        public string? RText { get; }
+        public IReadOnlyList<EnemyTracePreferredChangeEvent> Events { get; }
+        public List<int> Before { get; } = new();
+        public List<int> After { get; } = new();
     }
 
     private sealed class PreferredSample

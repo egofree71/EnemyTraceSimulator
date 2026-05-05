@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.6.49**
+Current package version: **v0.6.55**
 
 Implemented now:
 
@@ -30,6 +30,7 @@ Implemented now:
 - trace model classes extracted under `scripts/tools/trace/`;
 - diagnostic trace blocks parsed into dedicated classes: `EnemyTraceEnemyWorkState`, `EnemyTraceTimersState`, and `EnemyTracePortsState`;
 - optional raw memory trace blocks parsed into `EnemyTraceRawMemoryState`;
+- `preferredChangeEvents` parsed from safe MAME polling traces into `EnemyTracePreferredChangeEvent`;
 - centralized MAME-to-Godot actor Y conversion through `MameTraceCoordinates`;
 - debug rendering of the logical 11 x 11 maze from `data/maze.json`;
 - rendering of rotating gates from the loaded trace;
@@ -175,6 +176,10 @@ After v0.6.14, active enemies are advanced by one pixel using the direction obse
 
 After v0.6.17, the comparison window includes an **Ignore EnemyWork mismatches** option. This makes it possible to validate movement and environment alignment while `enemyWork` is still pending. In the current reference trace, enabling this filter leaves no remaining mismatches, which confirms that the reference-direction stepping matches MAME for the compared fields.
 
+After v0.6.49, `LadyBugEnemySimulationAdapter` can run the current one-enemy validation path with no mismatch. It still uses the MAME reference direction for enemy movement and temporarily synchronizes `EnemyWork.preferred[]`, `chaseTimers[]`, and `chaseRoundRobin` from MAME while the real arcade generators are pending. The adapter now declares `ExpectedToMismatch => false`.
+
+After v0.6.55, the trace and diagnostics pipeline can investigate `EnemyWork.preferred[]` without using unstable MAME memory write taps. The Lua trace script uses a safe per-frame polling diff of `0x61C4..0x61C7` and writes `preferredChangeEvents` into the JSONL trace. The C# loader parses these events, and the Compare diagnostics can summarize first transitions, top transitions, and per-slot change counts.
+
 The status line is displayed below the two board views, not inside the toolbar. This keeps the toolbar stable even after a large trace is loaded.
 
 ## Important Godot .NET rebuild note
@@ -223,6 +228,7 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │     │  ├─ EnemyTraceTimersState.cs
 │     │  ├─ EnemyTracePortsState.cs
 │     │  ├─ EnemyTraceRawMemoryState.cs
+│     │  ├─ EnemyTracePreferredChangeEvent.cs
 │     │  ├─ MameTraceCoordinates.cs
 │     │  └─ MameTraceLoader.cs
 │     ├─ comparison/
@@ -245,6 +251,7 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 │        ├─ InjectedMismatchSimulationAdapter.cs
 │        ├─ LadyBugSimulationInitialState.cs
 │        ├─ LadyBugSimulationState.cs
+│        ├─ LadyBugPreferredGeneratorDiagnostics.cs
 │        └─ LadyBugEnemySimulationAdapter.cs
 ├─ tools/
 │  └─ mame/
@@ -328,6 +335,40 @@ A typical frame contains:
 
 The parser is now isolated in `scripts/tools/trace/MameTraceLoader.cs`. It is intentionally tolerant and supports several field names used during the trace experiments, such as `pivot`, `gatePivot`, `orientation`, and `currentOrientation`.
 
+
+### preferredChangeEvents
+
+When generated with the v0.6.55 safe polling Lua trace script, each JSONL frame may also include:
+
+```json
+"preferredChangeEvents": []
+```
+
+This field records frame-to-frame changes in the enemy preferred-direction work bytes:
+
+```text
+0x61C4 .. 0x61C7
+```
+
+The polling events are deliberately safe: they do **not** use MAME write taps, because write-tap experiments interfered with the save-state post-load flow on the current MAME setup.
+
+Each event includes:
+
+```text
+tick
+mameFrame
+pc
+r
+addr
+slot
+old
+new
+preferredBefore
+preferredAfter
+```
+
+Important limitation: `pc` and `r` are sampled at the frame boundary, not at the exact CPU instruction that wrote the byte. The events are therefore reliable for transition analysis, but not for exact write-PC attribution.
+
 ## Debug board rendering
 
 The current renderer is diagnostic, but less noisy by default than the early prototype.
@@ -378,7 +419,7 @@ The left board is labelled **Simulation C# / Godot**, but it currently displays 
 
 The actor positions are now converted with the MAME Y mirror and are good enough for visual inspection, but the coordinate mapping is still not considered final. Gates are currently more reliable than actor placement.
 
-The tool does not yet compare states. It only loads, displays, and replays the trace.
+The tool now compares states through the Compare window and can validate the current one-enemy reference-synced pipeline with no mismatch. It still does not run independent arcade enemy decision logic yet.
 
 ## Roadmap
 
@@ -476,7 +517,7 @@ Remaining v0.5 work:
 
 ### v0.6: C# enemy simulation adapter
 
-Status after v0.6.49: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, preferred-only comparison filtering, reference-synced `preferred[]`, and no-mismatch one-enemy validation checkpoint added.
+Status after v0.6.55: reference-direction enemy stepping, partial `EnemyWork` reconstruction, chase-state synchronization, preferred-only comparison filtering, reference-synced `preferred[]`, no-mismatch one-enemy validation checkpoint, safe preferred[] polling trace events, loader parsing, and preferred-change diagnostics added.
 
 Implemented:
 
@@ -496,10 +537,15 @@ Implemented:
 - the comparison source summary now reports `Lady Bug reference-direction step`;
 - the current expected first mismatch is now typically in `EnemyWork`, not in basic enemy position;
 - `EnemyWork` mismatches can be ignored temporarily through the comparison window;
-- when this filter removes all mismatches, the console reports that no remaining mismatch exists after applying filters.
+- when this filter removes all mismatches, the console reports that no remaining mismatch exists after applying filters;
+- `EnemyWork.preferred[]` can be reference-synchronized from MAME so the one-enemy validation path runs with no mismatch and no filters;
+- the MAME trace can now include safe polling `preferredChangeEvents` for `0x61C4..0x61C7`;
+- `MameTraceLoader` parses `preferredChangeEvents` into `EnemyTracePreferredChangeEvent`;
+- `LadyBugPreferredGeneratorDiagnostics` summarizes preferred[] samples, candidate-generator scores, first transitions, top transitions, and per-slot change counts.
 
 Remaining v0.6 work:
 
+- analyze `preferredChangeEvents` transitions to infer the real `EnemyWork.preferred[]` generator;
 - implement the real `EnemyWork.preferred[]` generator, beginning with the arcade base-preference path around `0x2E5C`;
 - improve the MAME trace/logger for multi-enemy validation by identifying the `EnemyWork` owner slot;
 - replace temporary reference-synchronized chase timer / round-robin state with the real chase/BFS subsystem;
@@ -605,3 +651,45 @@ Scope of this checkpoint:
 Important limitation:
 
 `EnemyWork.preferred[]` is not yet simulated. It is intentionally synchronized from MAME as a bridge so the rest of the one-enemy pipeline can be validated without filtering. The next real AI task remains the implementation of the arcade preferred-direction generator, especially the path around `0x2E5C`.
+
+
+## v0.6.55 checkpoint: preferred[] change-event diagnostics
+
+The current focus is the reconstruction of `EnemyWork.preferred[]`.
+
+Relevant arcade RAM:
+
+```text
+61C4..61C7 = EnemyWork.preferred[]
+```
+
+The previous C# diagnostic proved that simple models are insufficient:
+
+- `preferred[]` is not equal to the current enemy direction;
+- `preferred[]` is not a simple rotation of the current direction;
+- the frame-boundary `R` register value alone does not reproduce the observed sequence.
+
+To avoid guessing, the MAME Lua trace script now records safe polling changes for `61C4..61C7` as `preferredChangeEvents`.
+
+Current validation scope:
+
+- official comparison target: one active enemy;
+- current trace length: up to roughly tick 800;
+- multi-enemy traces are deferred until the trace logger identifies which enemy slot owns the shared `EnemyWork` scratch state.
+
+Current known-good validation result:
+
+```text
+Comparison result: no mismatch. Pipeline is valid.
+```
+
+Current diagnostic result target:
+
+```text
+preferred[] change events: framesWithChanges = non-zero
+preferred[] change events: first transitions
+preferred[] change events: top transitions
+preferred[] change events: slot write counts
+```
+
+The next development step is to analyze those transitions and replace the temporary MAME reference synchronization of `preferred[]` with a real C# reproduction.

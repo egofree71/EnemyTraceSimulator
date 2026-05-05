@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.6.51: preferred[] generator diagnostics added.");
+        Log("v0.6.56: code comments clarify reference-synced preferred[] diagnostics.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -933,7 +933,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current adapter can reference-sync EnemyWork.preferred[] for validation. The diagnostics button compares simple 0x2E5C/R-register candidate generators against the MAME preferred[] trace.",
+            Text = "v0.6 prepares the real Lady Bug enemy simulation adapter. The current adapter can reference-sync EnemyWork.preferred[] for validation. The diagnostics button now also summarizes preferredChangeEvents produced by the safe MAME polling trace.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
@@ -983,8 +983,8 @@ public partial class EnemyTraceSimulatorWindow : Control
     {
         var button = new Button
         {
-            Text = "Analyze preferred[] generator candidates",
-            TooltipText = "Compare simple 0x2E5C/R-register candidate generators against the MAME preferred[] trace without changing the simulation checkpoint.",
+            Text = "Analyze preferred[] / change events",
+            TooltipText = "Compare simple preferred[] candidate generators and summarize preferredChangeEvents from the safe MAME polling trace.",
             CustomMinimumSize = new Vector2(240, 38),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };

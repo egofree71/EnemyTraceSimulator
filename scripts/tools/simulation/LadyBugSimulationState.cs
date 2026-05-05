@@ -1,7 +1,11 @@
 using System.Collections.Generic;
 
 /// <summary>
-/// Mutable state owned by the future Lady Bug enemy simulation adapter.
+/// Mutable state owned by the Lady Bug enemy simulation adapter.
+///
+/// This class is the boundary between reference-assisted validation and the
+/// future real arcade simulation. Fields should be carefully documented as either
+/// simulated, derived, or temporarily synchronized from MAME.
 ///
 /// v0.6.7 adds the first tick-advance hook. It currently syncs external
 /// player, port, gate, timer, and enemy control state from the reference trace. Active enemies are moved by one pixel using the reference direction.
@@ -164,6 +168,12 @@ public sealed class LadyBugSimulationState
         SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
     }
 
+    /// <summary>
+    /// Temporary bridge for the unsolved preferred[] generator.
+    ///
+    /// This sync must eventually disappear. It exists so the rest of the one-enemy
+    /// validation pipeline can remain exact while preferred[] is reverse-engineered.
+    /// </summary>
     private static bool SyncReferencePreferredState(
         SimulationEnemyWorkState enemyWork,
         EnemyTraceEnemyWorkState? referenceEnemyWork)
@@ -308,6 +318,14 @@ public sealed class LadyBugSimulationState
             enemyWork.Preferred.Add(0);
     }
 
+    /// <summary>
+    /// Partial rejectedMask model.
+    ///
+    /// The real arcade code rejects directions while testing preferred candidates
+    /// against maze/door constraints. Until preferred[] is generated locally, this
+    /// method still uses the reference preferred[0] as evidence for the attempted
+    /// candidate.
+    /// </summary>
     private static int DeriveRejectedMaskCandidate(
         int previousTempDir,
         int currentTempDir,
@@ -410,6 +428,13 @@ public sealed class LadyBugSimulationState
         return value is 0x01 or 0x02 or 0x04 or 0x08;
     }
 
+    /// <summary>
+    /// Selects which enemy slot owns the current shared EnemyWork scratch tuple.
+    ///
+    /// With one enemy, the first active slot is sufficient. With multiple active
+    /// enemies, EnemyWork may belong to whichever slot the arcade routine is
+    /// processing, so we match tempDir/tempX/tempY when possible.
+    /// </summary>
     private static EnemyTraceActor? SelectReferenceEnemyForEnemyWork(EnemyTraceFrame referenceFrame)
     {
         if (referenceFrame.enemies == null)

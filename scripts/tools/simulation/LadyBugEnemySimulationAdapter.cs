@@ -16,8 +16,17 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
         "Build the future Lady Bug simulation state from the trace. " +
         "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, and updates first EnemyWork fields, with preferred[] temporarily synced from the reference trace.";
 
+    // This adapter is now a valid checkpoint for the current one-enemy trace.
+    // It is still reference-assisted, but the comparison pipeline should pass.
     public bool ExpectedToMismatch => false;
 
+    /// <summary>
+    /// Builds the candidate timeline from mutable simulation state.
+    ///
+    /// The current implementation is intentionally reference-assisted: it uses the
+    /// MAME direction and synced preferred/chase state so the remaining pipeline can
+    /// be validated before the full arcade AI is reimplemented.
+    /// </summary>
     public SimulationAdapterResult Run(IReadOnlyList<EnemyTraceFrame> referenceFrames)
     {
         if (referenceFrames.Count == 0)
