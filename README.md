@@ -13,7 +13,7 @@ This repository is deliberately separate from the main Lady Bug remake project. 
 
 ## Current status
 
-Current package version: **v0.6.55**
+Current package version: **v0.6.63**
 
 Implemented now:
 
@@ -31,6 +31,10 @@ Implemented now:
 - diagnostic trace blocks parsed into dedicated classes: `EnemyTraceEnemyWorkState`, `EnemyTraceTimersState`, and `EnemyTracePortsState`;
 - optional raw memory trace blocks parsed into `EnemyTraceRawMemoryState`;
 - `preferredChangeEvents` parsed from safe MAME polling traces into `EnemyTracePreferredChangeEvent`;
+- exact-PC preferred-direction diagnostic script: `tools/mame/lua/ladybug_preferred_pc_trace.lua`;
+- diagnostic MAME launcher mode that auto-enables `-debug`, `-log`, and a generated `-debugscript` when the exact-PC script is selected;
+- real-time C# watchdog for the exact-PC diagnostic so MAME can be stopped after a controlled capture window without using `-seconds_to_run`;
+- `error.log`-based reverse-engineering workflow for exact `LBPREF` breakpoint hits at `0x2E97`, `0x2EC7`, and `0x477D`;
 - centralized MAME-to-Godot actor Y conversion through `MameTraceCoordinates`;
 - debug rendering of the logical 11 x 11 maze from `data/maze.json`;
 - rendering of rotating gates from the loaded trace;
@@ -162,6 +166,28 @@ The **Compare** button opens a comparison test window. For now, it can run two c
 
 The comparison runner now checks actors, gates, frame metadata, `enemyWork`, timers, and ports. This gives the future simulation adapter a broader target than just enemy coordinates.
 
+For normal frame-by-frame validation, keep the standard JSONL trace script:
+
+```text
+res://tools/mame/lua/ladybug_sequence_trace.lua
+```
+
+For reverse-engineering the exact writers of `EnemyWork.preferred[]`, temporarily select the exact-PC diagnostic script:
+
+```text
+res://tools/mame/lua/ladybug_preferred_pc_trace.lua
+```
+
+When that script is selected, the launcher automatically adds `-debug`, `-log`, and a generated `-debugscript` containing `g`. The main output for this diagnostic is MAME's `error.log` in `tools/mame/lua/`, not the JSONL trace directory.
+
+Recommended one-enemy capture setting for the current investigation:
+
+```text
+framesAfterTick0 = 500
+```
+
+This keeps the preferred-direction trace inside the current one-active-enemy validation window on the tested save-state.
+
 The temporary comparison sources now implement `IEnemySimulationAdapter`. This keeps the **Compare** window independent from any specific simulation source.
 
 `LadyBugEnemySimulationAdapter` now exists as the first skeleton for the future real C# simulation. It builds a typed `LadyBugSimulationInitialState` from the first MAME trace frame, including player, enemy slots, gates, enemyWork, timers, and ports.
@@ -256,7 +282,8 @@ A normal **Build** is often enough, but **Rebuild** is the safest option when th
 ├─ tools/
 │  └─ mame/
 │     ├─ lua/
-│     │  └─ ladybug_sequence_trace.lua
+│     │  ├─ ladybug_sequence_trace.lua
+│     │  └─ ladybug_preferred_pc_trace.lua
 │     └─ states/
 │        └─ ladybug/
 │           └─ .gitkeep
@@ -291,6 +318,16 @@ config/mame_trace_settings.json
 The C# launcher reads this file, resolves `res://` paths to project-local paths, generates a Lua runtime configuration, and starts MAME with the configured script and save-state parameters.
 
 The toolbar **⚙** button opens a settings window that reads and writes this JSON file. Generated files such as traces, logs, runtime Lua configs, and `.sta` files are ignored by Git.
+
+For the exact-PC `preferred[]` diagnostic, use these temporary settings:
+
+```text
+luaScriptPath    = res://tools/mame/lua/ladybug_preferred_pc_trace.lua
+outputPrefix     = ladybug_sequence_v8_pcdiag
+framesAfterTick0 = 500
+```
+
+The launcher detects `ladybug_preferred_pc_trace.lua` by filename and automatically adds debugger-related MAME arguments. There is no need to expose or edit `enableDebugger` from the settings dialog for this diagnostic.
 
 ## Trace format
 
@@ -369,6 +406,44 @@ preferredAfter
 
 Important limitation: `pc` and `r` are sampled at the frame boundary, not at the exact CPU instruction that wrote the byte. The events are therefore reliable for transition analysis, but not for exact write-PC attribution.
 
+
+### Exact-PC preferred[] diagnostic
+
+The standard JSONL trace remains the reference format for frame-by-frame validation. It records one state per frame and can be loaded by the simulator.
+
+For reverse engineering `EnemyWork.preferred[]`, the repository also contains an experimental exact-PC diagnostic script:
+
+```text
+tools/mame/lua/ladybug_preferred_pc_trace.lua
+```
+
+This script is not a replacement for the normal JSONL pipeline. It is a targeted MAME debugger tool. It installs breakpoints at the known preferred-direction write sites:
+
+```text
+0x2E97  2E97_ROTATE_WRITE   base preferred[] rotation/player-dir branch
+0x2EC7  2EC7_RANDOM_WRITE   base preferred[] random LD A,R branch
+0x477D  477D_BFS_WRITE      chase/BFS override into preferred[]
+```
+
+The breakpoint actions emit `LBPREF` lines through MAME `logerror`. With `-log` enabled, those lines are written to:
+
+```text
+tools/mame/lua/error.log
+```
+
+This is currently the most reliable output for exact-PC attribution. The optional `*_preferred_pc_hits.log` file is a secondary Lua-drained copy and can remain small because MAME's debugger error log behaves like a circular buffer.
+
+Observed one-enemy result from the current `framesAfterTick0=500` capture:
+
+```text
+2EC7_RANDOM_WRITE : 484 writes = 121 full base generations
+2E97_ROTATE_WRITE : 280 writes =  70 full base generations
+477D_BFS_WRITE    :   0 writes in this one-enemy window
+```
+
+The rotation branch produced `[04,02,01,08]` for each complete generation in this capture. The random branch produced the non-uniform tuples seen in the frame-level `preferred[]` diagnostics, confirming that those tuples come from the arcade random branch rather than from a hidden post-frame source.
+
+
 ## Debug board rendering
 
 The current renderer is diagnostic, but less noisy by default than the early prototype.
@@ -420,6 +495,9 @@ The left board is labelled **Simulation C# / Godot**, but it currently displays 
 The actor positions are now converted with the MAME Y mirror and are good enough for visual inspection, but the coordinate mapping is still not considered final. Gates are currently more reliable than actor placement.
 
 The tool now compares states through the Compare window and can validate the current one-enemy reference-synced pipeline with no mismatch. It still does not run independent arcade enemy decision logic yet.
+
+- the exact-PC `error.log` diagnostic is a reverse-engineering helper and is not a loadable JSONL simulation trace;
+- multi-enemy validation is not yet part of the current official comparison window.
 
 ## Roadmap
 
@@ -693,3 +771,50 @@ preferred[] change events: slot write counts
 ```
 
 The next development step is to analyze those transitions and replace the temporary MAME reference synchronization of `preferred[]` with a real C# reproduction.
+
+
+## v0.6.63 checkpoint: exact-PC preferred[] write diagnostics
+
+This checkpoint adds a targeted MAME debugger diagnostic for the `EnemyWork.preferred[]` bytes at `0x61C4..0x61C7`.
+
+The standard JSONL trace remains the main frame-by-frame comparison format. The exact-PC diagnostic is separate and exists to answer a question that the JSONL polling trace cannot answer: which CPU instruction actually wrote a preferred-direction byte, and with which register values?
+
+Implemented diagnostic pieces:
+
+- `tools/mame/lua/ladybug_preferred_pc_trace.lua`;
+- automatic `-debug` / `-log` / generated `-debugscript` handling in `MameTraceLauncher` when that script is selected;
+- `enableDebugger` in `MameTraceSettings`, mostly for compatibility and manual override;
+- a real-time launcher watchdog for the exact-PC diagnostic, controlled by `framesAfterTick0`, instead of MAME `-seconds_to_run`;
+- cleanup of the previous `tools/mame/lua/error.log` before starting a new exact-PC diagnostic run.
+
+Primary output:
+
+```text
+tools/mame/lua/error.log
+```
+
+Current one-enemy diagnostic recommendation:
+
+```text
+luaScriptPath    = res://tools/mame/lua/ladybug_preferred_pc_trace.lua
+outputPrefix     = ladybug_sequence_v8_pcdiag
+framesAfterTick0 = 500
+```
+
+Validated findings from the current one-enemy `error.log`:
+
+- `0x2E97` writes complete rotation tuples into `61C4..61C7`;
+- `0x2EC7` writes complete random tuples into `61C4..61C7`;
+- in the current `framesAfterTick0=500` one-enemy capture, `0x477D` was not hit;
+- the rotation branch produced `[04,02,01,08]` in all complete observed groups;
+- the random branch accounts for the irregular tuples observed in frame-level `preferred[]` polling diagnostics.
+
+Current interpretation:
+
+```text
+preferred[] = base generation from 0x2E5C
+              via either 0x2E97 rotation or 0x2EC7 random
+              plus later 0x477D BFS/chase override when chase is active
+```
+
+The exact-PC diagnostic should remain a reverse-engineering tool, not the normal comparison pipeline.
