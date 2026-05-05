@@ -813,8 +813,8 @@ Current interpretation:
 
 ```text
 preferred[] = base generation from 0x2E5C
-              via either 0x2E97 rotation or 0x2EC7 random
-              plus later 0x477D BFS/chase override when chase is active
+			  via either 0x2E97 rotation or 0x2EC7 random
+			  plus later 0x477D BFS/chase override when chase is active
 ```
 
 The exact-PC diagnostic should remain a reverse-engineering tool, not the normal comparison pipeline.

@@ -110,6 +110,20 @@ public static class MameTraceLauncher
             }
         }
 
+        string preferredPcAnalysisPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_preferred_pc_analysis.txt");
+        if (preferredPcDiagnostic && File.Exists(preferredPcAnalysisPath))
+        {
+            try
+            {
+                File.Delete(preferredPcAnalysisPath);
+            }
+            catch (Exception ex)
+            {
+                result.Messages.Add("WARNING: could not delete previous preferred PC analysis:");
+                result.Messages.Add("  " + ex.Message);
+            }
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = mameExecutable,
@@ -164,7 +178,7 @@ public static class MameTraceLauncher
         if (preferredPcDiagnostic)
         {
             result.Messages.Add($"Preferred PC diagnostic watchdog enabled: MAME will be killed after about {watchdogMilliseconds / 1000.0:0.0} seconds of real time if it does not exit by itself.");
-            result.Messages.Add("Tip: use framesAfterTick0=250..450 to stay in the one-active-enemy window.");
+            result.Messages.Add("Tip: use framesAfterTick0=250..500 to stay in the one-active-enemy window.");
             result.Messages.Add("No -seconds_to_run is used because it can stop MAME before autoboot Lua/debugger setup completes.");
         }
 
@@ -193,7 +207,13 @@ public static class MameTraceLauncher
             result.Messages.Add("  " + result.SummaryPath);
             result.Messages.Add("Primary MAME error.log, because -log is enabled for this diagnostic:");
             result.Messages.Add("  " + fallbackErrorLogPath);
-            result.Messages.Add("For this diagnostic, error.log is the most reliable output.");
+            result.Messages.Add("For this diagnostic, error.log is the most reliable raw output.");
+
+            await TryBuildPreferredPcAnalysisAsync(
+                fallbackErrorLogPath,
+                preferredPcAnalysisPath,
+                result.Messages).ConfigureAwait(false);
+
             result.Messages.Add("This diagnostic output is not a JSONL frame trace and should not be loaded with Charger trace.");
         }
         else
@@ -224,6 +244,42 @@ public static class MameTraceLauncher
             return "res://" + normalizedPath[projectRoot.Length..];
 
         return absolutePath;
+    }
+
+    private static async Task TryBuildPreferredPcAnalysisAsync(
+        string errorLogPath,
+        string analysisPath,
+        List<string> messages)
+    {
+        try
+        {
+            if (!File.Exists(errorLogPath))
+            {
+                messages.Add("Preferred PC analysis skipped: error.log not found.");
+                messages.Add("  " + errorLogPath);
+                return;
+            }
+
+            string errorLogText = await File.ReadAllTextAsync(errorLogPath).ConfigureAwait(false);
+            IReadOnlyList<string> reportLines = LadyBugPreferredPcLogAnalyzer.BuildReport(errorLogText);
+
+            string? directory = Path.GetDirectoryName(analysisPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            await File.WriteAllTextAsync(
+                analysisPath,
+                string.Join(System.Environment.NewLine, reportLines) + System.Environment.NewLine,
+                Encoding.UTF8).ConfigureAwait(false);
+
+            messages.Add("Preferred PC analysis generated:");
+            messages.Add("  " + analysisPath);
+        }
+        catch (Exception ex)
+        {
+            messages.Add("WARNING: preferred PC analysis failed:");
+            messages.Add("  " + ex.Message);
+        }
     }
 
     private static ProcessRunResult RunMameProcess(ProcessStartInfo startInfo, int watchdogMilliseconds)
@@ -313,6 +369,7 @@ public static class MameTraceLauncher
         // Examples:
         //   framesAfterTick0=250 -> about  9.2 s
         //   framesAfterTick0=400 -> about 11.7 s
+        //   framesAfterTick0=500 -> about 13.3 s
         //   framesAfterTick0=800 -> about 18.3 s
         int requestedFrames = Math.Max(1, framesAfterTick0);
         double emulatedSeconds = requestedFrames / 60.0;
