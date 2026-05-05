@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.77**
+Current checkpoint: **v0.6.78**
 
 The project currently supports two complementary workflows:
 
@@ -50,7 +50,8 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - richer first-mismatch diagnostics for future preferred[] shadow failures;
 - den-exit candidate diagnostics for enemy activation traces;
-- temporary reference-sync bridge for `rejectedMask` and `fallbackMask` scratch fields.
+- temporary reference-sync bridge for `rejectedMask` and `fallbackMask` scratch fields;
+- preferred[] rotate-branch shadow recognition generalized to all four player directions.
 
 ## Current validation checkpoint
 
@@ -73,7 +74,7 @@ The exact-PC diagnostic has confirmed that `preferred[]` is produced by a base g
 
 The standalone C# model can replay the full exact-PC `preferred[]` stream for the current one-enemy diagnostic capture, including observed BFS overrides, while matching the MAME pre-write snapshots.
 
-The standard JSONL adapter now also computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including a den-exit trace where the first enemy leaves the monster den.
+The standard JSONL adapter now also computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including den-exit traces where the first enemy leaves the monster den and a rotate-branch case from player direction `04`.
 
 The detailed findings are documented in:
 
@@ -213,7 +214,7 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. test the adapter preferred[] shadow model on more one-enemy traces;
+1. test the adapter preferred[] shadow model on more one-enemy traces, especially different player directions and den-exit timings;
 2. start isolating the real `rejectedMask` / fallback generator;
 3. start replacing the reference-synced `preferred[]` only after the shadow path is robust on more traces;
 4. implement chase timer and round-robin behavior;

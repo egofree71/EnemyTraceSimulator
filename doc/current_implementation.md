@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.77  
+**Current package version:** v0.6.78  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -38,7 +38,8 @@ The current implementation can:
 - compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison;
 - report richer first-mismatch context if the preferred[] shadow model fails on a future trace;
 - detect enemy activation / den-exit candidate frames;
-- temporarily reference-sync `rejectedMask` and `fallbackMask` while the rejection/fallback generator is not yet implemented.
+- temporarily reference-sync `rejectedMask` and `fallbackMask` while the rejection/fallback generator is not yet implemented;
+- recognize the `2E97` rotate branch from all four player directions in the adapter preferred[] shadow model.
 
 The project does not yet run fully independent arcade enemy AI.
 
@@ -426,6 +427,8 @@ LadyBugMonsterPreferenceSystem.cs
 
 `LadyBugSimulationState` now keeps richer first-mismatch details for the preferred[] shadow model. These details are only printed when a mismatch occurs.
 
+`LadyBugSimulationState` recognizes the `2E97` rotate branch from all four direction starts, not only from `08`.
+
 `LadyBugSimulationState` also detects enemy activation / den-exit candidate frames and keeps temporary reference-sync bridges for `rejectedMask` and `fallbackMask` scratch fields.
 
 ## 8. Current MAME Lua scripts
@@ -782,6 +785,84 @@ rejectedMask and fallbackMask are still reference-synced scratch fields.
 The real rejection/fallback generator is not implemented yet.
 ```
 
+
+### 10.9 Rotate branch from all player directions
+
+`v0.6.78` generalizes the adapter preferred[] shadow classifier for the `2E97` rotate branch.
+
+Previously, the adapter recognized only:
+
+```text
+2E97_ROTATE_FROM_08 -> [04,02,01,08]
+```
+
+A new den-exit trace starts with the player direction `04`:
+
+```text
+Player frame 0: dir=04
+```
+
+The shadow classifier initially produced:
+
+```text
+preferred[] shadow model checks=486
+matches=265
+mismatches=221
+source=unclassified
+first mismatch reference=[02,01,08,04]
+```
+
+That tuple is exactly the `2E97` rotate branch from player direction `04`.
+
+The classifier now recognizes all four direction starts:
+
+```text
+2E97_ROTATE_FROM_01 -> [08,04,02,01]
+2E97_ROTATE_FROM_02 -> [01,08,04,02]
+2E97_ROTATE_FROM_04 -> [02,01,08,04]
+2E97_ROTATE_FROM_08 -> [04,02,01,08]
+```
+
+It also recognizes observed slot-0 BFS overlays over each rotate base:
+
+```text
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_01
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_02
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_04
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08
+```
+
+Current validation result for the player-dir-04 den-exit trace:
+
+```text
+Comparison [Lady Bug reference-direction step]: comparedFrames=501, mismatches=0
+preferred[] shadow model checks=486, matches=486, mismatches=0
+enemy activations=1
+den-exit candidates=1
+2E97_ROTATE_FROM_04=204
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_04=17
+Comparison result: no mismatch. Pipeline is valid.
+```
+
+Current validated standard JSONL traces:
+
+```text
+normal one-enemy trace:
+  comparedFrames=801
+  preferred[] shadow model checks=796
+  preferred[] shadow mismatches=0
+
+den-exit one-enemy trace, player direction 08:
+  comparedFrames=501
+  preferred[] shadow model checks=496
+  preferred[] shadow mismatches=0
+
+den-exit one-enemy trace, player direction 04:
+  comparedFrames=501
+  preferred[] shadow model checks=486
+  preferred[] shadow mismatches=0
+```
+
 ## 11. Current comparison behavior
 
 The Lady Bug adapter currently validates a one-enemy path with reference synchronization.
@@ -868,11 +949,11 @@ git rm --cached path/to/generated/file
 
 ### v0.6 next: more traces, then isolate rejection/fallback
 
-The adapter preferred[] shadow model is now validated on both a normal one-enemy trace and a den-exit one-enemy trace. The next target is to collect more traces, then start isolating the real rejection/fallback generator.
+The adapter preferred[] shadow model is now validated on a normal one-enemy trace and two den-exit one-enemy traces, including rotate-branch starts from player directions `08` and `04`. The next target is to collect more traces, then start isolating the real rejection/fallback generator.
 
 Suggested order:
 
-1. generate at least one or two additional one-enemy standard JSONL traces;
+1. generate additional one-enemy standard JSONL traces with other player directions and timings;
 2. run `Compare > Run Lady Bug reference-direction step`;
 3. inspect the preferred[] shadow summary;
 4. if a mismatch appears, use the first-mismatch diagnostic context to decide whether the cause is random branch, rotate branch, or observed BFS overlay;
