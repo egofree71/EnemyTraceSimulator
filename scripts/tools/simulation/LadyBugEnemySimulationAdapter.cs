@@ -14,7 +14,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, and updates first EnemyWork fields, with preferred[] temporarily synced from the reference trace.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[] temporarily synced from the reference trace, and computes a diagnostic preferred[] shadow model in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
@@ -53,6 +53,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             "; AdvanceOneTick syncs player, ports, gates, timers, and enemy control state; " +
             "active enemies move one pixel using the MAME direction; " +
             "EnemyWork tempDir/tempX/tempY, transient rejectedMask, preferred fallback pair and preferred[] is temporarily synced from the reference trace; " +
+            simulationState.BuildPreferredShadowDiagnosticSummary() + "; " +
             "real enemy decision logic is not implemented yet");
     }
 }

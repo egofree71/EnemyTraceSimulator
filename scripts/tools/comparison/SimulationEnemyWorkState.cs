@@ -11,6 +11,19 @@ public sealed class SimulationEnemyWorkState
     public int RejectedMask { get; set; } = -1;
     public int FallbackMask { get; set; } = -1;
     public List<int> Preferred { get; } = new();
+
+    /// <summary>
+    /// Diagnostic-only preferred[] tuple computed by LadyBugMonsterPreferenceSystem.
+    /// The adapter still uses Preferred as the comparison value while this shadow
+    /// field validates the model in parallel.
+    /// </summary>
+    public List<int> PreferredShadow { get; } = new();
+
+    /// <summary>
+    /// Describes how PreferredShadow was classified/generated, for example
+    /// 2EC7_RANDOM_RLOW_A or 477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08.
+    /// </summary>
+    public string PreferredShadowSource { get; set; } = string.Empty;
     public List<int> ChaseTimers { get; } = new();
     public int ChaseRoundRobin { get; set; } = -1;
 }

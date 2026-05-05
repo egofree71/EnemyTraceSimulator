@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 
 /// <summary>
 /// Mutable state owned by the Lady Bug enemy simulation adapter.
@@ -20,6 +21,12 @@ public sealed class LadyBugSimulationState
     public SimulationPortsState? Ports { get; private set; }
 
     private int _stableEnemyWorkCandidateTicks;
+    private int _preferredShadowChecks;
+    private int _preferredShadowMatches;
+    private int _preferredShadowMismatches;
+    private string _firstPreferredShadowMismatch = string.Empty;
+    private readonly Dictionary<string, int> _preferredShadowSourceCounts = new();
+
 
     public static LadyBugSimulationState FromInitialState(LadyBugSimulationInitialState initialState)
     {
@@ -166,6 +173,7 @@ public sealed class LadyBugSimulationState
             UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
 
         SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
+        UpdatePreferredShadowDiagnostics(EnemyWork, referenceFrame.enemyWork);
     }
 
     /// <summary>
@@ -206,6 +214,225 @@ public sealed class LadyBugSimulationState
         enemyWork.ChaseTimers.Clear();
         enemyWork.ChaseTimers.AddRange(referenceEnemyWork.chaseTimers);
         enemyWork.ChaseRoundRobin = referenceEnemyWork.chaseRoundRobin;
+    }
+
+    /// <summary>
+    /// Shadow diagnostic for the preferred[] generator.
+    ///
+    /// This does not drive the simulation yet. The adapter still keeps preferred[]
+    /// synced from MAME. The shadow path only checks whether the end-of-frame
+    /// preferred[] tuple seen in the standard JSONL trace can be explained by the
+    /// C# MonsterPreferenceSystem model plus the currently observed slot-0 BFS
+    /// override shape.
+    /// </summary>
+    private void UpdatePreferredShadowDiagnostics(
+        SimulationEnemyWorkState enemyWork,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        if (referenceEnemyWork == null || referenceEnemyWork.preferred.Count < 4)
+            return;
+
+        _preferredShadowChecks++;
+
+        if (TryBuildPreferredShadowCandidate(referenceEnemyWork, out int[] candidate, out string source))
+        {
+            enemyWork.PreferredShadow.Clear();
+            enemyWork.PreferredShadow.AddRange(candidate);
+            enemyWork.PreferredShadowSource = source;
+
+            AddPreferredShadowSource(source);
+
+            if (PreferredTupleEquals(candidate, referenceEnemyWork.preferred))
+            {
+                _preferredShadowMatches++;
+                return;
+            }
+
+            RegisterPreferredShadowMismatch(referenceEnemyWork, source, candidate);
+            return;
+        }
+
+        enemyWork.PreferredShadow.Clear();
+        enemyWork.PreferredShadowSource = "unclassified";
+        AddPreferredShadowSource("unclassified");
+        RegisterPreferredShadowMismatch(referenceEnemyWork, "unclassified", new[] { 0, 0, 0, 0 });
+    }
+
+    private static bool TryBuildPreferredShadowCandidate(
+        EnemyTraceEnemyWorkState referenceEnemyWork,
+        out int[] candidate,
+        out string source)
+    {
+        candidate = new[] { 0, 0, 0, 0 };
+        source = "none";
+
+        if (referenceEnemyWork.preferred.Count < 4)
+            return false;
+
+        int[] referencePreferred =
+        {
+            referenceEnemyWork.preferred[0] & 0x0F,
+            referenceEnemyWork.preferred[1] & 0x0F,
+            referenceEnemyWork.preferred[2] & 0x0F,
+            referenceEnemyWork.preferred[3] & 0x0F
+        };
+
+        int[] rotateFromDown = LadyBugMonsterPreferenceSystem.GenerateRotateBranch(
+            LadyBugMonsterPreferenceSystem.DirDown);
+
+        if (PreferredTupleEquals(rotateFromDown, referencePreferred))
+        {
+            candidate = rotateFromDown;
+            source = "2E97_ROTATE_FROM_08";
+            return true;
+        }
+
+        for (int rLow = 0; rLow < 16; rLow++)
+        {
+            int[] randomCandidate = LadyBugMonsterPreferenceSystem.GenerateRandomBranchFromUsedRLow(rLow);
+
+            if (PreferredTupleEquals(randomCandidate, referencePreferred))
+            {
+                candidate = randomCandidate;
+                source = "2EC7_RANDOM_RLOW_" + rLow.ToString("X1");
+                return true;
+            }
+        }
+
+        // End-of-frame JSONL does not contain the exact 477D PC hit. However, the
+        // exact-PC diagnostic proved that in the current one-enemy window BFS/chase
+        // overrides preferred[0] / 0x61C4. Therefore, for shadow classification only,
+        // accept a base tuple whose tail slots match and whose slot 0 can be replaced
+        // by the observed reference preferred[0].
+        if (TryBuildSlot0OverrideCandidate(referencePreferred, rotateFromDown, "2E97_ROTATE_FROM_08", out candidate, out source))
+            return true;
+
+        for (int rLow = 0; rLow < 16; rLow++)
+        {
+            int[] randomCandidate = LadyBugMonsterPreferenceSystem.GenerateRandomBranchFromUsedRLow(rLow);
+
+            if (TryBuildSlot0OverrideCandidate(referencePreferred, randomCandidate, "2EC7_RANDOM_RLOW_" + rLow.ToString("X1"), out candidate, out source))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryBuildSlot0OverrideCandidate(
+        int[] referencePreferred,
+        int[] baseCandidate,
+        string baseSource,
+        out int[] candidate,
+        out string source)
+    {
+        candidate = new[] { 0, 0, 0, 0 };
+        source = "none";
+
+        if ((baseCandidate[1] & 0x0F) != (referencePreferred[1] & 0x0F) ||
+            (baseCandidate[2] & 0x0F) != (referencePreferred[2] & 0x0F) ||
+            (baseCandidate[3] & 0x0F) != (referencePreferred[3] & 0x0F))
+        {
+            return false;
+        }
+
+        candidate = new[]
+        {
+            baseCandidate[0] & 0x0F,
+            baseCandidate[1] & 0x0F,
+            baseCandidate[2] & 0x0F,
+            baseCandidate[3] & 0x0F
+        };
+
+        LadyBugMonsterPreferenceSystem.TryApplyBfsOverride(
+            candidate,
+            LadyBugMonsterPreferenceSystem.PreferredBaseAddress,
+            referencePreferred[0]);
+
+        source = "477D_OBSERVED_SLOT0_OVER_" + baseSource;
+        return true;
+    }
+
+    private void RegisterPreferredShadowMismatch(
+        EnemyTraceEnemyWorkState referenceEnemyWork,
+        string source,
+        int[] candidate)
+    {
+        _preferredShadowMismatches++;
+
+        if (!string.IsNullOrEmpty(_firstPreferredShadowMismatch))
+            return;
+
+        _firstPreferredShadowMismatch =
+            "source=" + source +
+            " reference=" + FormatPreferredTuple(referenceEnemyWork.preferred) +
+            " shadow=" + LadyBugMonsterPreferenceSystem.FormatTuple(candidate);
+    }
+
+    private void AddPreferredShadowSource(string source)
+    {
+        if (!_preferredShadowSourceCounts.TryGetValue(source, out int count))
+            count = 0;
+
+        _preferredShadowSourceCounts[source] = count + 1;
+    }
+
+    public string BuildPreferredShadowDiagnosticSummary()
+    {
+        if (_preferredShadowChecks == 0)
+            return "preferred[] shadow model: no checks were run";
+
+        var builder = new StringBuilder();
+
+        builder.Append("preferred[] shadow model checks=");
+        builder.Append(_preferredShadowChecks);
+        builder.Append(", matches=");
+        builder.Append(_preferredShadowMatches);
+        builder.Append(", mismatches=");
+        builder.Append(_preferredShadowMismatches);
+
+        if (!string.IsNullOrEmpty(_firstPreferredShadowMismatch))
+        {
+            builder.Append(", first mismatch: ");
+            builder.Append(_firstPreferredShadowMismatch);
+        }
+
+        builder.Append(", sources: ");
+        bool first = true;
+        foreach (KeyValuePair<string, int> pair in _preferredShadowSourceCounts)
+        {
+            if (!first)
+                builder.Append("; ");
+
+            first = false;
+            builder.Append(pair.Key);
+            builder.Append("=");
+            builder.Append(pair.Value);
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool PreferredTupleEquals(IReadOnlyList<int> a, IReadOnlyList<int> b)
+    {
+        if (a.Count < 4 || b.Count < 4)
+            return false;
+
+        return ((a[0] & 0x0F) == (b[0] & 0x0F)) &&
+               ((a[1] & 0x0F) == (b[1] & 0x0F)) &&
+               ((a[2] & 0x0F) == (b[2] & 0x0F)) &&
+               ((a[3] & 0x0F) == (b[3] & 0x0F));
+    }
+
+    private static string FormatPreferredTuple(IReadOnlyList<int> preferred)
+    {
+        if (preferred.Count < 4)
+            return "[missing]";
+
+        return "[" +
+               (preferred[0] & 0x0F).ToString("X2") + "," +
+               (preferred[1] & 0x0F).ToString("X2") + "," +
+               (preferred[2] & 0x0F).ToString("X2") + "," +
+               (preferred[3] & 0x0F).ToString("X2") + "]";
     }
 
     private void UpdatePreferredDirectionCandidate(
@@ -670,10 +897,12 @@ public sealed class LadyBugSimulationState
             TempY = enemyWork.TempY,
             RejectedMask = enemyWork.RejectedMask,
             FallbackMask = enemyWork.FallbackMask,
-            ChaseRoundRobin = enemyWork.ChaseRoundRobin
+            ChaseRoundRobin = enemyWork.ChaseRoundRobin,
+            PreferredShadowSource = enemyWork.PreferredShadowSource
         };
 
         clone.Preferred.AddRange(enemyWork.Preferred);
+        clone.PreferredShadow.AddRange(enemyWork.PreferredShadow);
         clone.ChaseTimers.AddRange(enemyWork.ChaseTimers);
         return clone;
     }
