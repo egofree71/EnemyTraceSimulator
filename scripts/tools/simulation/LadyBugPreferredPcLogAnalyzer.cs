@@ -11,18 +11,10 @@ using System.Globalization;
 /// - JSONL remains the frame-by-frame comparison format.
 /// - error.log / LBPREF is an exact-PC reverse-engineering diagnostic stream.
 ///
-/// The analyzer expects lines containing:
-///
-///   LBPREF|source=2EC7_RANDOM_WRITE|pc=2EC7|r=...|a=...|...
-///
-/// It also tolerates lines prefixed by the helper Lua drain format:
-///
-///   pollTick=...|mameFrame=...|...|LBPREF|source=...
-///
-/// v0.6.68:
-/// - Adds an explicit slot/BFS correlation check:
-///     slot0 extra over slot1 == 477D_BFS_WRITE hits
-///   This makes the report self-explanatory when chase/BFS only overrides 0x61C4.
+/// v0.6.70:
+/// - Uses LadyBugMonsterPreferenceSystem for model checks.
+/// - Reports whether the first C# preference model reproduces all complete
+///   2EC7 random tuples and 2E97 rotate tuples observed in error.log.
 /// </summary>
 public static class LadyBugPreferredPcLogAnalyzer
 {
@@ -62,6 +54,7 @@ public static class LadyBugPreferredPcLogAnalyzer
         AppendTopTuples(lines, "top random tuples from 2EC7", randomTuples, 12);
         AppendTopTuples(lines, "top rotate tuples from 2E97", rotateTuples, 8);
         AppendRandomRDiagnostics(lines, randomTuples);
+        AppendModelCheck(lines, randomTuples, rotateTuples);
         AppendBfsSummary(lines, hits);
 
         return lines;
@@ -313,13 +306,13 @@ public static class LadyBugPreferredPcLogAnalyzer
             {
                 PreferredPcHit hit = hits[i];
                 int direction = hit.A & 0x0F;
-                int usedRLow = ReconstructUsedRLowFromWritePcR(hit.R, direction);
+                int usedRLow = LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(hit.R, direction);
 
                 if (i < hits.Length - 1)
                 {
                     PreferredPcHit next = hits[i + 1];
                     int nextDirection = next.A & 0x0F;
-                    int nextUsedRLow = ReconstructUsedRLowFromWritePcR(next.R, nextDirection);
+                    int nextUsedRLow = LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(next.R, nextDirection);
                     int delta = (nextUsedRLow - usedRLow) & 0x0F;
 
                     if (!deltaByDirection.TryGetValue(direction, out Dictionary<int, int>? directionCounts))
@@ -359,6 +352,50 @@ public static class LadyBugPreferredPcLogAnalyzer
             PreferredPcTuple tuple = randomTuples[i];
             lines.Add($"    {tuple.FormatDirections()} | R@2EC7=[{tuple.FormatRValues()}] | usedRLow=[{tuple.FormatUsedRLowValues()}]");
         }
+    }
+
+    private static void AppendModelCheck(
+        List<string> lines,
+        List<PreferredPcTuple> randomTuples,
+        List<PreferredPcTuple> rotateTuples)
+    {
+        lines.Add("preferred[] exact-PC C# model check");
+
+        int randomMatches = 0;
+        string firstRandomMismatch = "none";
+
+        foreach (PreferredPcTuple tuple in randomTuples)
+        {
+            int usedRLowStart = tuple.UsedRLowAtSlot(0);
+            int[] predicted = LadyBugMonsterPreferenceSystem.GenerateRandomBranchFromUsedRLow(usedRLowStart);
+
+            if (tuple.Matches(predicted))
+            {
+                randomMatches++;
+            }
+            else if (firstRandomMismatch == "none")
+            {
+                firstRandomMismatch =
+                    $"expected={tuple.FormatDirections()} predicted={LadyBugMonsterPreferenceSystem.FormatTuple(predicted)} " +
+                    $"usedRLowStart={usedRLowStart:X1}";
+            }
+        }
+
+        lines.Add($"  2EC7 random model matches: {randomMatches}/{randomTuples.Count}");
+        if (firstRandomMismatch != "none")
+            lines.Add($"  first random mismatch: {firstRandomMismatch}");
+
+        int rotateMatchesWithDownStart = 0;
+        int[] rotateFromDown = LadyBugMonsterPreferenceSystem.GenerateRotateBranch(LadyBugMonsterPreferenceSystem.DirDown);
+
+        foreach (PreferredPcTuple tuple in rotateTuples)
+        {
+            if (tuple.Matches(rotateFromDown))
+                rotateMatchesWithDownStart++;
+        }
+
+        lines.Add($"  2E97 rotate model from PLAYER_DIR_CURRENT=08 matches: {rotateMatchesWithDownStart}/{rotateTuples.Count}");
+        lines.Add($"  rotate from 08 predicts: {LadyBugMonsterPreferenceSystem.FormatTuple(rotateFromDown)}");
     }
 
     private static void AppendBfsSummary(List<string> lines, List<PreferredPcHit> hits)
@@ -439,20 +476,6 @@ public static class LadyBugPreferredPcLogAnalyzer
         }
 
         return -1;
-    }
-
-    private static int ReconstructUsedRLowFromWritePcR(int rAtWritePc, int finalDirection)
-    {
-        int subtract = finalDirection switch
-        {
-            0x01 => 0x08,
-            0x02 => 0x0A,
-            0x04 => 0x0B,
-            0x08 => 0x0C,
-            _ => 0x00
-        };
-
-        return (rAtWritePc - subtract) & 0x0F;
     }
 
     private static string GetString(Dictionary<string, string> values, string key)
@@ -582,6 +605,28 @@ public static class LadyBugPreferredPcLogAnalyzer
             return new[] { S0, S1, S2, S3 };
         }
 
+        public bool Matches(IReadOnlyList<int> values)
+        {
+            return (S0.A & 0x0F) == (values[0] & 0x0F) &&
+                   (S1.A & 0x0F) == (values[1] & 0x0F) &&
+                   (S2.A & 0x0F) == (values[2] & 0x0F) &&
+                   (S3.A & 0x0F) == (values[3] & 0x0F);
+        }
+
+        public int UsedRLowAtSlot(int slot)
+        {
+            PreferredPcHit hit = slot switch
+            {
+                0 => S0,
+                1 => S1,
+                2 => S2,
+                3 => S3,
+                _ => S0
+            };
+
+            return LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(hit.R, hit.A & 0x0F);
+        }
+
         public string FormatDirections()
         {
             return $"[{Hex2(S0.A)},{Hex2(S1.A)},{Hex2(S2.A)},{Hex2(S3.A)}]";
@@ -594,10 +639,10 @@ public static class LadyBugPreferredPcLogAnalyzer
 
         public string FormatUsedRLowValues()
         {
-            int r0 = ReconstructUsedRLowFromWritePcR(S0.R, S0.A & 0x0F);
-            int r1 = ReconstructUsedRLowFromWritePcR(S1.R, S1.A & 0x0F);
-            int r2 = ReconstructUsedRLowFromWritePcR(S2.R, S2.A & 0x0F);
-            int r3 = ReconstructUsedRLowFromWritePcR(S3.R, S3.A & 0x0F);
+            int r0 = UsedRLowAtSlot(0);
+            int r1 = UsedRLowAtSlot(1);
+            int r2 = UsedRLowAtSlot(2);
+            int r3 = UsedRLowAtSlot(3);
 
             return $"{Hex1(r0)},{Hex1(r1)},{Hex1(r2)},{Hex1(r3)}";
         }
