@@ -11,10 +11,13 @@ using System.Globalization;
 /// - JSONL remains the frame-by-frame comparison format.
 /// - error.log / LBPREF is an exact-PC reverse-engineering diagnostic stream.
 ///
-/// v0.6.70:
-/// - Uses LadyBugMonsterPreferenceSystem for model checks.
-/// - Reports whether the first C# preference model reproduces all complete
-///   2EC7 random tuples and 2E97 rotate tuples observed in error.log.
+/// v0.6.71:
+/// - Adds a shadow replay check that replays the exact-PC LBPREF stream with
+///   LadyBugMonsterPreferenceSystem.
+/// - The replay validates the modeled base writes and checks that the simulated
+///   preferred[] state matches the p0..p3 snapshots before each logged write.
+/// - BFS/chase writes are still applied from the observed 477D hit, because the
+///   full BFS pathfinding system is not implemented yet.
 /// </summary>
 public static class LadyBugPreferredPcLogAnalyzer
 {
@@ -55,6 +58,7 @@ public static class LadyBugPreferredPcLogAnalyzer
         AppendTopTuples(lines, "top rotate tuples from 2E97", rotateTuples, 8);
         AppendRandomRDiagnostics(lines, randomTuples);
         AppendModelCheck(lines, randomTuples, rotateTuples);
+        AppendShadowReplayCheck(lines, hits);
         AppendBfsSummary(lines, hits);
 
         return lines;
@@ -396,6 +400,182 @@ public static class LadyBugPreferredPcLogAnalyzer
 
         lines.Add($"  2E97 rotate model from PLAYER_DIR_CURRENT=08 matches: {rotateMatchesWithDownStart}/{rotateTuples.Count}");
         lines.Add($"  rotate from 08 predicts: {LadyBugMonsterPreferenceSystem.FormatTuple(rotateFromDown)}");
+    }
+
+    private static void AppendShadowReplayCheck(List<string> lines, List<PreferredPcHit> hits)
+    {
+        lines.Add("preferred[] exact-PC shadow replay check");
+
+        if (hits.Count == 0)
+        {
+            lines.Add("  no hits.");
+            return;
+        }
+
+        int[] state =
+        {
+            hits[0].P0 & 0x0F,
+            hits[0].P1 & 0x0F,
+            hits[0].P2 & 0x0F,
+            hits[0].P3 & 0x0F
+        };
+
+        int preStateMatches = 0;
+        int preStateChecks = 0;
+        int modeledBaseWriteMatches = 0;
+        int modeledBaseWriteChecks = 0;
+        int bfsOverridesApplied = 0;
+        int bfsApplyFailures = 0;
+        string firstPreStateMismatch = "none";
+        string firstBaseWriteMismatch = "none";
+
+        int i = 0;
+        while (i < hits.Count)
+        {
+            PreferredPcHit hit = hits[i];
+
+            if ((hit.Source == RandomSource || hit.Source == RotateSource) &&
+                HasConsecutiveSource(hits, i, 4, hit.Source))
+            {
+                int[] predicted = hit.Source == RandomSource
+                    ? LadyBugMonsterPreferenceSystem.GenerateRandomBranchFromUsedRLow(
+                        LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(hit.R, hit.A & 0x0F))
+                    : LadyBugMonsterPreferenceSystem.GenerateRotateBranch(LadyBugMonsterPreferenceSystem.DirDown);
+
+                for (int slot = 0; slot < 4; slot++)
+                {
+                    PreferredPcHit slotHit = hits[i + slot];
+                    CheckPreState(slotHit, state, ref preStateMatches, ref preStateChecks, ref firstPreStateMismatch);
+
+                    int predictedValue = predicted[slot] & 0x0F;
+                    int observedValue = slotHit.A & 0x0F;
+                    modeledBaseWriteChecks++;
+
+                    if (predictedValue == observedValue)
+                    {
+                        modeledBaseWriteMatches++;
+                    }
+                    else if (firstBaseWriteMismatch == "none")
+                    {
+                        firstBaseWriteMismatch =
+                            $"source={slotHit.Source} pc={slotHit.Pc} slot={slot} " +
+                            $"predicted={Hex2(predictedValue)} observed={Hex2(observedValue)} " +
+                            $"before={FormatState(state)}";
+                    }
+
+                    state[slot] = predictedValue;
+                }
+
+                i += 4;
+                continue;
+            }
+
+            CheckPreState(hit, state, ref preStateMatches, ref preStateChecks, ref firstPreStateMismatch);
+
+            if (hit.Source == BfsSource)
+            {
+                bool applied = LadyBugMonsterPreferenceSystem.TryApplyBfsOverride(state, hit.IY, hit.A);
+
+                if (applied)
+                    bfsOverridesApplied++;
+                else
+                    bfsApplyFailures++;
+            }
+            else
+            {
+                int slot = InferSingleWriteSlot(hit);
+                if (slot >= 0 && slot < 4)
+                    state[slot] = hit.A & 0x0F;
+            }
+
+            i++;
+        }
+
+        lines.Add($"  pre-write state matches p0..p3: {preStateMatches}/{preStateChecks}");
+        if (firstPreStateMismatch != "none")
+            lines.Add($"  first pre-state mismatch: {firstPreStateMismatch}");
+
+        lines.Add($"  modeled base write values match observed A: {modeledBaseWriteMatches}/{modeledBaseWriteChecks}");
+        if (firstBaseWriteMismatch != "none")
+            lines.Add($"  first base write mismatch: {firstBaseWriteMismatch}");
+
+        lines.Add($"  BFS overrides applied from observed 477D hits: {bfsOverridesApplied}");
+        if (bfsApplyFailures > 0)
+            lines.Add($"  BFS override apply failures: {bfsApplyFailures}");
+
+        lines.Add($"  final shadow preferred[] state: {FormatState(state)}");
+        lines.Add("  note: BFS direction is still observed from 477D; full BFS pathfinding is not implemented yet.");
+    }
+
+    private static void CheckPreState(
+        PreferredPcHit hit,
+        int[] state,
+        ref int matches,
+        ref int checks,
+        ref string firstMismatch)
+    {
+        checks++;
+
+        int[] snapshot =
+        {
+            hit.P0 & 0x0F,
+            hit.P1 & 0x0F,
+            hit.P2 & 0x0F,
+            hit.P3 & 0x0F
+        };
+
+        if (StateEquals(state, snapshot))
+        {
+            matches++;
+            return;
+        }
+
+        if (firstMismatch == "none")
+        {
+            firstMismatch =
+                $"source={hit.Source} pc={hit.Pc} expectedPre={FormatState(snapshot)} shadowPre={FormatState(state)}";
+        }
+    }
+
+    private static bool HasConsecutiveSource(List<PreferredPcHit> hits, int start, int count, string source)
+    {
+        if (start + count > hits.Count)
+            return false;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (hits[start + i].Source != source)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static int InferSingleWriteSlot(PreferredPcHit hit)
+    {
+        if (hit.IY >= 0x61C4 && hit.IY <= 0x61C7)
+            return hit.IY - 0x61C4;
+
+        if (hit.L >= 0xC4 && hit.L <= 0xC7)
+            return hit.L - 0xC4;
+
+        return -1;
+    }
+
+    private static bool StateEquals(IReadOnlyList<int> a, IReadOnlyList<int> b)
+    {
+        if (a.Count < 4 || b.Count < 4)
+            return false;
+
+        return (a[0] & 0x0F) == (b[0] & 0x0F) &&
+               (a[1] & 0x0F) == (b[1] & 0x0F) &&
+               (a[2] & 0x0F) == (b[2] & 0x0F) &&
+               (a[3] & 0x0F) == (b[3] & 0x0F);
+    }
+
+    private static string FormatState(IReadOnlyList<int> state)
+    {
+        return $"[{Hex2(state[0])},{Hex2(state[1])},{Hex2(state[2])},{Hex2(state[3])}]";
     }
 
     private static void AppendBfsSummary(List<string> lines, List<PreferredPcHit> hits)
