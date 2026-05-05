@@ -173,7 +173,7 @@ public sealed class LadyBugSimulationState
             UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
 
         SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
-        UpdatePreferredShadowDiagnostics(EnemyWork, referenceFrame.enemyWork);
+        UpdatePreferredShadowDiagnostics(EnemyWork, referenceFrame, referenceFrame.enemyWork);
     }
 
     /// <summary>
@@ -227,6 +227,7 @@ public sealed class LadyBugSimulationState
     /// </summary>
     private void UpdatePreferredShadowDiagnostics(
         SimulationEnemyWorkState enemyWork,
+        EnemyTraceFrame referenceFrame,
         EnemyTraceEnemyWorkState? referenceEnemyWork)
     {
         if (referenceEnemyWork == null || referenceEnemyWork.preferred.Count < 4)
@@ -248,14 +249,14 @@ public sealed class LadyBugSimulationState
                 return;
             }
 
-            RegisterPreferredShadowMismatch(referenceEnemyWork, source, candidate);
+            RegisterPreferredShadowMismatch(referenceFrame, referenceEnemyWork, source, candidate);
             return;
         }
 
         enemyWork.PreferredShadow.Clear();
         enemyWork.PreferredShadowSource = "unclassified";
         AddPreferredShadowSource("unclassified");
-        RegisterPreferredShadowMismatch(referenceEnemyWork, "unclassified", new[] { 0, 0, 0, 0 });
+        RegisterPreferredShadowMismatch(referenceFrame, referenceEnemyWork, "unclassified", new[] { 0, 0, 0, 0 });
     }
 
     private static bool TryBuildPreferredShadowCandidate(
@@ -353,6 +354,7 @@ public sealed class LadyBugSimulationState
     }
 
     private void RegisterPreferredShadowMismatch(
+        EnemyTraceFrame referenceFrame,
         EnemyTraceEnemyWorkState referenceEnemyWork,
         string source,
         int[] candidate)
@@ -363,9 +365,59 @@ public sealed class LadyBugSimulationState
             return;
 
         _firstPreferredShadowMismatch =
-            "source=" + source +
+            "tick=" + referenceFrame.frame +
+            " mameFrame=" + referenceFrame.mameFrame +
+            " pc=" + referenceFrame.pc +
+            " r=" + referenceFrame.r +
+            " activeEnemies=" + CountActiveReferenceEnemies(referenceFrame) +
+            " tempDir=" + FormatByte(referenceEnemyWork.tempDir) +
+            " tempX=" + FormatByte(referenceEnemyWork.tempX) +
+            " tempY=" + FormatByte(referenceEnemyWork.tempY) +
+            " chaseTimers=" + FormatChaseTimers(referenceEnemyWork) +
+            " chaseRoundRobin=" + FormatByte(referenceEnemyWork.chaseRoundRobin) +
+            " source=" + source +
             " reference=" + FormatPreferredTuple(referenceEnemyWork.preferred) +
             " shadow=" + LadyBugMonsterPreferenceSystem.FormatTuple(candidate);
+    }
+
+    private static int CountActiveReferenceEnemies(EnemyTraceFrame referenceFrame)
+    {
+        if (referenceFrame.enemies == null)
+            return 0;
+
+        int count = 0;
+        foreach (EnemyTraceActor enemy in referenceFrame.enemies)
+        {
+            if (enemy.active)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static string FormatChaseTimers(EnemyTraceEnemyWorkState enemyWork)
+    {
+        if (enemyWork.chaseTimers.Count == 0)
+            return "[]";
+
+        var builder = new StringBuilder();
+        builder.Append("[");
+
+        for (int i = 0; i < enemyWork.chaseTimers.Count; i++)
+        {
+            if (i > 0)
+                builder.Append(",");
+
+            builder.Append(FormatByte(enemyWork.chaseTimers[i]));
+        }
+
+        builder.Append("]");
+        return builder.ToString();
+    }
+
+    private static string FormatByte(int value)
+    {
+        return (value & 0xFF).ToString("X2");
     }
 
     private void AddPreferredShadowSource(string source)
