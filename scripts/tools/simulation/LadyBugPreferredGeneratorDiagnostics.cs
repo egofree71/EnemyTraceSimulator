@@ -4,7 +4,7 @@ using System.Collections.Generic;
 /// <summary>
 /// Diagnostics for the remaining unsimulated EnemyWork.preferred[] generator.
 ///
-/// This does not change the simulation checkpoint. It compares simple candidate
+/// This does not change the simulation checkpoint. It compares candidate
 /// generators against the preferred[] values captured from MAME and summarizes
 /// safe polling-diff preferredChangeEvents.
 ///
@@ -35,7 +35,7 @@ public static class LadyBugPreferredGeneratorDiagnostics
             return lines;
         }
 
-        List<PreferredCandidateScore> scores = ScoreCandidates(samples);
+        List<PreferredCandidateScore> scores = ScoreDeterministicCandidates(samples);
         scores.Sort((a, b) =>
         {
             int exactCompare = b.ExactFrameMatches.CompareTo(a.ExactFrameMatches);
@@ -50,7 +50,7 @@ public static class LadyBugPreferredGeneratorDiagnostics
         });
 
         int totalSlots = samples.Count * 4;
-        lines.Add("preferred[] diagnostics: top candidates");
+        lines.Add("preferred[] diagnostics: top deterministic candidates");
 
         int count = Math.Min(10, scores.Count);
         for (int i = 0; i < count; i++)
@@ -71,9 +71,221 @@ public static class LadyBugPreferredGeneratorDiagnostics
                 $"preferred=[{FormatDirections(sample.Expected)}]");
         }
 
+        AppendInternalRBruteForceReport(lines, samples);
+        AppendDirectionDependentDeltaReport(lines, samples);
         AppendPreferredChangeEventReport(lines, frames);
 
         return lines;
+    }
+
+    /// <summary>
+    /// First 0x2E5C random-branch diagnostic.
+    ///
+    /// The branch at 0x2E9E reads R once per preferred[] slot. The trace R value is
+    /// sampled at frame boundary, not at the exact LD A,R. This report ignores the
+    /// boundary R and asks a narrower question: can a constant low-nibble stride
+    /// between those four internal R reads generate the observed preferred[] tuple?
+    /// </summary>
+    private static void AppendInternalRBruteForceReport(List<string> lines, List<PreferredSample> samples)
+    {
+        var scores = new List<InternalRStrideScore>();
+
+        for (int stride = 0; stride < 16; stride++)
+        {
+            int compatible = 0;
+            int totalStartChoices = 0;
+            string firstIncompatible = "none";
+
+            foreach (PreferredSample sample in samples)
+            {
+                List<int> starts = FindInternalRStartsForConstantStride(sample.Expected, stride);
+
+                if (starts.Count > 0)
+                {
+                    compatible++;
+                    totalStartChoices += starts.Count;
+                }
+                else if (firstIncompatible == "none")
+                {
+                    firstIncompatible =
+                        $"tick={sample.Tick} boundaryR={sample.RText ?? "--"} expected=[{FormatDirections(sample.Expected)}]";
+                }
+            }
+
+            scores.Add(new InternalRStrideScore
+            {
+                Stride = stride,
+                CompatibleFrames = compatible,
+                TotalStartChoices = totalStartChoices,
+                FirstIncompatible = firstIncompatible
+            });
+        }
+
+        scores.Sort((a, b) =>
+        {
+            int compatibleCompare = b.CompatibleFrames.CompareTo(a.CompatibleFrames);
+            if (compatibleCompare != 0)
+                return compatibleCompare;
+
+            int choiceCompare = a.TotalStartChoices.CompareTo(b.TotalStartChoices);
+            if (choiceCompare != 0)
+                return choiceCompare;
+
+            return a.Stride.CompareTo(b.Stride);
+        });
+
+        lines.Add("preferred[] diagnostics: 0x2E5C random path, internal R brute force");
+        lines.Add("  model: ignore frame-boundary R; brute-force internal R low-nibble start, with a constant low-nibble stride per slot");
+
+        int count = Math.Min(8, scores.Count);
+        for (int i = 0; i < count; i++)
+        {
+            InternalRStrideScore score = scores[i];
+            lines.Add(
+                $"  #{i + 1}: internalR stride={score.Stride:X1}: compatibleFrames={score.CompatibleFrames}/{samples.Count}, " +
+                $"totalStartChoices={score.TotalStartChoices}, firstIncompatible={score.FirstIncompatible}");
+        }
+
+        if (scores.Count == 0)
+            return;
+
+        int bestStride = scores[0].Stride;
+        lines.Add($"preferred[] diagnostics: first samples under best internalR stride={bestStride:X1}");
+
+        int sampleCount = Math.Min(12, samples.Count);
+        for (int i = 0; i < sampleCount; i++)
+        {
+            PreferredSample sample = samples[i];
+            List<int> starts = FindInternalRStartsForConstantStride(sample.Expected, bestStride);
+            lines.Add(
+                $"  tick={sample.Tick} boundaryR={sample.RText ?? "--"} expected=[{FormatDirections(sample.Expected)}] " +
+                $"internalRStart={FormatNibbleListOrNone(starts)}");
+        }
+    }
+
+    /// <summary>
+    /// Second 0x2E5C random-branch diagnostic.
+    ///
+    /// Constant stride is too simple because the Z80 path after each LD A,R may
+    /// execute a different number of instructions depending on the generated
+    /// direction. This test searches a direction-dependent low-nibble delta model:
+    ///
+    ///     nextR = currentR + delta[directionJustGenerated]
+    ///
+    /// The internal R start is still allowed to vary per frame, because the Lua
+    /// trace does not capture the exact R value at 0x2EA3.
+    /// </summary>
+    private static void AppendDirectionDependentDeltaReport(List<string> lines, List<PreferredSample> samples)
+    {
+        Dictionary<int, int> observedPatternCounts = BuildObservedPatternCounts(samples);
+
+        var scores = new List<DirectionDeltaScore>();
+
+        for (int delta01 = 0; delta01 < 16; delta01++)
+        for (int delta02 = 0; delta02 < 16; delta02++)
+        for (int delta04 = 0; delta04 < 16; delta04++)
+        for (int delta08 = 0; delta08 < 16; delta08++)
+        {
+            int[] deltas = { delta01, delta02, delta04, delta08 };
+
+            int[] generatedKeys = new int[16];
+            int generatedCount = 0;
+
+            for (int start = 0; start < 16; start++)
+            {
+                int key = GenerateDirectionDependentPatternKey(start, deltas);
+
+                if (!Contains(generatedKeys, generatedCount, key))
+                    generatedKeys[generatedCount++] = key;
+            }
+
+            int compatibleFrames = 0;
+            int matchedObservedPatterns = 0;
+
+            for (int i = 0; i < generatedCount; i++)
+            {
+                if (observedPatternCounts.TryGetValue(generatedKeys[i], out int patternCount))
+                {
+                    compatibleFrames += patternCount;
+                    matchedObservedPatterns++;
+                }
+            }
+
+            if (compatibleFrames == 0)
+                continue;
+
+            string firstIncompatible = "none";
+            foreach (PreferredSample sample in samples)
+            {
+                int expectedKey = DirectionsToKey(sample.Expected);
+                if (!Contains(generatedKeys, generatedCount, expectedKey))
+                {
+                    firstIncompatible =
+                        $"tick={sample.Tick} boundaryR={sample.RText ?? "--"} expected=[{FormatDirections(sample.Expected)}]";
+                    break;
+                }
+            }
+
+            scores.Add(new DirectionDeltaScore
+            {
+                Delta01 = delta01,
+                Delta02 = delta02,
+                Delta04 = delta04,
+                Delta08 = delta08,
+                CompatibleFrames = compatibleFrames,
+                MatchedObservedPatterns = matchedObservedPatterns,
+                GeneratedPatternCount = generatedCount,
+                FirstIncompatible = firstIncompatible
+            });
+        }
+
+        scores.Sort((a, b) =>
+        {
+            int compatibleCompare = b.CompatibleFrames.CompareTo(a.CompatibleFrames);
+            if (compatibleCompare != 0)
+                return compatibleCompare;
+
+            int matchedPatternCompare = b.MatchedObservedPatterns.CompareTo(a.MatchedObservedPatterns);
+            if (matchedPatternCompare != 0)
+                return matchedPatternCompare;
+
+            int generatedPatternCompare = a.GeneratedPatternCount.CompareTo(b.GeneratedPatternCount);
+            if (generatedPatternCompare != 0)
+                return generatedPatternCompare;
+
+            return string.Compare(a.FormatDeltas(), b.FormatDeltas(), StringComparison.Ordinal);
+        });
+
+        lines.Add("preferred[] diagnostics: 0x2E5C random path, direction-dependent R delta search");
+        lines.Add("  model: ignore frame-boundary R; brute-force internal R start plus delta after generated 01/02/04/08");
+
+        int count = Math.Min(10, scores.Count);
+        for (int i = 0; i < count; i++)
+        {
+            DirectionDeltaScore score = scores[i];
+            lines.Add(
+                $"  #{i + 1}: {score.FormatDeltas()}: compatibleFrames={score.CompatibleFrames}/{samples.Count}, " +
+                $"matchedPatterns={score.MatchedObservedPatterns}, generatedPatterns={score.GeneratedPatternCount}, " +
+                $"firstIncompatible={score.FirstIncompatible}");
+        }
+
+        if (scores.Count == 0)
+            return;
+
+        DirectionDeltaScore best = scores[0];
+        int[] bestDeltas = { best.Delta01, best.Delta02, best.Delta04, best.Delta08 };
+
+        lines.Add($"preferred[] diagnostics: first samples under best direction-delta model {best.FormatDeltas()}");
+
+        int sampleCount = Math.Min(12, samples.Count);
+        for (int i = 0; i < sampleCount; i++)
+        {
+            PreferredSample sample = samples[i];
+            List<int> starts = FindInternalRStartsForDirectionDelta(sample.Expected, bestDeltas);
+            lines.Add(
+                $"  tick={sample.Tick} boundaryR={sample.RText ?? "--"} expected=[{FormatDirections(sample.Expected)}] " +
+                $"internalRStart={FormatNibbleListOrNone(starts)}");
+        }
     }
 
     /// <summary>
@@ -110,12 +322,16 @@ public static class LadyBugPreferredGeneratorDiagnostics
 
         var transitionCounts = new Dictionary<string, int>();
         var slotCounts = new Dictionary<int, int>();
+        var changeCountHistogram = new Dictionary<int, int>();
 
         foreach (PreferredFrameChange change in frameEvents)
         {
             string key = $"[{FormatDirections(change.Before)}] -> [{FormatDirections(change.After)}]";
             transitionCounts.TryGetValue(key, out int count);
             transitionCounts[key] = count + 1;
+
+            changeCountHistogram.TryGetValue(change.Events.Count, out int histogramCount);
+            changeCountHistogram[change.Events.Count] = histogramCount + 1;
 
             foreach (EnemyTracePreferredChangeEvent e in change.Events)
             {
@@ -138,6 +354,35 @@ public static class LadyBugPreferredGeneratorDiagnostics
         lines.Add("preferred[] change events: top transitions");
         foreach (KeyValuePair<string, int> pair in TopCounts(transitionCounts, 12))
             lines.Add($"  {pair.Value}x {pair.Key}");
+
+        lines.Add("preferred[] change events: change-count histogram");
+        for (int i = 1; i <= 4; i++)
+        {
+            changeCountHistogram.TryGetValue(i, out int histogramCount);
+            lines.Add($"  {i} changed slot(s): {histogramCount}");
+        }
+
+        lines.Add("  note: polling only records value changes; a slot may have been written with the same value and therefore not appear here.");
+
+        lines.Add("preferred[] change events: first partial transitions");
+        int partialCount = 0;
+        foreach (PreferredFrameChange change in frameEvents)
+        {
+            if (change.Events.Count >= 4)
+                continue;
+
+            lines.Add(
+                $"  tick={change.Tick} r={change.RText ?? "--"} changes={change.Events.Count} " +
+                $"[{FormatDirections(change.Before)}] -> [{FormatDirections(change.After)}] " +
+                $"slots={FormatChangedSlots(change.Events)}");
+
+            partialCount++;
+            if (partialCount >= 12)
+                break;
+        }
+
+        if (partialCount == 0)
+            lines.Add("  none in the current one-enemy window.");
 
         lines.Add("preferred[] change events: slot write counts");
         for (int i = 0; i < 4; i++)
@@ -182,7 +427,7 @@ public static class LadyBugPreferredGeneratorDiagnostics
         return samples;
     }
 
-    private static List<PreferredCandidateScore> ScoreCandidates(List<PreferredSample> samples)
+    private static List<PreferredCandidateScore> ScoreDeterministicCandidates(List<PreferredSample> samples)
     {
         var scores = new List<PreferredCandidateScore>();
 
@@ -209,7 +454,7 @@ public static class LadyBugPreferredGeneratorDiagnostics
                 AddCandidate(
                     scores,
                     samples,
-                    $"R-map offset={capturedOffset:X1} stride={capturedStride}",
+                    $"boundary R-map offset={capturedOffset:X1} stride={capturedStride}",
                     sample => GenerateRMapSequence(sample.R, capturedOffset, capturedStride));
             }
         }
@@ -304,6 +549,127 @@ public static class LadyBugPreferredGeneratorDiagnostics
         }
 
         return result;
+    }
+
+    private static List<int> FindInternalRStartsForConstantStride(IReadOnlyList<int> expected, int stride)
+    {
+        var starts = new List<int>();
+
+        for (int start = 0; start < 16; start++)
+        {
+            bool matches = true;
+
+            for (int slot = 0; slot < 4; slot++)
+            {
+                int r = (start + stride * slot) & 0x0F;
+                int direction = DirectionFromRandomNibble(r);
+
+                if (direction != expected[slot])
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+                starts.Add(start);
+        }
+
+        return starts;
+    }
+
+    private static List<int> FindInternalRStartsForDirectionDelta(IReadOnlyList<int> expected, int[] deltas)
+    {
+        var starts = new List<int>();
+
+        for (int start = 0; start < 16; start++)
+        {
+            int r = start;
+            bool matches = true;
+
+            for (int slot = 0; slot < 4; slot++)
+            {
+                int direction = DirectionFromRandomNibble(r);
+
+                if (direction != expected[slot])
+                {
+                    matches = false;
+                    break;
+                }
+
+                int deltaIndex = DirectionToDeltaIndex(direction);
+                r = (r + deltas[deltaIndex]) & 0x0F;
+            }
+
+            if (matches)
+                starts.Add(start);
+        }
+
+        return starts;
+    }
+
+    private static int GenerateDirectionDependentPatternKey(int start, int[] deltas)
+    {
+        int r = start;
+        int key = 0;
+
+        for (int slot = 0; slot < 4; slot++)
+        {
+            int direction = DirectionFromRandomNibble(r);
+            key = (key << 4) | (direction & 0x0F);
+
+            int deltaIndex = DirectionToDeltaIndex(direction);
+            r = (r + deltas[deltaIndex]) & 0x0F;
+        }
+
+        return key;
+    }
+
+    private static Dictionary<int, int> BuildObservedPatternCounts(List<PreferredSample> samples)
+    {
+        var counts = new Dictionary<int, int>();
+
+        foreach (PreferredSample sample in samples)
+        {
+            int key = DirectionsToKey(sample.Expected);
+            counts.TryGetValue(key, out int count);
+            counts[key] = count + 1;
+        }
+
+        return counts;
+    }
+
+    private static int DirectionsToKey(IReadOnlyList<int> values)
+    {
+        int key = 0;
+
+        for (int i = 0; i < 4; i++)
+            key = (key << 4) | (values[i] & 0x0F);
+
+        return key;
+    }
+
+    private static bool Contains(int[] values, int count, int target)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            if (values[i] == target)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static int DirectionToDeltaIndex(int direction)
+    {
+        return direction switch
+        {
+            0x01 => 0,
+            0x02 => 1,
+            0x04 => 2,
+            0x08 => 3,
+            _ => 0
+        };
     }
 
     private static int DirectionFromRandomNibble(int rLowNibble)
@@ -402,6 +768,18 @@ public static class LadyBugPreferredGeneratorDiagnostics
         return string.Join(",", parts);
     }
 
+    private static string FormatNibbleListOrNone(IReadOnlyList<int> values)
+    {
+        if (values.Count == 0)
+            return "none";
+
+        var parts = new List<string>(values.Count);
+        foreach (int value in values)
+            parts.Add(value.ToString("X1"));
+
+        return string.Join(",", parts);
+    }
+
     private static string FormatChangedSlots(IReadOnlyList<EnemyTracePreferredChangeEvent> events)
     {
         var parts = new List<string>(events.Count);
@@ -473,5 +851,30 @@ public static class LadyBugPreferredGeneratorDiagnostics
         public int ExactFrameMatches { get; init; }
         public int SlotMatches { get; init; }
         public string FirstMismatch { get; init; } = string.Empty;
+    }
+
+    private sealed class InternalRStrideScore
+    {
+        public int Stride { get; init; }
+        public int CompatibleFrames { get; init; }
+        public int TotalStartChoices { get; init; }
+        public string FirstIncompatible { get; init; } = string.Empty;
+    }
+
+    private sealed class DirectionDeltaScore
+    {
+        public int Delta01 { get; init; }
+        public int Delta02 { get; init; }
+        public int Delta04 { get; init; }
+        public int Delta08 { get; init; }
+        public int CompatibleFrames { get; init; }
+        public int MatchedObservedPatterns { get; init; }
+        public int GeneratedPatternCount { get; init; }
+        public string FirstIncompatible { get; init; } = string.Empty;
+
+        public string FormatDeltas()
+        {
+            return $"delta01={Delta01:X1}, delta02={Delta02:X1}, delta04={Delta04:X1}, delta08={Delta08:X1}";
+        }
     }
 }

@@ -49,6 +49,19 @@ public sealed class MameTraceSettings
     [JsonPropertyName("windowed")]
     public bool Windowed { get; set; } = true;
 
+    /// <summary>
+    /// Optional manual debugger flag.
+    ///
+    /// The launcher also auto-enables the debugger when LuaScriptPath points to
+    /// tools/mame/lua/ladybug_preferred_pc_trace.lua, because that diagnostic
+    /// script requires cpu.debug:bpset().
+    ///
+    /// This property is intentionally safe for older config files: if the JSON
+    /// does not contain enableDebugger, the default is false.
+    /// </summary>
+    [JsonPropertyName("enableDebugger")]
+    public bool EnableDebugger { get; set; }
+
     [JsonPropertyName("autobootDelay")]
     public int AutobootDelay { get; set; } = 1;
 

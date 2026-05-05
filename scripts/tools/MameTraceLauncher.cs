@@ -15,6 +15,8 @@ using System.Threading.Tasks;
 public static class MameTraceLauncher
 {
     private const string RuntimeConfigFileName = "ladybug_sequence_runtime_config.lua";
+    private const string DebugStartupScriptFileName = "ladybug_preferred_pc_debug_startup.cmd";
+    private const string PreferredPcTraceScriptFileName = "ladybug_preferred_pc_trace.lua";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -56,6 +58,9 @@ public static class MameTraceLauncher
         if (!File.Exists(luaScriptPath))
             throw new FileNotFoundException("Lua trace script not found.", luaScriptPath);
 
+        bool preferredPcDiagnostic = IsPreferredPcDiagnosticScript(luaScriptPath);
+        bool enableDebugger = settings.EnableDebugger || preferredPcDiagnostic;
+
         string saveState = NormalizeSaveStateName(settings.SaveState, result.Messages);
         string expectedStatePath = Path.Combine(stateDirectory, settings.StateSubdir, saveState + ".sta");
         if (!File.Exists(expectedStatePath))
@@ -74,6 +79,37 @@ public static class MameTraceLauncher
         result.Messages.Add("Runtime Lua config written:");
         result.Messages.Add("  " + runtimeConfigPath);
 
+        string? debugStartupScriptPath = null;
+        if (enableDebugger)
+        {
+            debugStartupScriptPath = Path.Combine(scriptDirectory, DebugStartupScriptFileName);
+            await File.WriteAllTextAsync(
+                debugStartupScriptPath,
+                BuildDebugStartupScript(),
+                Encoding.ASCII).ConfigureAwait(false);
+
+            result.Messages.Add("MAME debugger enabled.");
+            result.Messages.Add("Debug startup script written:");
+            result.Messages.Add("  " + debugStartupScriptPath);
+            result.Messages.Add("This script sends 'g' so MAME does not remain stopped at the initial debugger break.");
+        }
+
+        string fallbackErrorLogPath = Path.Combine(scriptDirectory, "error.log");
+        if (preferredPcDiagnostic && File.Exists(fallbackErrorLogPath))
+        {
+            try
+            {
+                File.Delete(fallbackErrorLogPath);
+                result.Messages.Add("Deleted previous diagnostic error.log:");
+                result.Messages.Add("  " + fallbackErrorLogPath);
+            }
+            catch (Exception ex)
+            {
+                result.Messages.Add("WARNING: could not delete previous diagnostic error.log:");
+                result.Messages.Add("  " + ex.Message);
+            }
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = mameExecutable,
@@ -86,6 +122,25 @@ public static class MameTraceLauncher
 
         if (settings.Windowed)
             startInfo.ArgumentList.Add("-window");
+
+        if (enableDebugger)
+        {
+            startInfo.ArgumentList.Add("-debug");
+
+            if (preferredPcDiagnostic)
+            {
+                // The breakpoint action uses logerror. With -log, MAME writes those
+                // lines to error.log in the working directory. This is the most
+                // reliable output for this exact-PC diagnostic.
+                startInfo.ArgumentList.Add("-log");
+            }
+
+            if (!string.IsNullOrWhiteSpace(debugStartupScriptPath))
+            {
+                startInfo.ArgumentList.Add("-debugscript");
+                startInfo.ArgumentList.Add(debugStartupScriptPath);
+            }
+        }
 
         startInfo.ArgumentList.Add("-rompath");
         startInfo.ArgumentList.Add(romPath);
@@ -102,25 +157,57 @@ public static class MameTraceLauncher
         result.Messages.Add("Launching MAME:");
         result.Messages.Add("  " + result.CommandPreview);
 
-        int exitCode = await Task.Run(() =>
+        int watchdogMilliseconds = preferredPcDiagnostic
+            ? ComputeDiagnosticWatchdogMilliseconds(settings.FramesAfterTick0)
+            : 0;
+
+        if (preferredPcDiagnostic)
         {
-            using Process process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Failed to start MAME process.");
+            result.Messages.Add($"Preferred PC diagnostic watchdog enabled: MAME will be killed after about {watchdogMilliseconds / 1000.0:0.0} seconds of real time if it does not exit by itself.");
+            result.Messages.Add("Tip: use framesAfterTick0=250..450 to stay in the one-active-enemy window.");
+            result.Messages.Add("No -seconds_to_run is used because it can stop MAME before autoboot Lua/debugger setup completes.");
+        }
 
-            process.WaitForExit();
-            return process.ExitCode;
-        }).ConfigureAwait(false);
+        ProcessRunResult runResult = await Task.Run(() =>
+            RunMameProcess(startInfo, watchdogMilliseconds)).ConfigureAwait(false);
 
-        result.ExitCode = exitCode;
-        result.InitialSnapshotPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_initial_snapshot.json");
-        result.TracePath = Path.Combine(outputDirectory, settings.OutputPrefix + "_trace.jsonl");
-        result.SummaryPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_summary.txt");
+        result.ExitCode = runResult.ExitCode;
 
-        result.Messages.Add($"MAME exited with code {exitCode}.");
-        result.Messages.Add("Expected trace output:");
-        result.Messages.Add("  " + result.TracePath);
-        result.Messages.Add("Expected initial snapshot:");
-        result.Messages.Add("  " + result.InitialSnapshotPath);
+        if (runResult.TimedOut)
+        {
+            result.Messages.Add("MAME watchdog timeout reached; process was killed intentionally after diagnostic capture time.");
+        }
+
+        if (preferredPcDiagnostic)
+        {
+            result.TracePath = string.Empty;
+            result.InitialSnapshotPath = string.Empty;
+            result.SummaryPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_preferred_pc_summary.txt");
+
+            string hitLogPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_preferred_pc_hits.log");
+
+            result.Messages.Add($"MAME exited with code {result.ExitCode}.");
+            result.Messages.Add("Expected preferred[] exact-PC hit log, if Lua drained debugger.errorlog:");
+            result.Messages.Add("  " + hitLogPath);
+            result.Messages.Add("Expected preferred[] exact-PC summary, if Lua finish() ran:");
+            result.Messages.Add("  " + result.SummaryPath);
+            result.Messages.Add("Primary MAME error.log, because -log is enabled for this diagnostic:");
+            result.Messages.Add("  " + fallbackErrorLogPath);
+            result.Messages.Add("For this diagnostic, error.log is the most reliable output.");
+            result.Messages.Add("This diagnostic output is not a JSONL frame trace and should not be loaded with Charger trace.");
+        }
+        else
+        {
+            result.InitialSnapshotPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_initial_snapshot.json");
+            result.TracePath = Path.Combine(outputDirectory, settings.OutputPrefix + "_trace.jsonl");
+            result.SummaryPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_summary.txt");
+
+            result.Messages.Add($"MAME exited with code {result.ExitCode}.");
+            result.Messages.Add("Expected trace output:");
+            result.Messages.Add("  " + result.TracePath);
+            result.Messages.Add("Expected initial snapshot:");
+            result.Messages.Add("  " + result.InitialSnapshotPath);
+        }
 
         return result;
     }
@@ -139,6 +226,58 @@ public static class MameTraceLauncher
         return absolutePath;
     }
 
+    private static ProcessRunResult RunMameProcess(ProcessStartInfo startInfo, int watchdogMilliseconds)
+    {
+        using Process process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start MAME process.");
+
+        if (watchdogMilliseconds <= 0)
+        {
+            process.WaitForExit();
+            return new ProcessRunResult(process.ExitCode, false);
+        }
+
+        if (process.WaitForExit(watchdogMilliseconds))
+            return new ProcessRunResult(process.ExitCode, false);
+
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            try
+            {
+                process.Kill();
+            }
+            catch
+            {
+                // Best effort. The caller will still return a timeout result.
+            }
+        }
+
+        try
+        {
+            process.WaitForExit(5000);
+        }
+        catch
+        {
+            // Best effort after kill.
+        }
+
+        int exitCode;
+        try
+        {
+            exitCode = process.HasExited ? process.ExitCode : -1;
+        }
+        catch
+        {
+            exitCode = -1;
+        }
+
+        return new ProcessRunResult(exitCode, true);
+    }
+
     private static string ResolvePath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -155,6 +294,31 @@ public static class MameTraceLauncher
 
         string projectRoot = ProjectSettings.GlobalizePath("res://");
         return Path.GetFullPath(Path.Combine(projectRoot, path));
+    }
+
+    private static bool IsPreferredPcDiagnosticScript(string luaScriptPath)
+    {
+        string fileName = Path.GetFileName(luaScriptPath);
+        return string.Equals(fileName, PreferredPcTraceScriptFileName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int ComputeDiagnosticWatchdogMilliseconds(int framesAfterTick0)
+    {
+        // This watchdog is intentionally short and controlled by framesAfterTick0:
+        // for preferred[] reverse engineering we want to stay in the one-active-enemy window.
+        //
+        // The normal Lua frame limiter often cannot finish cleanly while debugger breakpoints
+        // keep issuing "g", so this is a real-time kill switch, not an emulated-frame limit.
+        //
+        // Examples:
+        //   framesAfterTick0=250 -> about  9.2 s
+        //   framesAfterTick0=400 -> about 11.7 s
+        //   framesAfterTick0=800 -> about 18.3 s
+        int requestedFrames = Math.Max(1, framesAfterTick0);
+        double emulatedSeconds = requestedFrames / 60.0;
+        double realSeconds = emulatedSeconds + 5.0;
+
+        return (int)(Math.Clamp(realSeconds, 7.0, 90.0) * 1000.0);
     }
 
     private static string NormalizeSaveStateName(string saveState, List<string> messages)
@@ -184,6 +348,17 @@ return {
     include_full_memory_each_frame = {{LuaBool(settings.IncludeFullMemoryEachFrame)}},
     include_logical_maze_each_frame = {{LuaBool(settings.IncludeLogicalMazeEachFrame)}}
 }
+""";
+    }
+
+    private static string BuildDebugStartupScript()
+    {
+        // MAME enters the debugger immediately at startup when -debug is used.
+        // This single debugger command lets the emulator run so the autoboot Lua
+        // script can start and install its exact-PC breakpoints.
+        return """
+g
+
 """;
     }
 
@@ -217,6 +392,8 @@ return {
             ? "\"" + value.Replace("\"", "\\\"") + "\""
             : value;
     }
+
+    private readonly record struct ProcessRunResult(int ExitCode, bool TimedOut);
 }
 
 public sealed class MameTraceLaunchResult
