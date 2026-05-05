@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.74**
+Current checkpoint: **v0.6.77**
 
 The project currently supports two complementary workflows:
 
@@ -48,7 +48,9 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - first standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs;
 - preferred[] shadow replay diagnostic validating the modeled write sequence against MAME snapshots;
 - preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
-- richer first-mismatch diagnostics for future preferred[] shadow failures.
+- richer first-mismatch diagnostics for future preferred[] shadow failures;
+- den-exit candidate diagnostics for enemy activation traces;
+- temporary reference-sync bridge for `rejectedMask` and `fallbackMask` scratch fields.
 
 ## Current validation checkpoint
 
@@ -71,7 +73,7 @@ The exact-PC diagnostic has confirmed that `preferred[]` is produced by a base g
 
 The standalone C# model can replay the full exact-PC `preferred[]` stream for the current one-enemy diagnostic capture, including observed BFS overrides, while matching the MAME pre-write snapshots.
 
-The standard JSONL adapter now also computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded trace in the one-enemy validation path.
+The standard JSONL adapter now also computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including a den-exit trace where the first enemy leaves the monster den.
 
 The detailed findings are documented in:
 
@@ -202,6 +204,7 @@ tools/mame/states/**/*.sta
 - The official validation target is still one active enemy.
 - Multi-enemy validation is planned but not yet stable.
 - `EnemyWork.preferred[]` is still reference-synced in the comparison adapter.
+- `rejectedMask` and `fallbackMask` are still reference-synced scratch fields.
 - Chase timers and round-robin state are still reference-synced.
 - BFS direction is still observed from `477D` in the shadow replay and adapter shadow compare; full BFS pathfinding is not yet implemented.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
@@ -210,10 +213,11 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. test the adapter preferred[] shadow model on at least one or two additional one-enemy traces;
-2. start replacing the reference-synced `preferred[]` only after the shadow path is robust on more traces;
-3. implement chase timer and round-robin behavior;
-4. implement full BFS/chase direction selection.
+1. test the adapter preferred[] shadow model on more one-enemy traces;
+2. start isolating the real `rejectedMask` / fallback generator;
+3. start replacing the reference-synced `preferred[]` only after the shadow path is robust on more traces;
+4. implement chase timer and round-robin behavior;
+5. implement full BFS/chase direction selection.
 
 Later:
 

@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.74  
+**Current package version:** v0.6.77  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -36,7 +36,9 @@ The current implementation can:
 - validate a first standalone C# model of the preferred-direction generator;
 - shadow-replay the exact-PC preferred[] write stream against MAME snapshots;
 - compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison;
-- report richer first-mismatch context if the preferred[] shadow model fails on a future trace.
+- report richer first-mismatch context if the preferred[] shadow model fails on a future trace;
+- detect enemy activation / den-exit candidate frames;
+- temporarily reference-sync `rejectedMask` and `fallbackMask` while the rejection/fallback generator is not yet implemented.
 
 The project does not yet run fully independent arcade enemy AI.
 
@@ -424,6 +426,8 @@ LadyBugMonsterPreferenceSystem.cs
 
 `LadyBugSimulationState` now keeps richer first-mismatch details for the preferred[] shadow model. These details are only printed when a mismatch occurs.
 
+`LadyBugSimulationState` also detects enemy activation / den-exit candidate frames and keeps temporary reference-sync bridges for `rejectedMask` and `fallbackMask` scratch fields.
+
 ## 8. Current MAME Lua scripts
 
 ### 8.1 ladybug_sequence_trace.lua
@@ -703,6 +707,81 @@ shadow=[..]
 
 The current trace still has no mismatch, so this extra context is not printed in normal successful runs. The diagnostic exists to make the next failing trace easier to analyze.
 
+
+### 10.7 Den-exit candidate diagnostics
+
+`v0.6.75` added a diagnostic-only detector for enemy activation / den-exit-like frames.
+
+This was motivated by a trace saved just before the first enemy leaves the monster den. In that trace, the first active enemy appears at tick 5:
+
+```text
+First active enemy frame: index=5, tick=5, active=1
+```
+
+The adapter now reports:
+
+```text
+enemy activations=1
+den-exit candidates=1
+first den-exit candidate: tick=5 mameFrame=10 pc=459E r=40 slot=0 raw=82 enemyXY=(58,87) enemyDir=08 tempDir=08 tempX=58 tempY=87 rejectedMask=04 preferred=[04,04,04,04] activeEnemies=1
+```
+
+Current interpretation:
+
+- this is a special monster release / den-exit sequence;
+- the enemy is forced upward;
+- the enemy position and direction match MAME;
+- `preferred[]` remains fully validated;
+- `rejectedMask` and `fallbackMask` are scratch fields from logic that is not yet independently modeled.
+
+### 10.8 Temporary rejectedMask / fallbackMask bridges
+
+`v0.6.76` first added a den-exit-specific bridge for the first transient `rejectedMask`, and synchronized `fallbackMask` from MAME.
+
+That reduced the den-exit trace from hundreds of mismatches to only a few remaining `rejectedMask` mismatches.
+
+`v0.6.77` then made the bridge explicit and simpler:
+
+```text
+rejectedMask is reference-synced from MAME.
+fallbackMask is reference-synced from MAME.
+```
+
+This matches the current adapter status: these fields are diagnostic scratch state, and their generator has not yet been reconstructed.
+
+Current den-exit validation result:
+
+```text
+Comparison [Lady Bug reference-direction step]: comparedFrames=501, mismatches=0
+preferred[] shadow model checks=496, matches=496, mismatches=0
+enemy activations=1
+den-exit candidates=1
+reference rejectedMask syncs=6
+reference fallbackMask syncs=1
+Comparison result: no mismatch. Pipeline is valid.
+```
+
+This gives two useful validated standard JSONL traces:
+
+```text
+normal one-enemy trace:
+  comparedFrames=801
+  preferred[] shadow model checks=796
+  preferred[] shadow mismatches=0
+
+den-exit one-enemy trace:
+  comparedFrames=501
+  preferred[] shadow model checks=496
+  preferred[] shadow mismatches=0
+```
+
+Important limitation:
+
+```text
+rejectedMask and fallbackMask are still reference-synced scratch fields.
+The real rejection/fallback generator is not implemented yet.
+```
+
 ## 11. Current comparison behavior
 
 The Lady Bug adapter currently validates a one-enemy path with reference synchronization.
@@ -711,6 +790,8 @@ Still reference-synced:
 
 - enemy movement direction;
 - authoritative `EnemyWork.preferred[]`;
+- `rejectedMask` scratch field;
+- `fallbackMask` scratch field;
 - `chaseTimers[]`;
 - `chaseRoundRobin`.
 
@@ -737,21 +818,25 @@ The current validation target is one active enemy. Multi-enemy traces are deferr
 
 ### 12.2 preferred[] is still reference-synced in the adapter
 
-The standalone model and adapter shadow compare are validated, but the simulation adapter has not yet replaced the MAME reference-sync for authoritative `preferred[]`.
+The standalone model and adapter shadow compare are validated on the current one-enemy traces, but the simulation adapter has not yet replaced the MAME reference-sync for authoritative `preferred[]`.
 
-### 12.3 chase state is still reference-synced
+### 12.3 rejectedMask and fallbackMask are still reference-synced
+
+`rejectedMask` and `fallbackMask` are currently synchronized from MAME. This avoids misleading mismatches in den-exit / special movement windows while the real rejection and fallback generator is still unknown.
+
+### 12.4 chase state is still reference-synced
 
 `chaseTimers[]` and `chaseRoundRobin` remain synchronized from MAME. The exact-PC diagnostic currently proves how BFS writes into preferred[0], but not the full independent chase activation logic.
 
-### 12.4 BFS pathfinding is not yet implemented
+### 12.5 BFS pathfinding is not yet implemented
 
 The exact-PC shadow replay and adapter shadow compare apply or infer BFS/chase overlays from observed reference data. They do not yet compute the BFS direction independently.
 
-### 12.5 Actor coordinate rendering is still diagnostic
+### 12.6 Actor coordinate rendering is still diagnostic
 
 The MAME Y mirror is good enough for the current viewer, but rendering offsets are not gameplay coordinates.
 
-### 12.6 Generated logs are local artifacts
+### 12.7 Generated logs are local artifacts
 
 Generated logs and reports should not normally be committed.
 
@@ -781,9 +866,9 @@ git rm --cached path/to/generated/file
 
 ## 14. Planned next steps
 
-### v0.6 next: test more one-enemy traces before removing reference-sync
+### v0.6 next: more traces, then isolate rejection/fallback
 
-The adapter preferred[] shadow diagnostics now include richer first-mismatch details. The next implementation target is to test the shadow model on additional one-enemy traces.
+The adapter preferred[] shadow model is now validated on both a normal one-enemy trace and a den-exit one-enemy trace. The next target is to collect more traces, then start isolating the real rejection/fallback generator.
 
 Suggested order:
 
@@ -791,7 +876,8 @@ Suggested order:
 2. run `Compare > Run Lady Bug reference-direction step`;
 3. inspect the preferred[] shadow summary;
 4. if a mismatch appears, use the first-mismatch diagnostic context to decide whether the cause is random branch, rotate branch, or observed BFS overlay;
-5. only after clean diagnostics, switch authoritative `preferred[]` away from MAME reference-sync.
+5. investigate how `rejectedMask` and `fallbackMask` are produced;
+6. only after clean diagnostics, switch authoritative `preferred[]` away from MAME reference-sync.
 
 ### Later work
 
