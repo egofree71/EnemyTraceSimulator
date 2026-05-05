@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.73  
+**Current package version:** v0.6.74  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -35,7 +35,8 @@ The current implementation can:
 - analyze exact-PC preferred[] diagnostic logs;
 - validate a first standalone C# model of the preferred-direction generator;
 - shadow-replay the exact-PC preferred[] write stream against MAME snapshots;
-- compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison.
+- compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison;
+- report richer first-mismatch context if the preferred[] shadow model fails on a future trace.
 
 The project does not yet run fully independent arcade enemy AI.
 
@@ -421,6 +422,8 @@ LadyBugMonsterPreferenceSystem.cs
 
 `LadyBugEnemySimulationAdapter` now computes a preferred[] shadow model during standard comparison, but still keeps the MAME reference-synced `preferred[]` as the authoritative state.
 
+`LadyBugSimulationState` now keeps richer first-mismatch details for the preferred[] shadow model. These details are only printed when a mismatch occurs.
+
 ## 8. Current MAME Lua scripts
 
 ### 8.1 ladybug_sequence_trace.lua
@@ -646,7 +649,7 @@ The overall comparison remains clean:
 
 ```text
 Comparison [Lady Bug reference-direction step]: comparedFrames=801, mismatches=0
-Comparison result: no remaining mismatch after applying filters.
+Comparison result: no mismatch. Pipeline is valid.
 ```
 
 The source summary includes base random, base rotate, and observed BFS overlay cases, for example:
@@ -670,6 +673,36 @@ The adapter still does not independently compute the BFS/chase direction.
 The BFS overlay direction is inferred from the observed reference preferred[] value.
 ```
 
+### 10.6 Adapter first-mismatch diagnostics
+
+`v0.6.74` improves the adapter-level preferred[] shadow diagnostics.
+
+When the preferred[] shadow path succeeds, the output remains compact:
+
+```text
+preferred[] shadow model checks=796, matches=796, mismatches=0
+```
+
+If a future trace produces a mismatch, the adapter now records richer first-mismatch context:
+
+```text
+tick=...
+mameFrame=...
+pc=...
+r=...
+activeEnemies=...
+tempDir=...
+tempX=...
+tempY=...
+chaseTimers=[...]
+chaseRoundRobin=...
+source=...
+reference=[..]
+shadow=[..]
+```
+
+The current trace still has no mismatch, so this extra context is not printed in normal successful runs. The diagnostic exists to make the next failing trace easier to analyze.
+
 ## 11. Current comparison behavior
 
 The Lady Bug adapter currently validates a one-enemy path with reference synchronization.
@@ -685,7 +718,8 @@ Shadow-mode only:
 
 - `EnemyWork.preferred[]` simulated in parallel;
 - source summary for preferred[] shadow model;
-- mismatch count for preferred[] shadow model.
+- mismatch count for preferred[] shadow model;
+- richer first-mismatch context if a future trace fails.
 
 Partially reconstructed:
 
@@ -747,16 +781,17 @@ git rm --cached path/to/generated/file
 
 ## 14. Planned next steps
 
-### v0.6 next: improve adapter diagnostics before removing reference-sync
+### v0.6 next: test more one-enemy traces before removing reference-sync
 
-The next implementation target is to make the adapter preferred[] shadow diagnostics easier to inspect.
+The adapter preferred[] shadow diagnostics now include richer first-mismatch details. The next implementation target is to test the shadow model on additional one-enemy traces.
 
 Suggested order:
 
-1. add first mismatch details to the adapter shadow summary;
-2. optionally add per-frame shadow preferred[] fields to the dump window;
-3. test the shadow model on at least one or two additional one-enemy traces;
-4. only after clean diagnostics, switch authoritative `preferred[]` away from MAME reference-sync.
+1. generate at least one or two additional one-enemy standard JSONL traces;
+2. run `Compare > Run Lady Bug reference-direction step`;
+3. inspect the preferred[] shadow summary;
+4. if a mismatch appears, use the first-mismatch diagnostic context to decide whether the cause is random branch, rotate branch, or observed BFS overlay;
+5. only after clean diagnostics, switch authoritative `preferred[]` away from MAME reference-sync.
 
 ### Later work
 

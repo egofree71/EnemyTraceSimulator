@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.73**
+Current checkpoint: **v0.6.74**
 
 The project currently supports two complementary workflows:
 
@@ -47,7 +47,8 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - automatic analysis of MAME `error.log` preferred[] events;
 - first standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs;
 - preferred[] shadow replay diagnostic validating the modeled write sequence against MAME snapshots;
-- preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active.
+- preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
+- richer first-mismatch diagnostics for future preferred[] shadow failures.
 
 ## Current validation checkpoint
 
@@ -209,7 +210,7 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. improve the adapter preferred[] shadow diagnostics with clearer mismatch reporting and optional per-frame details;
+1. test the adapter preferred[] shadow model on at least one or two additional one-enemy traces;
 2. start replacing the reference-synced `preferred[]` only after the shadow path is robust on more traces;
 3. implement chase timer and round-robin behavior;
 4. implement full BFS/chase direction selection.
