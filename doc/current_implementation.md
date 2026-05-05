@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.71  
+**Current package version:** v0.6.73  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -34,7 +34,8 @@ The current implementation can:
 - validate the current one-enemy reference-synced adapter path;
 - analyze exact-PC preferred[] diagnostic logs;
 - validate a first standalone C# model of the preferred-direction generator;
-- shadow-replay the exact-PC preferred[] write stream against MAME snapshots.
+- shadow-replay the exact-PC preferred[] write stream against MAME snapshots;
+- compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison.
 
 The project does not yet run fully independent arcade enemy AI.
 
@@ -55,7 +56,8 @@ Used for:
 - normal trace loading;
 - visual playback;
 - comparison against C# simulation frames;
-- safe polling-based `preferredChangeEvents`.
+- safe polling-based `preferredChangeEvents`;
+- adapter-level preferred[] shadow compare.
 
 This is the main validation pipeline.
 
@@ -415,7 +417,9 @@ LadyBugMonsterPreferenceSystem.cs
 
 `LadyBugPreferredPcLogAnalyzer` analyzes exact-PC `error.log / LBPREF` data and produces a human-readable report.
 
-`LadyBugMonsterPreferenceSystem` models the arcade preferred-direction generator for the validated one-enemy diagnostic window. It is currently side-effect free and is not yet used by `LadyBugEnemySimulationAdapter`.
+`LadyBugMonsterPreferenceSystem` models the arcade preferred-direction generator for the validated one-enemy diagnostic window.
+
+`LadyBugEnemySimulationAdapter` now computes a preferred[] shadow model during standard comparison, but still keeps the MAME reference-synced `preferred[]` as the authoritative state.
 
 ## 8. Current MAME Lua scripts
 
@@ -606,11 +610,9 @@ IY = 61C4
 preferred[0]
 ```
 
-The helper is not yet used by the simulation adapter.
+### 10.4 Exact-PC shadow replay validation
 
-### 10.4 Shadow replay validation
-
-`LadyBugPreferredPcLogAnalyzer` now performs a shadow replay of the complete exact-PC `LBPREF` stream.
+`LadyBugPreferredPcLogAnalyzer` performs a shadow replay of the complete exact-PC `LBPREF` stream.
 
 Current result:
 
@@ -628,17 +630,45 @@ Meaning:
 - observed `477D` BFS/chase writes can be applied as one-slot overrides;
 - full BFS pathfinding is still not implemented, because BFS direction is currently taken from the observed `477D` hit.
 
-### 10.5 Integration status
+### 10.5 Adapter shadow compare validation
 
-`LadyBugMonsterPreferenceSystem` is currently a diagnostic model only.
+`LadyBugEnemySimulationAdapter` now computes a preferred[] shadow model while keeping the reference-synced `EnemyWork.preferred[]` as the authoritative comparison value.
 
-It is not yet wired into:
+Current standard JSONL result:
 
 ```text
-LadyBugEnemySimulationAdapter.cs
+preferred[] shadow model checks=796
+matches=796
+mismatches=0
 ```
 
-The adapter still reference-syncs `EnemyWork.preferred[]` from MAME.
+The overall comparison remains clean:
+
+```text
+Comparison [Lady Bug reference-direction step]: comparedFrames=801, mismatches=0
+Comparison result: no remaining mismatch after applying filters.
+```
+
+The source summary includes base random, base rotate, and observed BFS overlay cases, for example:
+
+```text
+2E97_ROTATE_FROM_08=241
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08=95
+2EC7_RANDOM_RLOW_8=100
+```
+
+This confirms that the adapter can currently reproduce the observed end-of-frame `preferred[]` values for the one-enemy JSONL trace by combining:
+
+- compatible `2EC7` random tuples;
+- `2E97` rotate tuples;
+- observed slot-0 BFS/chase overlays.
+
+Important limitation:
+
+```text
+The adapter still does not independently compute the BFS/chase direction.
+The BFS overlay direction is inferred from the observed reference preferred[] value.
+```
 
 ## 11. Current comparison behavior
 
@@ -647,9 +677,15 @@ The Lady Bug adapter currently validates a one-enemy path with reference synchro
 Still reference-synced:
 
 - enemy movement direction;
-- `EnemyWork.preferred[]`;
+- authoritative `EnemyWork.preferred[]`;
 - `chaseTimers[]`;
 - `chaseRoundRobin`.
+
+Shadow-mode only:
+
+- `EnemyWork.preferred[]` simulated in parallel;
+- source summary for preferred[] shadow model;
+- mismatch count for preferred[] shadow model.
 
 Partially reconstructed:
 
@@ -667,7 +703,7 @@ The current validation target is one active enemy. Multi-enemy traces are deferr
 
 ### 12.2 preferred[] is still reference-synced in the adapter
 
-The standalone model is validated against exact-PC logs, but the simulation adapter has not yet replaced the MAME reference-sync for `preferred[]`.
+The standalone model and adapter shadow compare are validated, but the simulation adapter has not yet replaced the MAME reference-sync for authoritative `preferred[]`.
 
 ### 12.3 chase state is still reference-synced
 
@@ -675,7 +711,7 @@ The standalone model is validated against exact-PC logs, but the simulation adap
 
 ### 12.4 BFS pathfinding is not yet implemented
 
-The shadow replay applies BFS/chase overrides from observed `477D` hits. It does not yet compute the BFS direction independently.
+The exact-PC shadow replay and adapter shadow compare apply or infer BFS/chase overlays from observed reference data. They do not yet compute the BFS direction independently.
 
 ### 12.5 Actor coordinate rendering is still diagnostic
 
@@ -711,16 +747,16 @@ git rm --cached path/to/generated/file
 
 ## 14. Planned next steps
 
-### v0.6 next: adapter integration in diagnostic/fallback mode
+### v0.6 next: improve adapter diagnostics before removing reference-sync
 
-The next implementation target is to wire `LadyBugMonsterPreferenceSystem` into the comparison pipeline without breaking the current validated path.
+The next implementation target is to make the adapter preferred[] shadow diagnostics easier to inspect.
 
 Suggested order:
 
-1. keep the current MAME reference-sync for `preferred[]` available;
-2. compute simulated preferred[] in parallel;
-3. report mismatches between simulated preferred[] and MAME preferred[];
-4. only after clean diagnostics, switch the adapter to use the simulated preferred[].
+1. add first mismatch details to the adapter shadow summary;
+2. optionally add per-frame shadow preferred[] fields to the dump window;
+3. test the shadow model on at least one or two additional one-enemy traces;
+4. only after clean diagnostics, switch authoritative `preferred[]` away from MAME reference-sync.
 
 ### Later work
 
