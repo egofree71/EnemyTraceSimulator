@@ -26,6 +26,12 @@ public sealed class LadyBugSimulationState
     private int _preferredShadowMismatches;
     private string _firstPreferredShadowMismatch = string.Empty;
     private readonly Dictionary<string, int> _preferredShadowSourceCounts = new();
+    private readonly HashSet<int> _previousReferenceActiveSlots = new();
+    private int _referenceEnemyActivationEvents;
+    private int _denExitCandidateEvents;
+    private string _firstDenExitCandidate = string.Empty;
+    private int _referenceRejectedMaskSyncs;
+    private int _referenceFallbackMaskSyncs;
 
 
     public static LadyBugSimulationState FromInitialState(LadyBugSimulationInitialState initialState)
@@ -51,6 +57,7 @@ public sealed class LadyBugSimulationState
     {
         SyncReferenceInputs(referenceFrame);
         SyncReferenceEnvironment(referenceFrame);
+        TrackReferenceEnemyActivationDiagnostics(referenceFrame);
         AdvanceEnemiesUsingReferenceControlState(referenceFrame);
         UpdateEnemyWorkTempMovementFields(referenceFrame);
 
@@ -95,6 +102,93 @@ public sealed class LadyBugSimulationState
         Timers = referenceFrame.timers == null
             ? null
             : CopyTimers(referenceFrame.timers);
+    }
+
+    /// <summary>
+    /// Diagnostic-only detector for frames where a reference enemy slot becomes active.
+    ///
+    /// The den-release sequence is not normal free-roaming movement: the enemy can
+    /// appear in a constrained corridor and be forced upward while rejected/fallback
+    /// scratch values take special-looking shapes. This detector does not change
+    /// simulation state; it only adds context to the adapter summary.
+    /// </summary>
+    private void TrackReferenceEnemyActivationDiagnostics(EnemyTraceFrame referenceFrame)
+    {
+        if (referenceFrame.enemies == null)
+        {
+            _previousReferenceActiveSlots.Clear();
+            return;
+        }
+
+        var currentActiveSlots = new HashSet<int>();
+
+        foreach (EnemyTraceActor referenceEnemy in referenceFrame.enemies)
+        {
+            if (!referenceEnemy.active)
+                continue;
+
+            currentActiveSlots.Add(referenceEnemy.slot);
+
+            if (_previousReferenceActiveSlots.Contains(referenceEnemy.slot))
+                continue;
+
+            _referenceEnemyActivationEvents++;
+
+            if (IsDenExitCandidate(referenceFrame, referenceEnemy))
+            {
+                _denExitCandidateEvents++;
+
+                if (string.IsNullOrEmpty(_firstDenExitCandidate))
+                    _firstDenExitCandidate = BuildDenExitCandidateDiagnostic(referenceFrame, referenceEnemy);
+            }
+        }
+
+        _previousReferenceActiveSlots.Clear();
+        foreach (int slot in currentActiveSlots)
+            _previousReferenceActiveSlots.Add(slot);
+    }
+
+    private static bool IsDenExitCandidate(EnemyTraceFrame referenceFrame, EnemyTraceActor referenceEnemy)
+    {
+        if (referenceFrame.enemyWork == null)
+            return false;
+
+        if (!TryParseTraceByte(referenceEnemy.dir, out int directionValue))
+            return false;
+
+        EnemyTraceEnemyWorkState enemyWork = referenceFrame.enemyWork;
+
+        bool tempMatchesActiveEnemy =
+            enemyWork.tempDir == directionValue &&
+            enemyWork.tempX == referenceEnemy.x &&
+            enemyWork.tempY == referenceEnemy.y;
+
+        bool forcedUpShape = directionValue == 0x08;
+        bool constrainedScratch = enemyWork.rejectedMask != 0;
+
+        return tempMatchesActiveEnemy && forcedUpShape && constrainedScratch;
+    }
+
+    private static string BuildDenExitCandidateDiagnostic(
+        EnemyTraceFrame referenceFrame,
+        EnemyTraceActor referenceEnemy)
+    {
+        EnemyTraceEnemyWorkState? enemyWork = referenceFrame.enemyWork;
+
+        return "tick=" + referenceFrame.frame +
+               " mameFrame=" + referenceFrame.mameFrame +
+               " pc=" + referenceFrame.pc +
+               " r=" + referenceFrame.r +
+               " slot=" + referenceEnemy.slot +
+               " raw=" + FormatByte(referenceEnemy.raw) +
+               " enemyXY=(" + FormatByte(referenceEnemy.x) + "," + FormatByte(referenceEnemy.y) + ")" +
+               " enemyDir=" + referenceEnemy.dir +
+               " tempDir=" + FormatByte(enemyWork?.tempDir ?? 0) +
+               " tempX=" + FormatByte(enemyWork?.tempX ?? 0) +
+               " tempY=" + FormatByte(enemyWork?.tempY ?? 0) +
+               " rejectedMask=" + FormatByte(enemyWork?.rejectedMask ?? 0) +
+               " preferred=" + (enemyWork == null ? "[missing]" : FormatPreferredTuple(enemyWork.preferred)) +
+               " activeEnemies=" + CountActiveReferenceEnemies(referenceFrame);
     }
 
     private void AdvanceEnemiesUsingReferenceControlState(EnemyTraceFrame referenceFrame)
@@ -169,11 +263,62 @@ public sealed class LadyBugSimulationState
             previousRejectedMask,
             referenceFrame.enemyWork);
 
+        SyncReferenceRejectedMaskState(EnemyWork, referenceFrame.enemyWork);
+        SyncReferenceFallbackState(EnemyWork, referenceFrame.enemyWork);
+
         if (!SyncReferencePreferredState(EnemyWork, referenceFrame.enemyWork))
             UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
 
         SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
         UpdatePreferredShadowDiagnostics(EnemyWork, referenceFrame, referenceFrame.enemyWork);
+    }
+
+    /// <summary>
+    /// Temporary bridge for rejectedMask.
+    ///
+    /// rejectedMask is a short-lived scratch field produced by the direction
+    /// validation / wall rejection logic. The current adapter does not yet fully
+    /// simulate that decision pipeline, and the den-exit trace showed that a
+    /// partial rejectedMask model can create a few misleading mismatches even
+    /// when position, direction, fallback, and preferred[] all match MAME.
+    ///
+    /// Until the real rejection/fallback generator is implemented, keep this
+    /// scratch field aligned with the reference trace, like fallbackMask,
+    /// preferred[], and chase state.
+    /// </summary>
+    private void SyncReferenceRejectedMaskState(
+        SimulationEnemyWorkState enemyWork,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        if (referenceEnemyWork == null)
+            return;
+
+        if (enemyWork.RejectedMask != referenceEnemyWork.rejectedMask)
+            _referenceRejectedMaskSyncs++;
+
+        enemyWork.RejectedMask = referenceEnemyWork.rejectedMask;
+    }
+
+    /// <summary>
+    /// Temporary bridge for the fallback pair/mask.
+    ///
+    /// The source string already describes fallback as reference-synced. In the
+    /// den-exit trace this value is stable at 01 while the simulation still held
+    /// the initial B0, creating hundreds of unhelpful mismatches unrelated to
+    /// preferred[] or pixel movement. Until the fallback generator is implemented,
+    /// keep it aligned with MAME just like preferred[] and chase timers.
+    /// </summary>
+    private void SyncReferenceFallbackState(
+        SimulationEnemyWorkState enemyWork,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        if (referenceEnemyWork == null)
+            return;
+
+        if (enemyWork.FallbackMask != referenceEnemyWork.fallbackMask)
+            _referenceFallbackMaskSyncs++;
+
+        enemyWork.FallbackMask = referenceEnemyWork.fallbackMask;
     }
 
     /// <summary>
@@ -446,6 +591,32 @@ public sealed class LadyBugSimulationState
         {
             builder.Append(", first mismatch: ");
             builder.Append(_firstPreferredShadowMismatch);
+        }
+
+        if (_referenceEnemyActivationEvents > 0)
+        {
+            builder.Append(", enemy activations=");
+            builder.Append(_referenceEnemyActivationEvents);
+            builder.Append(", den-exit candidates=");
+            builder.Append(_denExitCandidateEvents);
+
+            if (!string.IsNullOrEmpty(_firstDenExitCandidate))
+            {
+                builder.Append(", first den-exit candidate: ");
+                builder.Append(_firstDenExitCandidate);
+            }
+        }
+
+        if (_referenceRejectedMaskSyncs > 0)
+        {
+            builder.Append(", reference rejectedMask syncs=");
+            builder.Append(_referenceRejectedMaskSyncs);
+        }
+
+        if (_referenceFallbackMaskSyncs > 0)
+        {
+            builder.Append(", reference fallbackMask syncs=");
+            builder.Append(_referenceFallbackMaskSyncs);
         }
 
         builder.Append(", sources: ");
