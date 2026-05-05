@@ -423,14 +423,23 @@ public sealed class LadyBugSimulationState
             referenceEnemyWork.preferred[3] & 0x0F
         };
 
-        int[] rotateFromDown = LadyBugMonsterPreferenceSystem.GenerateRotateBranch(
-            LadyBugMonsterPreferenceSystem.DirDown);
-
-        if (PreferredTupleEquals(rotateFromDown, referencePreferred))
+        // The previous shadow classifier only recognized the rotate branch when
+        // PLAYER_DIR_CURRENT was 08, because that was the first validated trace.
+        // A den-wait / den-exit trace with the player facing 04 exposed the same
+        // 2E97 rotate branch as [02,01,08,04].  Recognize all four direction seeds
+        // here; this is still a classifier over end-of-frame JSONL tuples, not the
+        // final PC-exact branch selector.
+        foreach (int rotateSeed in PreferredRotateSeeds())
         {
-            candidate = rotateFromDown;
-            source = "2E97_ROTATE_FROM_08";
-            return true;
+            int[] rotateCandidate = LadyBugMonsterPreferenceSystem.GenerateRotateBranch(rotateSeed);
+            string rotateSource = "2E97_ROTATE_FROM_" + FormatNibbleDirection(rotateSeed);
+
+            if (PreferredTupleEquals(rotateCandidate, referencePreferred))
+            {
+                candidate = rotateCandidate;
+                source = rotateSource;
+                return true;
+            }
         }
 
         for (int rLow = 0; rLow < 16; rLow++)
@@ -450,8 +459,14 @@ public sealed class LadyBugSimulationState
         // overrides preferred[0] / 0x61C4. Therefore, for shadow classification only,
         // accept a base tuple whose tail slots match and whose slot 0 can be replaced
         // by the observed reference preferred[0].
-        if (TryBuildSlot0OverrideCandidate(referencePreferred, rotateFromDown, "2E97_ROTATE_FROM_08", out candidate, out source))
-            return true;
+        foreach (int rotateSeed in PreferredRotateSeeds())
+        {
+            int[] rotateCandidate = LadyBugMonsterPreferenceSystem.GenerateRotateBranch(rotateSeed);
+            string rotateSource = "2E97_ROTATE_FROM_" + FormatNibbleDirection(rotateSeed);
+
+            if (TryBuildSlot0OverrideCandidate(referencePreferred, rotateCandidate, rotateSource, out candidate, out source))
+                return true;
+        }
 
         for (int rLow = 0; rLow < 16; rLow++)
         {
@@ -462,6 +477,19 @@ public sealed class LadyBugSimulationState
         }
 
         return false;
+    }
+
+    private static IEnumerable<int> PreferredRotateSeeds()
+    {
+        yield return LadyBugMonsterPreferenceSystem.DirLeft;
+        yield return LadyBugMonsterPreferenceSystem.DirUp;
+        yield return LadyBugMonsterPreferenceSystem.DirRight;
+        yield return LadyBugMonsterPreferenceSystem.DirDown;
+    }
+
+    private static string FormatNibbleDirection(int direction)
+    {
+        return (direction & 0x0F).ToString("X2");
     }
 
     private static bool TryBuildSlot0OverrideCandidate(
