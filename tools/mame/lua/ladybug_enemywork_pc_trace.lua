@@ -1,24 +1,41 @@
 -- ladybug_enemywork_pc_trace.lua
 --
--- Targeted MAME debugger trace for Lady Bug EnemyWork rejectedMask/fallbackMask
--- and related validation paths.
+-- Exact-PC MAME debugger trace for Lady Bug EnemyWork decision diagnostics.
 --
--- Breakpoints:
---   0x42CC : exact reset write to 61C1 / rejectedMask
---   0x42CF : exact reset write to 61C2 / fallbackMask
---   0x4315 : exact rejectedMask OR write after logical/local rejection
---   0x4331 : exact rejectedMask OR write before fallback
---   0x43C4 : exact fallbackMask increment
---   0x43C5 : fallbackMask value after increment
---   0x3911 : logical maze direction validation entry, may be noisy
---   0x4130 : local door validation entry, may be noisy
---   0x4187 : observed local door/tile rejection point
---   0x4241 : observed generic fallback point
---   0x4347 : observed forced reversal point
---
--- This script requires MAME debugger support. The C# launcher auto-adds:
+-- v0.6.91 extends the existing EnemyWork exact-PC diagnostic with source-first
+-- enemy release / den-exit breakpoints. It deliberately keeps the same filename
+-- so the existing C# launcher still auto-enables:
 --   -debug -log -debugscript ladybug_preferred_pc_debug_startup.cmd
--- when this script is selected.
+-- and still builds the usual EnemyWork PC analysis report.
+--
+-- Core decision breakpoints:
+--   0x42CC : exact reset write to 61C1 / rejectedMask
+--   0x42CF : exact reset write to 61C2 / fallback helper
+--   0x4315 : exact rejectedMask OR write after rejected preferred candidate
+--   0x4331 : exact rejectedMask OR write before fallback
+--   0x43C4 : exact fallback helper increment
+--   0x43C5 : fallback helper value after increment
+--   0x3911 : logical maze direction validation entry
+--   0x4130 : local door validation entry
+--   0x4187 : local door/tile rejection point
+--   0x4241 : generic fallback entry point
+--   0x4347 : forced reversal point
+--   0x43D4 : commit temp state back to enemy slot
+--
+-- Release / den-exit breakpoints added in v0.6.91:
+--   0x05AE : release helper entry
+--   0x05B6 : release helper slot test loop
+--   0x05C3 : call 0x3061 after finding a free enemy slot
+--   0x05CC : post-init write (IX+0)=0x81 on the 0x05AE path
+--   0x3061 : release slot init entry
+--   0x3070 : write raw 0x82 into selected enemy slot
+--   0x3074 : write X=0x58
+--   0x3078 : write Y=0x86
+--   0x3080 : sprite/attribute post-init write
+--   0x4471 : alternate call path to 0x3061
+--
+-- This is still a diagnostic, not gameplay simulation. Its job is to reveal the
+-- exact order of source-PC events around release, fallback, and commit.
 
 local CONFIG = {
     output_prefix = "ladybug_sequence_v8_enemywork_pcdiag",
@@ -120,7 +137,7 @@ local function open_outputs_if_needed()
     output_opened_at_frame = mame_frame
 
     hits_file:write("# Lady Bug EnemyWork exact-PC diagnostic hits\n")
-    hits_file:write("# breakpoint PCs include exact writes: 42CC/42CF reset, 4315/4331 rejected writes, 43C4/43C5 fallback counter, plus 3911/4130/4187/4241/4347 context.\n")
+    hits_file:write("# v0.6.91 includes release/den-exit breakpoints around 05AE/3061/4471 plus decision/fallback/commit breakpoints.\n")
     hits_file:write("# pollTick/mameFrame are Lua drain time, not exact CPU time.\n")
     hits_file:write("# LBEW payload is emitted at the exact breakpoint through MAME debugger logerror.\n")
     hits_file:write("# The launcher enables -log; inspect tools/mame/lua/error.log as primary raw output.\n")
@@ -241,8 +258,8 @@ end
 
 local function set_breakpoint(addr, label)
     -- Exact-PC diagnostic action.
-    -- Note: the debugger action cannot call Lua helper functions at breakpoint time.
-    -- Therefore active enemy count is derived later by the C# analyzer from e0..e3 raw bytes.
+    -- The debugger action cannot call Lua helpers at breakpoint time, so the C#
+    -- analyzer derives active enemy count from e0..e3 raw bytes.
     local action = string.format(
         'logerror "LBEW|source=%s|pc=%%04X|r=%%02X|a=%%02X|b=%%02X|c=%%02X|d=%%02X|e=%%02X|h=%%02X|l=%%02X|hl=%%04X|de=%%04X|ix=%%04X|iy=%%04X|sp=%%04X|p0=%%02X|p1=%%02X|p2=%%02X|p3=%%02X|tmpDir=%%02X|tmpX=%%02X|tmpY=%%02X|rejected=%%02X|fallback=%%02X|chase0=%%02X|chase1=%%02X|chase2=%%02X|chase3=%%02X|rr=%%02X|playerDir=%%02X|playerX=%%02X|playerY=%%02X|e0Raw=%%02X|e0X=%%02X|e0Y=%%02X|e1Raw=%%02X|e1X=%%02X|e1Y=%%02X|e2Raw=%%02X|e2X=%%02X|e2Y=%%02X|e3Raw=%%02X|e3X=%%02X|e3Y=%%02X\\n",pc,r,a,b,c,d,e,h,l,(h*256)+l,(d*256)+e,ix,iy,sp,b@61c4,b@61c5,b@61c6,b@61c7,b@61bd,b@61be,b@61bf,b@61c1,b@61c2,b@61ce,b@61cf,b@61d0,b@61d1,b@61d2,b@6198,b@6027,b@6028,b@602b,b@602c,b@602d,b@6030,b@6031,b@6032,b@6035,b@6036,b@6037,b@603a,b@603b,b@603c;g',
         label)
@@ -264,7 +281,20 @@ local function install_breakpoints()
 
     previous_lbew_lines = debugger_lbew_lines()
 
-    -- Exact writes to rejectedMask / fallbackMask.
+    -- Release / den-exit context. These are intentionally before the generic
+    -- Enemy_UpdateOne breakpoints in the log so the startup sequence is easy to read.
+    set_breakpoint(0x05ae, "05AE_RELEASE_HELPER_ENTRY")
+    set_breakpoint(0x05b6, "05B6_RELEASE_SLOT_TEST")
+    set_breakpoint(0x05c3, "05C3_RELEASE_CALL_3061")
+    set_breakpoint(0x05cc, "05CC_RELEASE_RAW81_WRITE")
+    set_breakpoint(0x3061, "3061_RELEASE_INIT_ENTRY")
+    set_breakpoint(0x3070, "3070_RELEASE_INIT_RAW82")
+    set_breakpoint(0x3074, "3074_RELEASE_INIT_X58")
+    set_breakpoint(0x3078, "3078_RELEASE_INIT_Y86")
+    set_breakpoint(0x3080, "3080_RELEASE_INIT_SPRITE")
+    set_breakpoint(0x4471, "4471_ALT_RELEASE_CALL_3061")
+
+    -- Exact writes to rejectedMask / fallback helper.
     set_breakpoint(0x42cc, "42CC_REJECT_RESET")
     set_breakpoint(0x42cf, "42CF_FALLBACK_RESET")
     set_breakpoint(0x4315, "4315_REJECT_OR_CANDIDATE")
@@ -272,12 +302,13 @@ local function install_breakpoints()
     set_breakpoint(0x43c4, "43C4_FALLBACK_STEP_INC")
     set_breakpoint(0x43c5, "43C5_FALLBACK_STEP_READ")
 
-    -- Context breakpoints around validation / fallback / forced reversal.
+    -- Context around validation / fallback / forced reversal / commit.
     set_breakpoint(0x3911, "3911_LOGICAL_MAZE_VALIDATE")
     set_breakpoint(0x4130, "4130_LOCAL_DOOR_CHECK_ENTRY")
     set_breakpoint(0x4187, "4187_LOCAL_DOOR_REJECT")
     set_breakpoint(0x4241, "4241_FALLBACK_ENTRY")
     set_breakpoint(0x4347, "4347_FORCED_REVERSAL")
+    set_breakpoint(0x43d4, "43D4_COMMIT_TEMP_STATE")
 
     pcall(function()
         if machine_debugger.execution_state == "stop" then
@@ -304,6 +335,7 @@ local function write_summary(reason)
 
     summary_file:write("Lady Bug EnemyWork exact-PC diagnostic summary\n")
     summary_file:write("============================================\n\n")
+    summary_file:write("version: v0.6.91 release/den-exit breakpoint extension\n")
     summary_file:write("reason: " .. tostring(reason) .. "\n")
     summary_file:write("save_state: " .. tostring(CONFIG.save_state) .. "\n")
     summary_file:write("frames_after_tick0_to_capture: " .. tostring(CONFIG.frames_after_tick0_to_capture) .. "\n")
@@ -502,4 +534,4 @@ post_load_subscription = emu.add_machine_post_load_notifier(on_post_load)
 reset_subscription = emu.add_machine_reset_notifier(on_reset)
 frame_subscription = emu.add_machine_frame_notifier(on_frame)
 
-emu.print_info("Lady Bug EnemyWork PC trace script loaded.")
+emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.91 release breakpoint extension.")
