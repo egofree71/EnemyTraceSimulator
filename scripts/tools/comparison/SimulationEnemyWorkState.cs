@@ -26,6 +26,19 @@ public sealed class SimulationEnemyWorkState
     public string PreferredShadowSource { get; set; } = string.Empty;
 
     /// <summary>
+    /// Diagnostic-only candidate for 0x61C2 fallback helper.
+    /// The adapter still uses FallbackMask as the comparison value while this shadow
+    /// field validates the helper/counter model in parallel.
+    /// </summary>
+    public int FallbackHelperShadow { get; set; } = -1;
+
+    /// <summary>
+    /// Describes how FallbackHelperShadow was classified/generated, for example
+    /// ONE_STEP_PER_ENEMY_UPDATE.
+    /// </summary>
+    public string FallbackHelperShadowSource { get; set; } = string.Empty;
+
+    /// <summary>
     /// Diagnostic-only candidate for 0x61C1 / EnemyRejectedDirMask.
     /// The adapter still uses RejectedMask as the comparison value while this shadow
     /// field validates the local rejection heuristic in parallel.

@@ -37,6 +37,11 @@ public sealed class LadyBugSimulationState
     private int _rejectedMaskShadowMismatches;
     private string _firstRejectedMaskShadowMismatch = string.Empty;
     private readonly Dictionary<string, int> _rejectedMaskShadowSourceCounts = new();
+    private int _fallbackHelperShadowChecks;
+    private int _fallbackHelperShadowMatches;
+    private int _fallbackHelperShadowMismatches;
+    private string _firstFallbackHelperShadowMismatch = string.Empty;
+    private readonly Dictionary<string, int> _fallbackHelperShadowSourceCounts = new();
 
 
     public static LadyBugSimulationState FromInitialState(LadyBugSimulationInitialState initialState)
@@ -279,6 +284,18 @@ public sealed class LadyBugSimulationState
             referenceFrame,
             referenceFrame.enemyWork);
 
+        int fallbackHelperShadow = DeriveFallbackHelperCandidate(
+            referenceFrame.enemyWork,
+            out string fallbackHelperShadowSource);
+
+        EnemyWork.FallbackHelperShadow = fallbackHelperShadow;
+        EnemyWork.FallbackHelperShadowSource = fallbackHelperShadowSource;
+        UpdateFallbackHelperShadowDiagnostics(
+            fallbackHelperShadow,
+            fallbackHelperShadowSource,
+            referenceFrame,
+            referenceFrame.enemyWork);
+
         SyncReferenceRejectedMaskState(EnemyWork, referenceFrame.enemyWork);
         SyncReferenceFallbackState(EnemyWork, referenceFrame.enemyWork);
 
@@ -346,6 +363,68 @@ public sealed class LadyBugSimulationState
         _rejectedMaskShadowSourceCounts[source] = count + 1;
     }
 
+
+    /// <summary>
+    /// Shadow diagnostic for 0x61C2.
+    ///
+    /// The old DTO name is FallbackMask, but exact-PC traces show that 0x61C2 behaves
+    /// like a fallback step counter/helper. In the current one-enemy standard JSONL
+    /// traces, the end-of-cycle value is expected to be 01: 42CF resets it, then the
+    /// fallback-step loop increments/reads it once around 43C4/43C5.
+    ///
+    /// This does not drive the simulation yet. The authoritative FallbackMask field
+    /// is still synced from MAME immediately after this shadow check.
+    /// </summary>
+    private void UpdateFallbackHelperShadowDiagnostics(
+        int fallbackHelperShadow,
+        string source,
+        EnemyTraceFrame referenceFrame,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        if (referenceEnemyWork == null)
+            return;
+
+        _fallbackHelperShadowChecks++;
+        AddFallbackHelperShadowSource(source);
+
+        int referenceFallbackHelper = referenceEnemyWork.fallbackMask & 0xFF;
+        int candidate = fallbackHelperShadow & 0xFF;
+
+        if (candidate == referenceFallbackHelper)
+        {
+            _fallbackHelperShadowMatches++;
+            return;
+        }
+
+        _fallbackHelperShadowMismatches++;
+
+        if (!string.IsNullOrEmpty(_firstFallbackHelperShadowMismatch))
+            return;
+
+        _firstFallbackHelperShadowMismatch =
+            "tick=" + referenceFrame.frame +
+            " mameFrame=" + referenceFrame.mameFrame +
+            " pc=" + referenceFrame.pc +
+            " r=" + referenceFrame.r +
+            " activeEnemies=" + CountActiveReferenceEnemies(referenceFrame) +
+            " tempDir=" + FormatByte(referenceEnemyWork.tempDir) +
+            " tempX=" + FormatByte(referenceEnemyWork.tempX) +
+            " tempY=" + FormatByte(referenceEnemyWork.tempY) +
+            " source=" + source +
+            " reference=" + FormatByte(referenceFallbackHelper) +
+            " shadow=" + FormatByte(candidate) +
+            " rejectedMask=" + FormatByte(referenceEnemyWork.rejectedMask) +
+            " preferred=" + FormatPreferredTuple(referenceEnemyWork.preferred);
+    }
+
+    private void AddFallbackHelperShadowSource(string source)
+    {
+        if (!_fallbackHelperShadowSourceCounts.TryGetValue(source, out int count))
+            count = 0;
+
+        _fallbackHelperShadowSourceCounts[source] = count + 1;
+    }
+
     /// <summary>
     /// Temporary bridge for rejectedMask.
     ///
@@ -356,7 +435,7 @@ public sealed class LadyBugSimulationState
     /// when position, direction, fallback, and preferred[] all match MAME.
     ///
     /// Until the real rejection/fallback generator is implemented, keep this
-    /// scratch field aligned with the reference trace, like fallbackMask,
+    /// scratch field aligned with the reference trace, like fallback helper,
     /// preferred[], and chase state.
     /// </summary>
     private void SyncReferenceRejectedMaskState(
@@ -373,7 +452,7 @@ public sealed class LadyBugSimulationState
     }
 
     /// <summary>
-    /// Temporary bridge for the fallback pair/mask.
+    /// Temporary bridge for the fallback helper at 0x61C2.
     ///
     /// The source string already describes fallback as reference-synced. In the
     /// den-exit trace this value is stable at 01 while the simulation still held
@@ -682,6 +761,7 @@ public sealed class LadyBugSimulationState
         {
             builder.Append("preferred[] shadow model: no checks were run");
             AppendRejectedMaskShadowDiagnosticSummary(builder);
+            AppendFallbackHelperShadowDiagnosticSummary(builder);
             return builder.ToString();
         }
 
@@ -720,7 +800,7 @@ public sealed class LadyBugSimulationState
 
         if (_referenceFallbackMaskSyncs > 0)
         {
-            builder.Append(", reference fallbackMask syncs=");
+            builder.Append(", reference fallback helper syncs=");
             builder.Append(_referenceFallbackMaskSyncs);
         }
 
@@ -738,6 +818,7 @@ public sealed class LadyBugSimulationState
         }
 
         AppendRejectedMaskShadowDiagnosticSummary(builder);
+        AppendFallbackHelperShadowDiagnosticSummary(builder);
 
         return builder.ToString();
     }
@@ -766,6 +847,41 @@ public sealed class LadyBugSimulationState
         builder.Append(", sources: ");
         bool first = true;
         foreach (KeyValuePair<string, int> pair in _rejectedMaskShadowSourceCounts)
+        {
+            if (!first)
+                builder.Append("; ");
+
+            first = false;
+            builder.Append(pair.Key);
+            builder.Append("=");
+            builder.Append(pair.Value);
+        }
+    }
+
+    private void AppendFallbackHelperShadowDiagnosticSummary(StringBuilder builder)
+    {
+        if (_fallbackHelperShadowChecks == 0)
+        {
+            builder.Append("; fallback helper shadow model: no checks were run");
+            return;
+        }
+
+        builder.Append("; fallback helper shadow model checks=");
+        builder.Append(_fallbackHelperShadowChecks);
+        builder.Append(", matches=");
+        builder.Append(_fallbackHelperShadowMatches);
+        builder.Append(", mismatches=");
+        builder.Append(_fallbackHelperShadowMismatches);
+
+        if (!string.IsNullOrEmpty(_firstFallbackHelperShadowMismatch))
+        {
+            builder.Append(", first mismatch: ");
+            builder.Append(_firstFallbackHelperShadowMismatch);
+        }
+
+        builder.Append(", sources: ");
+        bool first = true;
+        foreach (KeyValuePair<string, int> pair in _fallbackHelperShadowSourceCounts)
         {
             if (!first)
                 builder.Append("; ");
@@ -908,6 +1024,31 @@ public sealed class LadyBugSimulationState
     {
         while (enemyWork.Preferred.Count < count)
             enemyWork.Preferred.Add(0);
+    }
+
+    /// <summary>
+    /// Partial fallback-helper shadow model for 0x61C2.
+    ///
+    /// In the validated exact-PC EnemyWork trace, 42CF resets 0x61C2 and the
+    /// 43C4/43C5 step loop leaves it at 01 once per Enemy_UpdateOne cycle.
+    /// The current standard JSONL traces capture that end-of-cycle value.
+    ///
+    /// This deliberately starts as a narrow classifier. If a future trace needs more
+    /// than one fallback-step read, this shadow summary should expose the mismatch
+    /// before the authoritative reference-sync is removed.
+    /// </summary>
+    private static int DeriveFallbackHelperCandidate(
+        EnemyTraceEnemyWorkState? referenceEnemyWork,
+        out string source)
+    {
+        if (referenceEnemyWork == null)
+        {
+            source = "NO_REFERENCE_ENEMYWORK";
+            return 0;
+        }
+
+        source = "ONE_STEP_PER_ENEMY_UPDATE";
+        return 0x01;
     }
 
     /// <summary>
@@ -1274,7 +1415,9 @@ public sealed class LadyBugSimulationState
             ChaseRoundRobin = enemyWork.ChaseRoundRobin,
             PreferredShadowSource = enemyWork.PreferredShadowSource,
             RejectedMaskShadow = enemyWork.RejectedMaskShadow,
-            RejectedMaskShadowSource = enemyWork.RejectedMaskShadowSource
+            RejectedMaskShadowSource = enemyWork.RejectedMaskShadowSource,
+            FallbackHelperShadow = enemyWork.FallbackHelperShadow,
+            FallbackHelperShadowSource = enemyWork.FallbackHelperShadowSource
         };
 
         clone.Preferred.AddRange(enemyWork.Preferred);
