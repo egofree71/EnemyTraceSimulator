@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.84**
+Current checkpoint: **v0.6.85**
 
 The project currently supports three complementary workflows:
 
@@ -15,7 +15,7 @@ The project currently supports three complementary workflows:
    - loads the trace in Godot;
    - visually replays MAME state;
    - compares MAME frames with the C# simulation adapter;
-   - runs the adapter-level `preferred[]` shadow comparison.
+   - runs adapter-level shadow comparisons for `preferred[]`, `rejectedMask`, and fallback helper state.
 
 2. **Exact-PC preferred[] diagnostic workflow**
    - uses MAME debugger breakpoints;
@@ -59,11 +59,13 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - preferred[] shadow replay diagnostic validating the modeled write sequence against MAME snapshots;
 - preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - rejectedMask shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
+- fallback helper shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - preferred[] rotate-branch shadow recognition generalized and validated for all four player directions;
 - den-exit candidate diagnostics for enemy activation traces;
 - Enemy_UpdateOne cycle classification for rejection/fallback decisions;
 - rejectedMask shadow diagnostics validated on a one-enemy den-exit trace;
-- temporary reference-sync bridges for authoritative `rejectedMask` and `fallbackMask` scratch fields.
+- fallback helper shadow diagnostics validated on a one-enemy den-exit trace;
+- temporary reference-sync bridges for authoritative `rejectedMask` and `fallbackMask` / `0x61C2` helper fields.
 
 ## Current validation checkpoint
 
@@ -73,12 +75,12 @@ The C# adapter can compare against one-active-enemy MAME traces, but some system
 
 - enemy movement direction;
 - authoritative `EnemyWork.preferred[]`;
-- `rejectedMask`;
-- `fallbackMask`;
+- authoritative `rejectedMask`;
+- authoritative fallback helper / legacy `fallbackMask`;
 - chase timers;
 - chase round-robin state.
 
-The current reverse-engineering focus has moved from the preferred-direction generator to the next decision layer:
+The current reverse-engineering focus is the decision layer after preferred[] generation:
 
 ```text
 preferred[] -> rejectedMask -> fallback helper -> final direction
@@ -91,28 +93,25 @@ Current EnemyWork findings:
 0x61C2 = fallback step counter/helper, not a normal direction mask
 ```
 
-The latest EnemyWork exact-PC report classifies decision cycles into:
+The latest standard JSONL comparison validates all three shadow models on the same one-enemy den-exit trace:
 
 ```text
-plain step / no rejected candidate
-preferred rejected, current direction kept
-preferred/current rejected, fallback entered
-forced reversal outside decision center
-other / mixed
+comparedFrames=501
+mismatches=0
+
+preferred[] shadow model checks=496, matches=496, mismatches=0
+rejectedMask shadow model checks=496, matches=496, mismatches=0
+fallback helper shadow model checks=496, matches=496, mismatches=0
 ```
 
-Current validated classification on the latest one-enemy EnemyWork trace:
+The fallback helper model is intentionally narrow at this checkpoint. It models the currently validated one-step-per-enemy-update behavior:
 
 ```text
-cycles: 554
-plain step / no rejected candidate: 544
-preferred rejected, current direction kept: 2
-preferred/current rejected, fallback entered: 8
-forced reversal outside decision center: 0
-other / mixed: 0
+fallback helper shadow sources:
+ONE_STEP_PER_ENEMY_UPDATE=496
 ```
 
-This confirms two important cases:
+The exact-PC EnemyWork report still provides the deeper decision-cycle context:
 
 ```text
 4315 without 4331/fallback:
@@ -121,27 +120,6 @@ This confirms two important cases:
 4315 -> 4331 -> 4241:
   preferred candidate rejected, current temp direction also rejected,
   fallback finder selects another direction
-```
-
-The standard JSONL adapter still computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including den-exit traces and rotate-branch cases for all four player directions.
-
-As of `v0.6.84`, the adapter also computes a `rejectedMask` shadow model in parallel. The authoritative `rejectedMask` is still reference-synced from MAME, but the shadow model currently validates on the latest one-enemy den-exit trace:
-
-```text
-rejectedMask shadow model checks=496
-matches=496
-mismatches=0
-```
-
-Observed shadow sources on that trace:
-
-```text
-SAFETY_PREVIOUS_02_TO_08=1
-PLAIN_STEP=465
-DECISION_CENTER_PREFERRED_ACCEPTED=20
-DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS=8
-DECISION_CENTER_REJECT_PREFERRED=1
-DECISION_CENTER_REVERSE_IGNORED=1
 ```
 
 ## Player direction mapping
@@ -323,8 +301,9 @@ tools/mame/states/**/*.sta
 - The simulation is not yet a full independent arcade enemy AI.
 - The official validation target is still one active enemy.
 - Multi-enemy validation is planned but not yet stable.
-- `EnemyWork.preferred[]` is still reference-synced in the comparison adapter.
-- authoritative `rejectedMask` and `fallbackMask` are still reference-synced scratch fields; `rejectedMask` now has a passing shadow model on the latest one-enemy trace.
+- `EnemyWork.preferred[]` is still authoritative reference-synced in the comparison adapter.
+- authoritative `rejectedMask` is still reference-synced, even though it now has a passing shadow model on the latest one-enemy trace.
+- authoritative fallback helper / legacy `fallbackMask` is still reference-synced, even though it now has a passing narrow shadow model on the latest one-enemy trace.
 - Chase timers and round-robin state are still reference-synced.
 - BFS direction is still observed / inferred from MAME in the shadow paths; full BFS pathfinding is not yet implemented.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
@@ -333,9 +312,9 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. validate the `rejectedMask` shadow model on more one-enemy traces and door states;
+1. validate the `rejectedMask` and fallback helper shadow models on more one-enemy traces and door states;
 2. document and cleanly rename the `fallbackMask` concept where appropriate;
-3. implement a shadow model for fallback direction selection;
+3. implement a shadow model for fallback direction selection, not just the `0x61C2` helper value;
 4. keep authoritative comparison reference-synced until shadow diagnostics pass on more one-enemy traces;
 5. implement chase timer and round-robin behavior;
 6. implement full BFS/chase direction selection.
