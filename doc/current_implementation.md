@@ -47,6 +47,39 @@ The current implementation can:
 
 The project does not yet run fully independent arcade enemy AI.
 
+## 1.1 Source-first rule for enemy decisions
+
+From this checkpoint onward, new enemy decision logic must be implemented from the disassembled source first.
+
+Primary source:
+
+```text
+LadyBug_enemy_management_extract.txt
+```
+
+MAME traces and exact-PC logs are validation tools. They should confirm whether the C# transcription matches the arcade code, but they should not be used to create case-by-case simulation rules.
+
+Avoid adding logic such as:
+
+```csharp
+if (currentDir == 0x01 && preferred0 == 0x08) ...
+```
+
+or:
+
+```csharp
+if (referenceRejectedMask == 0) ...
+```
+
+unless the condition is directly justified by the disassembled Z80 code.
+
+The correct development loop is:
+
+1. identify the Z80 block and RAM writes in `LadyBug_enemy_management_extract.txt`;
+2. transcribe that block into a source-named C# function;
+3. validate the function against standard JSONL traces and exact-PC logs;
+4. only then expand coverage to new traces.
+
 ## 2. Current validation strategy
 
 There are three complementary diagnostic streams.
@@ -829,6 +862,14 @@ Partially reconstructed:
 
 The adapter still does not independently decide enemy direction.
 
+Important:
+
+```text
+Do not implement the missing final direction logic by adding observed log cases.
+The next implementation step should be a source-based transcription of the Z80
+decision path, not another shadow heuristic fitted to one trace.
+```
+
 ## 11. Current limitations
 
 ### 11.1 Multi-enemy traces are not official yet
@@ -890,22 +931,31 @@ git rm --cached path/to/generated/file
 
 ## 13. Planned next steps
 
-### v0.6 next: validate decision-layer shadows on more traces
+### v0.6 next: source-first enemy decision reconstruction
 
 The adapter preferred[] shadow model is validated on a normal one-enemy trace and den-exit / one-enemy rotate traces covering player directions `01`, `02`, `04`, and `08`.
 
-The adapter `rejectedMask` and fallback helper shadow models are now validated on the latest one-enemy den-exit standard JSONL trace.
+The adapter `rejectedMask` and fallback helper shadow models are validated on the latest one-enemy den-exit standard JSONL trace, but the next work should not continue by adding trace-specific shadow exceptions.
 
 Suggested order:
 
-1. generate additional one-enemy standard JSONL traces with different timings and door states;
-2. run `Compare > Run Lady Bug reference-direction step`;
-3. inspect preferred[], `rejectedMask`, and fallback helper shadow summaries;
-4. if a mismatch appears, use the first-mismatch diagnostic context and exact-PC EnemyWork report to identify the missing case;
-5. add focused traces for forced reversal at `4347`;
-6. add focused traces where the player pivots doors near enemy decision centers;
-7. implement fallback direction selection, not only the `0x61C2` helper value;
-8. only after clean diagnostics, switch authoritative `rejectedMask` and later fallback helper away from MAME reference-sync.
+1. read and map the enemy-decision blocks in `LadyBug_enemy_management_extract.txt`;
+2. create source-named C# functions corresponding to the arcade blocks:
+
+```text
+0x42BA  Enemy_UpdateOne
+0x42E6  Try preferred direction
+0x3911  Logical maze validation
+0x4130  Local / door validation
+0x4241  Fallback direction selection
+0x4347  Forced reversal
+```
+
+3. add comments in each C# function with the relevant Z80 addresses and RAM writes;
+4. validate each block against exact-PC EnemyWork reports;
+5. use standard JSONL comparisons to catch integration regressions;
+6. do not add trace-specific branches unless they are justified by the source code;
+7. once the source-based model is stable, switch authoritative `rejectedMask`, fallback helper, and enemy direction away from MAME reference-sync.
 
 ### Later work
 

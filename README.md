@@ -86,6 +86,17 @@ The current reverse-engineering focus is the decision layer after preferred[] ge
 preferred[] -> rejectedMask -> fallback helper -> final direction
 ```
 
+Important methodology rule from this checkpoint onward:
+
+```text
+New enemy decision logic must be implemented source-first from
+LadyBug_enemy_management_extract.txt.
+
+MAME logs and traces are validation tools only. They must not be used to add
+case-by-case simulation rules unless the behavior is justified by the
+disassembled code.
+```
+
 Current EnemyWork findings:
 
 ```text
@@ -312,12 +323,23 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. validate the `rejectedMask` and fallback helper shadow models on more one-enemy traces and door states;
-2. document and cleanly rename the `fallbackMask` concept where appropriate;
-3. implement a shadow model for fallback direction selection, not just the `0x61C2` helper value;
-4. keep authoritative comparison reference-synced until shadow diagnostics pass on more one-enemy traces;
-5. implement chase timer and round-robin behavior;
-6. implement full BFS/chase direction selection.
+1. read and map the Z80 enemy-decision blocks from `LadyBug_enemy_management_extract.txt`;
+2. implement source-named C# functions for the arcade blocks:
+
+```text
+0x42BA  Enemy_UpdateOne
+0x42E6  Try preferred direction
+0x3911  Logical maze validation
+0x4130  Local / door validation
+0x4241  Fallback direction selection
+0x4347  Forced reversal
+```
+
+3. validate each C# block against exact-PC MAME logs;
+4. avoid trace-specific branches or log-fitting rules;
+5. document and cleanly rename the `fallbackMask` concept where appropriate;
+6. keep authoritative comparison reference-synced until the source-based decision model is validated;
+7. implement chase timer, round-robin behavior, and full BFS/chase direction selection.
 
 Later:
 
