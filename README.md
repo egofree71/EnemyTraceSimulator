@@ -6,9 +6,9 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.79**
+Current checkpoint: **v0.6.83**
 
-The project currently supports two complementary workflows:
+The project currently supports three complementary workflows:
 
 1. **Standard JSONL trace workflow**
    - exports frame-by-frame state from MAME;
@@ -23,7 +23,13 @@ The project currently supports two complementary workflows:
    - writes raw `LBPREF` events to `tools/mame/lua/error.log`;
    - automatically generates a readable analysis report in `traces/mame`.
 
-The standard JSONL trace remains the main comparison pipeline. The exact-PC workflow is a reverse-engineering aid used for precise CPU-level diagnostics.
+3. **Exact-PC EnemyWork decision diagnostic workflow**
+   - uses MAME debugger breakpoints around the enemy decision code;
+   - captures reset, rejection, fallback, local-door, and forced-reversal events;
+   - writes raw `LBEW` events to `tools/mame/lua/error.log`;
+   - automatically generates a cycle-level `Enemy_UpdateOne` decision report in `traces/mame`.
+
+The standard JSONL trace remains the main comparison pipeline. The exact-PC workflows are reverse-engineering aids used for precise CPU-level diagnostics.
 
 ## Implemented
 
@@ -46,12 +52,15 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - one-active-enemy validation path;
 - JSONL diagnostics for `EnemyWork.preferred[]`;
 - exact-PC diagnostics for `EnemyWork.preferred[]`;
+- exact-PC diagnostics for EnemyWork decision-cycle events;
 - automatic analysis of MAME `error.log` preferred[] events;
+- automatic analysis of MAME `error.log` EnemyWork decision events;
 - standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs;
 - preferred[] shadow replay diagnostic validating the modeled write sequence against MAME snapshots;
 - preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - preferred[] rotate-branch shadow recognition generalized and validated for all four player directions;
 - den-exit candidate diagnostics for enemy activation traces;
+- Enemy_UpdateOne cycle classification for rejection/fallback decisions;
 - temporary reference-sync bridges for `rejectedMask` and `fallbackMask` scratch fields.
 
 ## Current validation checkpoint
@@ -67,15 +76,52 @@ The C# adapter can compare against one-active-enemy MAME traces, but some system
 - chase timers;
 - chase round-robin state.
 
-The current reverse-engineering focus remains:
+The current reverse-engineering focus has moved from the preferred-direction generator to the next decision layer:
 
 ```text
-EnemyWork.preferred[] = 0x61C4..0x61C7
+preferred[] -> rejectedMask -> fallback helper -> final direction
 ```
 
-The exact-PC diagnostic confirmed that `preferred[]` is produced by a base generator and then may be overridden by chase/BFS logic.
+Current EnemyWork findings:
 
-The standard JSONL adapter now computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including den-exit traces and rotate-branch cases for all four player directions.
+```text
+0x61C1 = EnemyRejectedDirMask
+0x61C2 = fallback step counter/helper, not a normal direction mask
+```
+
+The latest EnemyWork exact-PC report classifies decision cycles into:
+
+```text
+plain step / no rejected candidate
+preferred rejected, current direction kept
+preferred/current rejected, fallback entered
+forced reversal outside decision center
+other / mixed
+```
+
+Current validated classification on the latest one-enemy EnemyWork trace:
+
+```text
+cycles: 554
+plain step / no rejected candidate: 544
+preferred rejected, current direction kept: 2
+preferred/current rejected, fallback entered: 8
+forced reversal outside decision center: 0
+other / mixed: 0
+```
+
+This confirms two important cases:
+
+```text
+4315 without 4331/fallback:
+  preferred candidate rejected, current temp direction kept
+
+4315 -> 4331 -> 4241:
+  preferred candidate rejected, current temp direction also rejected,
+  fallback finder selects another direction
+```
+
+The standard JSONL adapter still computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including den-exit traces and rotate-branch cases for all four player directions.
 
 ## Player direction mapping
 
@@ -147,7 +193,8 @@ Typical diagnostic settings:
 
 ```json
 {
-  "luaScriptPath": "res://tools/mame/lua/ladybug_preferred_pc_trace.lua",
+  "luaScriptPath": "res://tools/mame/lua/ladybug_preferred_pc_trace.lua
+tools/mame/lua/ladybug_enemywork_pc_trace.lua",
   "outputPrefix": "ladybug_sequence_v8_pcdiag",
   "framesAfterTick0": 500
 }
@@ -166,6 +213,36 @@ Generated report:
 ```text
 traces/mame/ladybug_sequence_v8_pcdiag_preferred_pc_analysis.txt
 ```
+
+## Running the exact-PC EnemyWork diagnostic
+
+Use this mode when investigating `rejectedMask`, fallback behavior, local-door rejection, or forced reversal.
+
+Typical diagnostic settings:
+
+```json
+{
+  "luaScriptPath": "res://tools/mame/lua/ladybug_enemywork_pc_trace.lua",
+  "outputPrefix": "ladybug_sequence_v8_enemywork_pcdiag",
+  "framesAfterTick0": 500
+}
+```
+
+When this script is selected, the launcher automatically enables MAME debugger/log mode.
+
+Raw diagnostic output:
+
+```text
+tools/mame/lua/error.log
+```
+
+Generated report:
+
+```text
+traces/mame/ladybug_sequence_v8_enemywork_pcdiag_enemywork_pc_analysis.txt
+```
+
+Important: this is not a JSONL trace. Do not load it with the standard trace loader. Read the generated analysis report instead.
 
 ## Repository layout
 
@@ -197,8 +274,10 @@ scripts/tools/MameTraceLauncher.cs
 scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
 scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
 scripts/tools/simulation/LadyBugPreferredPcLogAnalyzer.cs
+scripts/tools/simulation/LadyBugEnemyWorkPcLogAnalyzer.cs
 tools/mame/lua/ladybug_sequence_trace.lua
 tools/mame/lua/ladybug_preferred_pc_trace.lua
+tools/mame/lua/ladybug_enemywork_pc_trace.lua
 doc/current_implementation.md
 ```
 
@@ -212,6 +291,7 @@ Typical generated files:
 tools/mame/lua/error.log
 tools/mame/lua/ladybug_sequence_runtime_config.lua
 tools/mame/lua/ladybug_preferred_pc_debug_startup.cmd
+tools/mame/lua/ladybug_enemywork_pc_debug_startup.cmd
 traces/mame/*.json
 traces/mame/*.jsonl
 traces/mame/*.txt
@@ -233,11 +313,12 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. test the adapter preferred[] shadow model on more one-enemy traces and den-exit timings;
-2. start isolating the real `rejectedMask` / fallback generator;
-3. start replacing the reference-synced `preferred[]` only after the shadow path is robust on more traces;
-4. implement chase timer and round-robin behavior;
-5. implement full BFS/chase direction selection.
+1. document and cleanly rename the `fallbackMask` concept where appropriate;
+2. implement a shadow model for `rejectedMask`;
+3. implement a shadow model for fallback direction selection;
+4. keep authoritative comparison reference-synced until shadow diagnostics pass on more one-enemy traces;
+5. implement chase timer and round-robin behavior;
+6. implement full BFS/chase direction selection.
 
 Later:
 
