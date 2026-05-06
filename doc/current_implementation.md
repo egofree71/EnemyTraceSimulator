@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.86  
+**Current package version:** v0.6.85  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -40,7 +40,6 @@ The current implementation can:
 - compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison;
 - compute a `rejectedMask` shadow model in the Lady Bug adapter during standard JSONL comparison;
 - compute a fallback helper / `0x61C2` shadow model in the Lady Bug adapter during standard JSONL comparison;
-- compute an enemy final-direction shadow model in the Lady Bug adapter during standard JSONL comparison;
 - detect enemy activation / den-exit candidate frames;
 - classify `Enemy_UpdateOne` decision cycles;
 - temporarily reference-sync authoritative `rejectedMask` and fallback helper state;
@@ -68,8 +67,7 @@ Used for:
 - safe polling-based `preferredChangeEvents`;
 - adapter-level preferred[] shadow compare;
 - adapter-level `rejectedMask` shadow compare;
-- adapter-level fallback helper / `0x61C2` shadow compare;
-- adapter-level enemy final-direction shadow compare.
+- adapter-level fallback helper / `0x61C2` shadow compare.
 
 This is the main validation pipeline.
 
@@ -234,13 +232,6 @@ FallbackHelperShadow
 FallbackHelperShadowSource
 ```
 
-`v0.6.86` adds parallel shadow fields for the final enemy direction:
-
-```text
-EnemyDirectionShadow
-EnemyDirectionShadowSource
-```
-
 The legacy authoritative comparison field is still reference-synced from MAME.
 
 ## 5. Main scripts
@@ -349,7 +340,7 @@ LadyBugMonsterPreferenceSystem.cs
 
 `LadyBugMonsterPreferenceSystem` models the arcade preferred-direction generator for the validated one-enemy diagnostic windows.
 
-`LadyBugEnemySimulationAdapter` computes preferred[], `rejectedMask`, fallback helper, and enemy final-direction shadow models during standard comparison, but still keeps MAME reference-synced values as authoritative state. Enemy movement still uses the reference MAME direction.
+`LadyBugEnemySimulationAdapter` computes preferred[], `rejectedMask`, and fallback helper shadow models during standard comparison, but still keeps MAME reference-synced values as authoritative state.
 
 `LadyBugEnemyWorkPcLogAnalyzer` analyzes exact-PC `LBEW` events and groups them into `Enemy_UpdateOne` cycles.
 
@@ -737,13 +728,6 @@ FallbackHelperShadow
 FallbackHelperShadowSource
 ```
 
-`v0.6.86` adds parallel shadow fields for the final enemy direction:
-
-```text
-EnemyDirectionShadow
-EnemyDirectionShadowSource
-```
-
 Important behavior:
 
 ```text
@@ -774,89 +758,6 @@ fallback helper shadow sources: ONE_STEP_PER_ENEMY_UPDATE=496
 
 This is a narrow but useful checkpoint: the pipeline can now validate the three observed decision-layer scratch outputs in parallel while still keeping authoritative values reference-synced.
 
-### 8.8 Adapter enemy direction shadow validation
-
-`v0.6.86` adds an adapter-level shadow model for the final enemy direction.
-
-The comparison state carries diagnostic fields in addition to the reference-driven movement direction:
-
-```text
-EnemyDirectionShadow
-EnemyDirectionShadowSource
-```
-
-Important behavior:
-
-```text
-Enemy movement still uses the MAME reference direction.
-EnemyDirectionShadow is computed in parallel only.
-EnemyDirectionShadow does not yet drive MoveActorOnePixel().
-```
-
-Latest validated standard JSONL trace:
-
-```text
-comparedFrames=501
-comparison mismatches=0
-
-preferred[] shadow model checks=496
-preferred[] shadow matches=496
-preferred[] shadow mismatches=0
-
-rejectedMask shadow model checks=496
-rejectedMask shadow matches=496
-rejectedMask shadow mismatches=0
-
-fallback helper shadow model checks=496
-fallback helper shadow matches=496
-fallback helper shadow mismatches=0
-
-enemy direction shadow model checks=496
-enemy direction shadow matches=496
-enemy direction shadow mismatches=0
-```
-
-Observed enemy direction shadow sources:
-
-```text
-DEN_EXIT_FORCED_UP_BRIDGE=1
-PLAIN_STEP_KEEP_CURRENT=465
-DECISION_CENTER_USE_PREFERRED0=20
-FALLBACK_REFERENCE_DIRECTION_BRIDGE=8
-DECISION_CENTER_KEEP_CURRENT_AFTER_REJECT=1
-DECISION_CENTER_KEEP_CURRENT_REVERSE_IGNORED=1
-```
-
-Current interpretation of these sources:
-
-```text
-PLAIN_STEP_KEEP_CURRENT:
-  no decision-center change; keep current direction
-
-DECISION_CENTER_USE_PREFERRED0:
-  preferred[0] accepted as the final direction
-
-DECISION_CENTER_KEEP_CURRENT_AFTER_REJECT:
-  preferred candidate rejected, but current direction remains valid
-
-DECISION_CENTER_KEEP_CURRENT_REVERSE_IGNORED:
-  reverse candidate ignored, current direction remains valid
-
-DEN_EXIT_FORCED_UP_BRIDGE:
-  current den-exit special-case bridge
-
-FALLBACK_REFERENCE_DIRECTION_BRIDGE:
-  fallback case where the shadow model still uses the observed MAME final direction
-```
-
-The key remaining incomplete piece is:
-
-```text
-FALLBACK_REFERENCE_DIRECTION_BRIDGE=8
-```
-
-Those 8 cases correspond to fallback decisions. The helper value is modeled, but the real fallback direction selection is still not implemented.
-
 ## 9. Den-exit diagnostics and temporary bridges
 
 The adapter detects enemy activation / den-exit candidate frames.
@@ -882,7 +783,6 @@ Shadow diagnostics currently run in parallel for:
 preferred[]
 rejectedMask / 0x61C1
 fallback helper / 0x61C2
-enemy final direction
 ```
 
 This avoids misleading mismatches in den-exit / special movement windows while the real decision and fallback generator is still being reconstructed.
@@ -911,15 +811,12 @@ Shadow-mode only:
 - `EnemyWork.preferred[]` simulated in parallel;
 - `rejectedMask` simulated in parallel;
 - fallback helper / `0x61C2` simulated in parallel;
-- enemy final direction simulated in parallel;
 - source summary for preferred[] shadow model;
 - source summary for `rejectedMask` shadow model;
 - source summary for fallback helper shadow model;
-- source summary for enemy direction shadow model;
 - mismatch count for preferred[] shadow model;
 - mismatch count for `rejectedMask` shadow model;
 - mismatch count for fallback helper shadow model;
-- mismatch count for enemy direction shadow model;
 - richer first-mismatch context if a future trace fails.
 
 Partially reconstructed:
@@ -928,7 +825,7 @@ Partially reconstructed:
 - movement by one arcade pixel using the MAME reference direction;
 - some `EnemyWork` decision scratch fields;
 - exact-PC decision-cycle classification for rejection/fallback;
-- standard JSONL preferred[], `rejectedMask`, fallback helper, and enemy direction shadow diagnostics.
+- standard JSONL preferred[], `rejectedMask`, and fallback helper shadow diagnostics.
 
 The adapter still does not independently decide enemy direction.
 
@@ -949,8 +846,6 @@ Authoritative `rejectedMask` and the `0x61C2` fallback helper are currently sync
 `v0.6.84` adds a passing `rejectedMask` shadow model on one standard one-enemy trace, but this still needs broader validation before it replaces the reference-synced value.
 
 `v0.6.85` adds a passing fallback helper shadow model on the same trace, but it is still a narrow helper-value model, not full fallback direction selection.
-
-`v0.6.86` adds a passing enemy direction shadow model on the same trace, but it still has `FALLBACK_REFERENCE_DIRECTION_BRIDGE=8`. Therefore it explains the final direction in parallel, but fallback direction selection is not yet independent.
 
 ### 11.4 chase state is still reference-synced
 
@@ -999,17 +894,18 @@ git rm --cached path/to/generated/file
 
 The adapter preferred[] shadow model is validated on a normal one-enemy trace and den-exit / one-enemy rotate traces covering player directions `01`, `02`, `04`, and `08`.
 
-The adapter `rejectedMask`, fallback helper, and enemy direction shadow models are now validated on the latest one-enemy den-exit standard JSONL trace.
+The adapter `rejectedMask` and fallback helper shadow models are now validated on the latest one-enemy den-exit standard JSONL trace.
 
 Suggested order:
 
 1. generate additional one-enemy standard JSONL traces with different timings and door states;
 2. run `Compare > Run Lady Bug reference-direction step`;
-3. inspect preferred[], `rejectedMask`, fallback helper, and enemy direction shadow summaries;
+3. inspect preferred[], `rejectedMask`, and fallback helper shadow summaries;
 4. if a mismatch appears, use the first-mismatch diagnostic context and exact-PC EnemyWork report to identify the missing case;
-5. reduce `FALLBACK_REFERENCE_DIRECTION_BRIDGE` by implementing real fallback direction selection;
-6. add focused traces for forced reversal at `4347`;
-7. only after clean diagnostics, switch authoritative `rejectedMask`, fallback helper, and finally enemy direction away from MAME reference-sync.
+5. add focused traces for forced reversal at `4347`;
+6. add focused traces where the player pivots doors near enemy decision centers;
+7. implement fallback direction selection, not only the `0x61C2` helper value;
+8. only after clean diagnostics, switch authoritative `rejectedMask` and later fallback helper away from MAME reference-sync.
 
 ### Later work
 
