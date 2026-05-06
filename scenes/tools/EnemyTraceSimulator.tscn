@@ -1,9 +1,9 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene format=3 uid="uid://cg3be3ouuh4n4"]
 
-[ext_resource type="Script" path="res://scripts/tools/EnemyTraceSimulatorWindow.cs" id="1_enemy_trace_window"]
-[ext_resource type="Script" path="res://scripts/tools/EnemyTraceBoardView.cs" id="2_enemy_trace_board"]
+[ext_resource type="Script" uid="uid://bdx8iyx76mpsh" path="res://scripts/tools/EnemyTraceSimulatorWindow.cs" id="1_enemy_trace_window"]
+[ext_resource type="Script" uid="uid://d3a1xto1samnd" path="res://scripts/tools/EnemyTraceBoardView.cs" id="2_enemy_trace_board"]
 
-[node name="EnemyTraceSimulator" type="Control"]
+[node name="EnemyTraceSimulator" type="Control" unique_id=735823806]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -12,7 +12,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_enemy_trace_window")
 
-[node name="Root" type="MarginContainer" parent="."]
+[node name="Root" type="MarginContainer" parent="." unique_id=754084066]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -24,120 +24,118 @@ theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 10
 theme_override_constants/margin_bottom = 10
 
-[node name="MainLayout" type="VBoxContainer" parent="Root"]
+[node name="MainLayout" type="VBoxContainer" parent="Root" unique_id=1602933104]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="Title" type="Label" parent="Root/MainLayout"]
+[node name="Title" type="Label" parent="Root/MainLayout" unique_id=1216380034]
 layout_mode = 2
+theme_override_font_sizes/font_size = 22
 text = "Lady Bug - Enemy trace simulator"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 22
 
-[node name="PlaybackControls" type="HBoxContainer" parent="Root/MainLayout"]
+[node name="PlaybackControls" type="HBoxContainer" parent="Root/MainLayout" unique_id=30356492]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="SettingsButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="SettingsButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=1350512938]
 custom_minimum_size = Vector2(58, 38)
 layout_mode = 2
+tooltip_text = "Éditer config/mame_trace_settings.json"
 theme_override_font_sizes/font_size = 23
 text = "⚙"
-tooltip_text = "Éditer config/mame_trace_settings.json"
 
-[node name="LaunchMameLuaButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="LaunchMameLuaButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=226392397]
 custom_minimum_size = Vector2(150, 38)
 layout_mode = 2
-text = "Lancer MAME/Lua"
 tooltip_text = "Lancer MAME avec le script Lua en utilisant res://config/mame_trace_settings.json"
+text = "Lancer MAME/Lua"
 
-[node name="LoadTraceButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="LoadTraceButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=1938800044]
 custom_minimum_size = Vector2(120, 38)
 layout_mode = 2
-text = "Charger trace"
 tooltip_text = "Charger la dernière trace générée, ou la trace par défaut dans res://traces/mame"
+text = "Charger trace"
 
-[node name="ToolbarSeparator" type="VSeparator" parent="Root/MainLayout/PlaybackControls"]
+[node name="ToolbarSeparator" type="VSeparator" parent="Root/MainLayout/PlaybackControls" unique_id=1135551842]
 custom_minimum_size = Vector2(12, 0)
 layout_mode = 2
 
-[node name="RunSimulationButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="RunSimulationButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=113504731]
 custom_minimum_size = Vector2(58, 38)
 layout_mode = 2
+tooltip_text = "Relancer la simulation depuis le début"
 theme_override_font_sizes/font_size = 23
 text = "↺"
-tooltip_text = "Relancer la simulation depuis le début"
 
-[node name="PauseResumeButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="PauseResumeButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=718715279]
 custom_minimum_size = Vector2(58, 38)
 layout_mode = 2
+tooltip_text = "Mettre en pause ou reprendre la simulation"
 theme_override_font_sizes/font_size = 23
 text = "▶"
-tooltip_text = "Mettre en pause ou reprendre la simulation"
 
-[node name="StepButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="StepButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=1386551011]
 custom_minimum_size = Vector2(58, 38)
 layout_mode = 2
+tooltip_text = "Avancer d’un tick"
 theme_override_font_sizes/font_size = 23
 text = "▶|"
-tooltip_text = "Avancer d’un tick"
 
-[node name="TickLabel" type="Label" parent="Root/MainLayout/PlaybackControls"]
+[node name="TickLabel" type="Label" parent="Root/MainLayout/PlaybackControls" unique_id=1302349498]
 custom_minimum_size = Vector2(36, 38)
 layout_mode = 2
 text = "Tick"
 vertical_alignment = 1
 
-[node name="TickSpinBox" type="SpinBox" parent="Root/MainLayout/PlaybackControls"]
+[node name="TickSpinBox" type="SpinBox" parent="Root/MainLayout/PlaybackControls" unique_id=1642481071]
 custom_minimum_size = Vector2(110, 38)
 layout_mode = 2
 tooltip_text = "Entrer un tick et appuyer sur Entrée pour afficher la frame correspondante"
-min_value = 0.0
 max_value = 0.0
-step = 1.0
-allow_greater = true
 rounded = true
+allow_greater = true
 editable = false
 
-[node name="DumpFrameButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="DumpFrameButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=1370324836]
 custom_minimum_size = Vector2(90, 38)
 layout_mode = 2
-text = "Dump"
 tooltip_text = "Afficher dans la console le détail de la frame courante"
+text = "Dump"
 
-[node name="FindFrameButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="FindFrameButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=1537297098]
 custom_minimum_size = Vector2(80, 38)
 layout_mode = 2
-text = "Find"
 tooltip_text = "Ouvrir les helpers de navigation dans la trace"
+text = "Find"
 
-[node name="CompareButton" type="Button" parent="Root/MainLayout/PlaybackControls"]
+[node name="CompareButton" type="Button" parent="Root/MainLayout/PlaybackControls" unique_id=894225152]
 custom_minimum_size = Vector2(100, 38)
 layout_mode = 2
-text = "Compare"
 tooltip_text = "Comparer la trace MAME avec une simulation de référence temporaire"
+text = "Compare"
 
-[node name="BoardComparison" type="HBoxContainer" parent="Root/MainLayout"]
+[node name="BoardComparison" type="HBoxContainer" parent="Root/MainLayout" unique_id=1789617568]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="SimulationBoard" type="Control" parent="Root/MainLayout/BoardComparison"]
+[node name="SimulationBoard" type="Control" parent="Root/MainLayout/BoardComparison" unique_id=1141195380]
 custom_minimum_size = Vector2(360, 360)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 script = ExtResource("2_enemy_trace_board")
 
-[node name="MameTraceBoard" type="Control" parent="Root/MainLayout/BoardComparison"]
+[node name="MameTraceBoard" type="Control" parent="Root/MainLayout/BoardComparison" unique_id=151733274]
 custom_minimum_size = Vector2(360, 360)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 script = ExtResource("2_enemy_trace_board")
 
-[node name="StatusLabel" type="Label" parent="Root/MainLayout"]
+[node name="StatusLabel" type="Label" parent="Root/MainLayout" unique_id=2130617622]
 custom_minimum_size = Vector2(0, 26)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -145,9 +143,8 @@ text = "Aucune trace chargée."
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="Console" type="TextEdit" parent="Root/MainLayout"]
+[node name="Console" type="TextEdit" parent="Root/MainLayout" unique_id=289903716]
 custom_minimum_size = Vector2(0, 140)
 layout_mode = 2
 size_flags_horizontal = 3
 editable = false
-text = ""

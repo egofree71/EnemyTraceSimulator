@@ -7,19 +7,16 @@ using System.Text;
 ///
 /// Important: this adapter intentionally returns identity simulation frames so
 /// the normal visual/comparison pipeline should still produce zero mismatches.
-/// Its value is in the Summary string: it runs LadyBugEnemyDecisionModel over
-/// the loaded MAME trace and reports which decision frames can already be
-/// explained by the source-first transcription.
+/// Its value is in the Summary string: it runs transition-oriented diagnostics
+/// over the loaded MAME trace and reports which 0x61C1 / rejectedMask outcomes
+/// can already be explained by the source-first 0x42E6 / 0x4315 / 0x4331 model.
 ///
 /// Current scope:
-/// - uses 0x427E pixel-center predicate;
-/// - uses 0x3911 static logical-maze validation with the hard-coded 0x0DA2 table;
-/// - uses TryPreferredDirection / FindFallbackDirection with a permissive tile reader.
-///
-/// Not yet authoritative:
-/// - 0x3C0A tile lookup is not reconstructed here;
-/// - 0x4130 local door validation is therefore not truly validated yet;
-/// - exact-PC timing is not available from standard JSONL frames.
+/// - uses the previous frame's EnemyWork temp position as the pre-move decision state;
+/// - uses the current frame's preferred[] as the candidate visible at frame end;
+/// - validates the 0x4315 case where preferred is rejected but current direction is kept;
+/// - keeps 0x4130 local-door validation out of this standard-JSONL diagnostic until
+///   0x3C0A tile lookup is reconstructed from VRAM.
 /// </summary>
 public sealed class LadyBugEnemyDecisionTraceDiagnosticAdapter : IEnemySimulationAdapter
 {
@@ -27,7 +24,7 @@ public sealed class LadyBugEnemyDecisionTraceDiagnosticAdapter : IEnemySimulatio
 
     public string Description =>
         "Runs source-first enemy decision diagnostics in parallel and returns identity frames. " +
-        "Use this to inspect the 0x3911/0x42E6 decision model summary without changing the current comparison result.";
+        "Use this to inspect rejectedMask transition modeling without changing the current comparison result.";
 
     public bool ExpectedToMismatch => false;
 
@@ -44,158 +41,165 @@ public static class LadyBugEnemyDecisionTraceDiagnostics
     private sealed class Counters
     {
         public int Frames;
-        public int FramesWithEnemyWork;
-        public int FramesWithActiveEnemyWorkSlot;
-        public int FramesSkippedMissingPreferred;
-        public int CenterFrames;
-        public int OutsideCenterFrames;
+        public int Transitions;
+        public int TransitionsWithEnemyWork;
+        public int AttributedTransitions;
+        public int MissingPreferredSkips;
+        public int CenterTransitions;
+        public int OutsideCenterTransitions;
         public int PreferredAccepted;
         public int PreferredRejectedCurrentKept;
-        public int FallbackEntered;
-        public int FallbackNotFound;
+        public int PreferredAndPreviousRejectedFallback;
+        public int ReverseIgnored;
+        public int NoPreferredCandidate;
         public int ReferenceRejectedMaskNonZero;
-        public int ReferenceRejectedMaskMatchesModeled;
-        public int ReferenceRejectedMaskDiffersFromModeled;
-        public int ReferenceTempDirMatchesModeled;
-        public int ReferenceTempDirDiffersFromModeled;
+        public int RejectedMaskMatchesModeled;
+        public int RejectedMaskDiffersFromModeled;
         public string FirstRejectedMaskDifference = string.Empty;
-        public string FirstTempDirDifference = string.Empty;
         public readonly Dictionary<string, int> Sources = new();
     }
 
     public static string BuildSummary(IReadOnlyList<EnemyTraceFrame> referenceFrames)
     {
         if (referenceFrames.Count == 0)
-            return "Lady Bug decision diagnostics: empty trace";
+            return "Lady Bug decision diagnostics v0.6.88: empty trace";
 
         var counters = new Counters { Frames = referenceFrames.Count };
 
-        foreach (EnemyTraceFrame frame in referenceFrames)
-            AnalyzeFrame(frame, counters);
+        for (int i = 1; i < referenceFrames.Count; i++)
+            AnalyzeTransition(referenceFrames[i - 1], referenceFrames[i], counters);
 
         return BuildSummaryText(counters);
     }
 
-    private static void AnalyzeFrame(EnemyTraceFrame frame, Counters counters)
+    private static void AnalyzeTransition(
+        EnemyTraceFrame previousFrame,
+        EnemyTraceFrame currentFrame,
+        Counters counters)
     {
-        if (frame.enemyWork == null)
+        counters.Transitions++;
+
+        if (previousFrame.enemyWork == null || currentFrame.enemyWork == null)
             return;
 
-        counters.FramesWithEnemyWork++;
+        counters.TransitionsWithEnemyWork++;
 
-        if (frame.enemyWork.rejectedMask != 0)
+        if (currentFrame.enemyWork.rejectedMask != 0)
             counters.ReferenceRejectedMaskNonZero++;
 
-        if (!TrySelectEnemyWorkSlot(frame, out EnemyTraceActor? enemy) || enemy == null)
+        if (!TrySelectEnemyWorkSlot(currentFrame, out EnemyTraceActor? enemy) || enemy == null)
             return;
 
-        counters.FramesWithActiveEnemyWorkSlot++;
+        counters.AttributedTransitions++;
 
         int slot = Math.Clamp(enemy.slot, 0, 3);
-        if (frame.enemyWork.preferred.Count <= slot)
+        if (currentFrame.enemyWork.preferred.Count <= slot)
         {
-            counters.FramesSkippedMissingPreferred++;
+            counters.MissingPreferredSkips++;
             return;
         }
 
-        int tempDir = frame.enemyWork.tempDir & 0x0F;
-        int tempX = frame.enemyWork.tempX & 0xFF;
-        int tempY = frame.enemyWork.tempY & 0xFF;
-        int preferred = frame.enemyWork.preferred[slot] & 0x0F;
+        int previousTempDir = previousFrame.enemyWork.tempDir & 0x0F;
+        int previousTempX = previousFrame.enemyWork.tempX & 0xFF;
+        int previousTempY = previousFrame.enemyWork.tempY & 0xFF;
+        int currentTempDir = currentFrame.enemyWork.tempDir & 0x0F;
+        int preferred = currentFrame.enemyWork.preferred[slot] & 0x0F;
 
-        if (!LadyBugEnemyDecisionModel.EnemyIsAtDecisionCenter(tempX, tempY))
+        int modeledRejected;
+        string source;
+
+        if (!LadyBugEnemyDecisionModel.EnemyIsAtDecisionCenter(previousTempX, previousTempY))
         {
-            counters.OutsideCenterFrames++;
-            return;
+            counters.OutsideCenterTransitions++;
+            modeledRejected = 0;
+            source = "PLAIN_STEP_OUTSIDE_CENTER";
         }
-
-        counters.CenterFrames++;
-
-        var scratch = new LadyBugEnemyDecisionModel.EnemyDecisionScratch
+        else
         {
-            TempDir = tempDir,
-            TempX = tempX,
-            TempY = tempY,
-            RejectedDirMask = 0,
-            FallbackHelper = 0
-        };
-
-        LadyBugEnemyDecisionModel.DirectionAttemptResult result;
-        try
-        {
-            result = LadyBugEnemyDecisionModel.TryPreferredDirection(
-                scratch,
+            counters.CenterTransitions++;
+            modeledRejected = ModelRejectedMaskAtDecisionCenter(
+                previousTempDir,
+                currentTempDir,
                 preferred,
-                LadyBugStaticMazeRomTable.Table0DA2,
-                ReadTilePermissiveForCurrentDiagnostic);
-        }
-        catch (Exception ex)
-        {
-            AddSource(counters, "EXCEPTION_" + ex.GetType().Name);
-            return;
+                out source);
         }
 
-        AddSource(counters, result.Source);
+        CountSource(counters, source);
+        CountDecisionClass(counters, source);
 
-        switch (result.Source)
-        {
-            case "42E6_PREFERRED_ACCEPTED":
-                counters.PreferredAccepted++;
-                break;
-            case "4315_PREFERRED_REJECTED_CURRENT_KEPT":
-                counters.PreferredRejectedCurrentKept++;
-                break;
-            case "4331_FALLBACK_SELECTED":
-                counters.FallbackEntered++;
-                break;
-            default:
-                if (result.FallbackEntered && !result.Accepted)
-                    counters.FallbackNotFound++;
-                break;
-        }
-
-        int referenceRejected = frame.enemyWork.rejectedMask & 0x0F;
-        int modeledRejected = result.RejectedMask & 0x0F;
+        int referenceRejected = currentFrame.enemyWork.rejectedMask & 0x0F;
         if (referenceRejected == modeledRejected)
         {
-            counters.ReferenceRejectedMaskMatchesModeled++;
+            counters.RejectedMaskMatchesModeled++;
         }
         else
         {
-            counters.ReferenceRejectedMaskDiffersFromModeled++;
+            counters.RejectedMaskDiffersFromModeled++;
             if (string.IsNullOrEmpty(counters.FirstRejectedMaskDifference))
             {
-                counters.FirstRejectedMaskDifference =
-                    BuildDifferenceContext(frame, enemy, preferred, result.Source, referenceRejected, modeledRejected);
-            }
-        }
-
-        int referenceTempDir = frame.enemyWork.tempDir & 0x0F;
-        int modeledTempDir = result.SelectedDirection & 0x0F;
-        if (referenceTempDir == modeledTempDir)
-        {
-            counters.ReferenceTempDirMatchesModeled++;
-        }
-        else
-        {
-            counters.ReferenceTempDirDiffersFromModeled++;
-            if (string.IsNullOrEmpty(counters.FirstTempDirDifference))
-            {
-                counters.FirstTempDirDifference =
-                    BuildTempDirDifferenceContext(frame, enemy, preferred, result.Source, referenceTempDir, modeledTempDir);
+                counters.FirstRejectedMaskDifference = BuildRejectedMaskDifferenceContext(
+                    previousFrame,
+                    currentFrame,
+                    enemy,
+                    preferred,
+                    previousTempDir,
+                    currentTempDir,
+                    source,
+                    referenceRejected,
+                    modeledRejected);
             }
         }
     }
 
     /// <summary>
-    /// The current diagnostic deliberately makes local-door validation permissive.
-    /// That means this adapter validates the 0x3911 / 0x42E6 skeleton only.
-    /// A later patch should replace this with a faithful 0x3C0A tile lookup over
-    /// the captured VRAM, then validate 0x4130 for real.
+    /// Source-first transition model for the 0x42E6 decision path as visible in
+    /// standard JSONL frame boundaries.
+    ///
+    /// The important correction compared with the older shadow heuristic is the
+    /// 0x4315 path:
+    ///
+    ///     preferred rejected -> 0x61C1 |= preferred
+    ///     current direction still valid -> keep current and return
+    ///
+    /// So when preferred differs from the final/current temp direction, and the
+    /// enemy kept its previous direction, the preferred bit is still modeled as
+    /// rejected unless the observed shape is the explicit reverse-ignored case.
     /// </summary>
-    private static int ReadTilePermissiveForCurrentDiagnostic(int probeX, int probeY)
+    private static int ModelRejectedMaskAtDecisionCenter(
+        int previousTempDir,
+        int currentTempDir,
+        int preferred,
+        out string source)
     {
-        return 0x00;
+        if (!IsDirectionBit(preferred))
+        {
+            source = "DECISION_CENTER_NO_PREFERRED";
+            return 0;
+        }
+
+        if (preferred == currentTempDir)
+        {
+            source = "42E6_PREFERRED_ACCEPTED";
+            return 0;
+        }
+
+        if (previousTempDir == currentTempDir &&
+            AreOppositeDirections(preferred, currentTempDir))
+        {
+            source = "DECISION_CENTER_REVERSE_IGNORED";
+            return 0;
+        }
+
+        int rejectedMask = preferred & 0x0F;
+
+        if (IsDirectionBit(previousTempDir) && previousTempDir != currentTempDir)
+        {
+            source = "4315_4331_PREFERRED_AND_PREVIOUS_REJECTED";
+            return (rejectedMask | previousTempDir) & 0x0F;
+        }
+
+        source = "4315_PREFERRED_REJECTED_CURRENT_KEPT";
+        return rejectedMask;
     }
 
     private static bool TrySelectEnemyWorkSlot(EnemyTraceFrame frame, out EnemyTraceActor? selected)
@@ -237,7 +241,29 @@ public static class LadyBugEnemyDecisionTraceDiagnostics
         return false;
     }
 
-    private static void AddSource(Counters counters, string source)
+    private static void CountDecisionClass(Counters counters, string source)
+    {
+        switch (source)
+        {
+            case "42E6_PREFERRED_ACCEPTED":
+                counters.PreferredAccepted++;
+                break;
+            case "4315_PREFERRED_REJECTED_CURRENT_KEPT":
+                counters.PreferredRejectedCurrentKept++;
+                break;
+            case "4315_4331_PREFERRED_AND_PREVIOUS_REJECTED":
+                counters.PreferredAndPreviousRejectedFallback++;
+                break;
+            case "DECISION_CENTER_REVERSE_IGNORED":
+                counters.ReverseIgnored++;
+                break;
+            case "DECISION_CENTER_NO_PREFERRED":
+                counters.NoPreferredCandidate++;
+                break;
+        }
+    }
+
+    private static void CountSource(Counters counters, string source)
     {
         if (!counters.Sources.TryGetValue(source, out int count))
             count = 0;
@@ -245,71 +271,55 @@ public static class LadyBugEnemyDecisionTraceDiagnostics
         counters.Sources[source] = count + 1;
     }
 
-    private static string BuildDifferenceContext(
-        EnemyTraceFrame frame,
+    private static string BuildRejectedMaskDifferenceContext(
+        EnemyTraceFrame previousFrame,
+        EnemyTraceFrame currentFrame,
         EnemyTraceActor enemy,
         int preferred,
+        int previousTempDir,
+        int currentTempDir,
         string source,
         int referenceRejected,
         int modeledRejected)
     {
-        return "tick=" + frame.frame +
-               " mameFrame=" + frame.mameFrame +
+        return "tick=" + currentFrame.frame +
+               " mameFrame=" + currentFrame.mameFrame +
                " slot=" + enemy.slot +
-               " tmp=" + FormatByte(frame.enemyWork?.tempDir ?? 0) + ":" +
-               FormatByte(frame.enemyWork?.tempX ?? 0) + "," +
-               FormatByte(frame.enemyWork?.tempY ?? 0) +
+               " prevTmp=" + FormatByte(previousTempDir) + ":" +
+               FormatByte(previousFrame.enemyWork?.tempX ?? 0) + "," +
+               FormatByte(previousFrame.enemyWork?.tempY ?? 0) +
+               " currTmp=" + FormatByte(currentTempDir) + ":" +
+               FormatByte(currentFrame.enemyWork?.tempX ?? 0) + "," +
+               FormatByte(currentFrame.enemyWork?.tempY ?? 0) +
                " preferred=" + FormatByte(preferred) +
                " source=" + source +
                " referenceRejected=" + FormatByte(referenceRejected) +
                " modeledRejected=" + FormatByte(modeledRejected);
     }
 
-    private static string BuildTempDirDifferenceContext(
-        EnemyTraceFrame frame,
-        EnemyTraceActor enemy,
-        int preferred,
-        string source,
-        int referenceTempDir,
-        int modeledTempDir)
-    {
-        return "tick=" + frame.frame +
-               " mameFrame=" + frame.mameFrame +
-               " slot=" + enemy.slot +
-               " tmpXY=" + FormatByte(frame.enemyWork?.tempX ?? 0) + "," +
-               FormatByte(frame.enemyWork?.tempY ?? 0) +
-               " preferred=" + FormatByte(preferred) +
-               " source=" + source +
-               " referenceTempDir=" + FormatByte(referenceTempDir) +
-               " modeledSelectedDir=" + FormatByte(modeledTempDir);
-    }
-
     private static string BuildSummaryText(Counters counters)
     {
         var builder = new StringBuilder();
 
-        builder.Append("Lady Bug decision diagnostics v0.6.87c: ");
+        builder.Append("Lady Bug decision diagnostics v0.6.88 transition model: ");
         builder.Append("frames=").Append(counters.Frames);
-        builder.Append(", enemyWorkFrames=").Append(counters.FramesWithEnemyWork);
-        builder.Append(", attributedFrames=").Append(counters.FramesWithActiveEnemyWorkSlot);
-        builder.Append(", centerFrames=").Append(counters.CenterFrames);
-        builder.Append(", outsideCenterFrames=").Append(counters.OutsideCenterFrames);
-        builder.Append(", missingPreferredSkips=").Append(counters.FramesSkippedMissingPreferred);
+        builder.Append(", transitions=").Append(counters.Transitions);
+        builder.Append(", enemyWorkTransitions=").Append(counters.TransitionsWithEnemyWork);
+        builder.Append(", attributedTransitions=").Append(counters.AttributedTransitions);
+        builder.Append(", centerTransitions=").Append(counters.CenterTransitions);
+        builder.Append(", outsideCenterTransitions=").Append(counters.OutsideCenterTransitions);
+        builder.Append(", missingPreferredSkips=").Append(counters.MissingPreferredSkips);
         builder.Append(", preferredAccepted=").Append(counters.PreferredAccepted);
         builder.Append(", preferredRejectedCurrentKept=").Append(counters.PreferredRejectedCurrentKept);
-        builder.Append(", fallbackEntered=").Append(counters.FallbackEntered);
-        builder.Append(", fallbackNotFound=").Append(counters.FallbackNotFound);
+        builder.Append(", preferredAndPreviousRejectedFallback=").Append(counters.PreferredAndPreviousRejectedFallback);
+        builder.Append(", reverseIgnored=").Append(counters.ReverseIgnored);
+        builder.Append(", noPreferredCandidate=").Append(counters.NoPreferredCandidate);
         builder.Append(", referenceRejectedMaskNonZero=").Append(counters.ReferenceRejectedMaskNonZero);
-        builder.Append(", rejectedMaskMatchesModeled=").Append(counters.ReferenceRejectedMaskMatchesModeled);
-        builder.Append(", rejectedMaskDiffersFromModeled=").Append(counters.ReferenceRejectedMaskDiffersFromModeled);
-        builder.Append(", tempDirMatchesModeled=").Append(counters.ReferenceTempDirMatchesModeled);
-        builder.Append(", tempDirDiffersFromModeled=").Append(counters.ReferenceTempDirDiffersFromModeled);
+        builder.Append(", rejectedMaskMatchesModeled=").Append(counters.RejectedMaskMatchesModeled);
+        builder.Append(", rejectedMaskDiffersFromModeled=").Append(counters.RejectedMaskDiffersFromModeled);
 
         if (!string.IsNullOrEmpty(counters.FirstRejectedMaskDifference))
             builder.Append(", firstRejectedMaskDifference: ").Append(counters.FirstRejectedMaskDifference);
-
-        if (!string.IsNullOrEmpty(counters.FirstTempDirDifference))
-            builder.Append(", firstTempDirDifference: ").Append(counters.FirstTempDirDifference);
 
         builder.Append(", sources: ");
         if (counters.Sources.Count == 0)
@@ -329,8 +339,22 @@ public static class LadyBugEnemyDecisionTraceDiagnostics
             }
         }
 
-        builder.Append(". NOTE: this is a diagnostic-only adapter. It returns identity frames, so comparison mismatches should remain zero. Local-door validation is currently permissive until 0x3C0A tile lookup is reconstructed.");
+        builder.Append(". NOTE: this is diagnostic-only. It does not change movement, comparison frames, or the existing reference-sync bridges. The key source-first check is 4315_PREFERRED_REJECTED_CURRENT_KEPT: preferred is ORed into 0x61C1 even when the current direction is kept.");
         return builder.ToString();
+    }
+
+    private static bool IsDirectionBit(int value)
+    {
+        int v = value & 0x0F;
+        return v == 0x01 || v == 0x02 || v == 0x04 || v == 0x08;
+    }
+
+    private static bool AreOppositeDirections(int a, int b)
+    {
+        return ((a & 0x0F) == LadyBugEnemyDecisionModel.DirLeft && (b & 0x0F) == LadyBugEnemyDecisionModel.DirRight) ||
+               ((a & 0x0F) == LadyBugEnemyDecisionModel.DirRight && (b & 0x0F) == LadyBugEnemyDecisionModel.DirLeft) ||
+               ((a & 0x0F) == LadyBugEnemyDecisionModel.DirUp && (b & 0x0F) == LadyBugEnemyDecisionModel.DirDown) ||
+               ((a & 0x0F) == LadyBugEnemyDecisionModel.DirDown && (b & 0x0F) == LadyBugEnemyDecisionModel.DirUp);
     }
 
     private static string FormatByte(int value)

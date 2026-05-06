@@ -9,8 +9,8 @@ using System.Collections.Generic;
 /// and chase round-robin are temporarily synced from MAME while their real arcade
 /// generators are pending.
 ///
-/// v0.6.87b adds a source-first decision diagnostic summary in parallel. The
-/// diagnostic does not drive movement and should not change the mismatch count.
+/// v0.6.88 keeps the reference-synced comparison path unchanged and appends a
+/// source-first transition diagnostic for the 0x4315 rejectedMask case.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -18,7 +18,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, and decision-model shadow summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, and source-first transition summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
