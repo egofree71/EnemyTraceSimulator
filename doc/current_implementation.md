@@ -1,8 +1,8 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.92  
-**Latest validated commit:** `Model release activation transition from exact-PC cycle`  
+**Current package version:** v0.6.93  
+**Latest validated commit:** `Add source-first 4315 current-kept shadow model`  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -62,7 +62,9 @@ The correct development loop is:
 4. only then expand coverage to new traces;
 5. avoid filtering or hiding mismatches unless the source code or exact-PC cycle boundary explains why that state is not comparable.
 
-v0.6.92 follows this rule: the first activation transition is no longer treated as a normal frame-to-frame continuation from stale `previousFrame.enemyWork`. Instead, the diagnostic uses the exact-PC start state observed for the first active `Enemy_UpdateOne` cycle.
+v0.6.92 followed this rule by replacing the stale `previousFrame.enemyWork` assumption at first activation with the exact-PC start state observed for the first active `Enemy_UpdateOne` cycle.
+
+v0.6.93 keeps that correction and adds a narrow source-first shadow model for the validated `0x42E6 / 0x4315` path where a preferred direction is rejected, `0x61C1 |= preferred`, and the current direction is kept without entering `0x4331` or `0x4241`.
 
 ## 2. Current validation strategy
 
@@ -159,12 +161,14 @@ Implemented by:
 scripts/tools/simulation/LadyBugEnemyDecisionModel.cs
 scripts/tools/simulation/LadyBugStaticMazeRomTable.cs
 scripts/tools/simulation/LadyBugEnemyDecisionTraceDiagnosticAdapter.cs
+scripts/tools/simulation/LadyBugEnemySourceFirst4315ShadowModel.cs
 ```
 
 Used for:
 
 - running reconstructed decision functions over the loaded MAME trace;
 - validating `0x3911`, `0x42E6`, `0x4315`, `0x4331`, and `0x4241` behavior progressively;
+- running the v0.6.93 `0x4315 current kept` source-first shadow check through `LadyBugEnemyDecisionModel.TryPreferredDirection()`;
 - recording where modeled scratch state differs from MAME scratch state;
 - keeping the comparison non-invasive while the decision model is incomplete.
 
@@ -618,6 +622,27 @@ candidate=02 startDir=08 nextDir=08: first release activation cycle
 candidate=08 startDir=01 nextDir=01: normal later decision cycle
 ```
 
+v0.6.93 adds a source-first shadow check for exactly these two cases. It runs `LadyBugEnemyDecisionModel.TryPreferredDirection()` and expects:
+
+```text
+preferred rejected
+0x61C1 |= preferred
+current direction kept
+no 0x4331
+no 0x4241 fallback
+```
+
+Latest result:
+
+```text
+Lady Bug source-first 4315 shadow v0.6.93
+checks=2
+matches=2
+mismatches=0
+releaseChecks=1
+normalCurrentKeptChecks=1
+```
+
 Case B: preferred rejected, current direction also rejected, fallback entered.
 
 Pattern:
@@ -881,6 +906,67 @@ Behavior:
 
 - transfer the high-nibble enemy direction and X/Y coordinates into/out of scratch state.
 
+## 9.4 Source-first 0x4315 current-kept shadow model
+
+Implemented file:
+
+```text
+scripts/tools/simulation/LadyBugEnemySourceFirst4315ShadowModel.cs
+```
+
+Purpose:
+
+```text
+Validate the narrow 0x42E6 / 0x4315 path using the existing source-first
+LadyBugEnemyDecisionModel.TryPreferredDirection() transcription.
+```
+
+Covered source flow:
+
+```text
+preferred candidate is tested
+preferred candidate is rejected
+0x61C1 |= preferred
+current temp direction is tested
+current temp direction remains valid
+return without 0x4331 and without 0x4241 fallback
+```
+
+Current validated cases:
+
+```text
+release first cycle:
+  startTmp=08:58,86
+  preferred=02
+  current kept=08
+  rejectedMask=02
+  final temp=08:58,87
+
+normal decision-center cycle:
+  startTmp=01:58,76
+  preferred=08
+  current kept=01
+  rejectedMask=08
+  final temp=01:57,76
+```
+
+Latest result:
+
+```text
+checks=2
+matches=2
+mismatches=0
+```
+
+Important limitation:
+
+```text
+The local-door reader is permissive for this narrow diagnostic because these exact-PC
+current-kept cycles did not hit 4187_LOCAL_DOOR_REJECT. This does not replace the
+real 0x4130 / 0x3C0A reconstruction.
+```
+
+
 ## 10. Source-first release model
 
 Implemented file:
@@ -995,6 +1081,7 @@ Shadow-mode only:
 - enemy direction simulated in parallel;
 - source-first decision model diagnostics;
 - source-first release diagnostics;
+- source-first `0x4315 current kept` shadow diagnostics;
 - source summaries for each shadow model;
 - first-mismatch context for each diagnostic model when a trace fails.
 
@@ -1007,7 +1094,8 @@ Partially reconstructed:
 - standard JSONL preferred[], `rejectedMask`, fallback helper, and direction shadow diagnostics;
 - source-first decision model scaffolding;
 - release initialization shape around `0x3061`;
-- first activation transition modeled from exact-PC start state.
+- first activation transition modeled from exact-PC start state;
+- source-first `0x4315 current kept` path validated for release and normal decision-center cycles.
 
 The adapter still does not independently decide enemy direction authoritatively, and it does not independently release enemies from the den.
 
@@ -1075,10 +1163,36 @@ exactPcCycle=startTmp=08:58,86 preferred=02 currentKept=08
 source=3061_4315_RELEASE_PREFERRED_REJECTED_CURRENT_KEPT
 ```
 
+Source-first 0x4315 shadow summary:
+
+```text
+Lady Bug source-first 4315 shadow v0.6.93:
+frames=501
+transitions=500
+releaseActivationTransitions=1
+releaseChecks=1
+normalCenterCandidates=30
+normalCurrentKeptChecks=1
+checks=2
+matches=2
+mismatches=0
+```
+
+First 0x4315 shadow match:
+
+```text
+tick=5 mameFrame=10
+start=08:58,86
+preferred=02
+decision=4315_PREFERRED_REJECTED_CURRENT_KEPT
+reference=02:08:58,87
+modeled=02:08:58,87
+```
+
 Interpretation:
 
 ```text
-The earlier release-boundary mismatch has been resolved in the transition diagnostic by using the exact-PC start state for the first active cycle. This is a source-first / exact-PC correction, not a filter.
+The earlier release-boundary mismatch has been resolved in the transition diagnostic by using the exact-PC start state for the first active cycle. v0.6.93 additionally proves that the reconstructed 0x42E6 / 0x4315 source model produces the expected rejectedMask and post-step temp state for both current-kept cases. This is a source-first / exact-PC correction, not a filter.
 ```
 
 ## 13. Current limitations
@@ -1095,7 +1209,7 @@ The standalone model and adapter shadow compare are validated on the current one
 
 Authoritative `rejectedMask` and the `0x61C2` fallback helper are currently synchronized from MAME. This avoids misleading mismatches while the real rejection and fallback generator is still being reconstructed.
 
-The current adapter-level rejectedMask shadow and transition diagnostic both match the validated one-enemy trace.
+The current adapter-level rejectedMask shadow, transition diagnostic, and source-first `0x4315 current kept` shadow all match the validated one-enemy trace.
 
 ### 13.4 enemy direction is still authoritative reference-synced
 
@@ -1103,7 +1217,7 @@ The direction shadow model currently matches the one-enemy trace, but authoritat
 
 ### 13.5 release is modeled diagnostically, not simulated authoritatively
 
-v0.6.92 models the first activation transition in the diagnostic, but the simulator still does not independently trigger the release of enemies from the den.
+v0.6.92 models the first activation transition in the diagnostic, and v0.6.93 validates the associated `0x4315 current kept` decision through the source model. The simulator still does not independently trigger the release of enemies from the den.
 
 ### 13.6 chase state is still reference-synced
 
@@ -1161,7 +1275,7 @@ git rm --cached path/to/generated/file
 Immediate target:
 
 ```text
-Move from diagnostic modeling of the first release transition to a real source-first release simulation path.
+Move from diagnostic modeling of the first release transition and its validated 0x4315 current-kept decision to a real source-first release simulation path.
 ```
 
 Expected source basis:

@@ -6,15 +6,15 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.92**
+Current checkpoint: **v0.6.93**
 
 Latest validated commit:
 
 ```text
-Model release activation transition from exact-PC cycle
+Add source-first 4315 current-kept shadow model
 ```
 
-The main comparison pipeline is still conservative and reference-assisted, but the source-first diagnostics now explain the current one-enemy `rejectedMask` transition window with zero diagnostic mismatches.
+The main comparison pipeline is still conservative and reference-assisted, but the source-first diagnostics now explain the current one-enemy `rejectedMask` transition window with zero diagnostic mismatches. v0.6.93 adds a narrow source-first shadow check for the exact-PC validated `0x4315 preferred rejected, current kept` path.
 
 Latest validated standard trace result:
 
@@ -32,6 +32,13 @@ rejectedMaskDiffersFromModeled=0
 releaseActivationTransitions=1
 releaseActivationModeledFromExactPc=1
 preferredRejectedCurrentKept=2
+
+Lady Bug source-first 4315 shadow v0.6.93:
+checks=2
+matches=2
+mismatches=0
+releaseChecks=1
+normalCurrentKeptChecks=1
 ```
 
 The formerly unresolved first-active-enemy transition is now modeled as:
@@ -51,7 +58,7 @@ current direction 08 remains valid and is kept.
 0x43D4 commits the temp state.
 ```
 
-This is still diagnostic-only. It does **not** yet mean the simulator independently releases enemies from the den.
+v0.6.93 then runs the reconstructed `LadyBugEnemyDecisionModel.TryPreferredDirection()` path against the two exact-PC validated `0x4315 current kept` cases. This is still diagnostic-only. It does **not** yet mean the simulator independently releases enemies from the den or owns `rejectedMask` authoritatively.
 
 ## Implemented workflows
 
@@ -81,7 +88,8 @@ The project currently supports these complementary workflows:
    - adds C# transcription scaffolding for selected Z80 blocks from `LadyBug_enemy_management_extract.txt`;
    - runs transition-oriented decision diagnostics in parallel with the current reference-direction comparison;
    - keeps the comparison non-invasive: the main adapter should still produce zero mismatches;
-   - reports where the source-based model explains or fails to explain MAME scratch state.
+   - reports where the source-based model explains or fails to explain MAME scratch state;
+   - includes a narrow v0.6.93 shadow check for `0x4315 preferred rejected, current kept`.
 
 5. **Source-first enemy release diagnostics**
    - models the release initialization shape around `0x05AE` / `0x3061`;
@@ -276,6 +284,7 @@ scripts/tools/simulation/LadyBugEnemyDecisionModel.cs
 scripts/tools/simulation/LadyBugStaticMazeRomTable.cs
 scripts/tools/simulation/LadyBugEnemyDecisionTraceDiagnosticAdapter.cs
 scripts/tools/simulation/LadyBugEnemyReleaseModel.cs
+scripts/tools/simulation/LadyBugEnemySourceFirst4315ShadowModel.cs
 scripts/tools/simulation/LadyBugPreferredPcLogAnalyzer.cs
 scripts/tools/simulation/LadyBugEnemyWorkPcLogAnalyzer.cs
 tools/mame/lua/ladybug_sequence_trace.lua
@@ -295,7 +304,7 @@ doc/current_implementation.md
 0x4224  one-pixel temp movement
 0x4241  fallback direction scan
 0x42E6  try preferred direction
-0x4315  rejectedMask |= rejected preferred candidate
+0x4315  rejectedMask |= rejected preferred candidate; current direction may still be kept
 0x4331  rejectedMask |= current temp direction before fallback
 0x4347  reverse direction
 0x43BA  apply temp movement step and increment 0x61C2 helper
@@ -309,6 +318,9 @@ Important limitations:
 ```text
 The release handling is still diagnostic only. It models the first activation transition
 in the decision diagnostic, but it does not yet drive slot activation in the simulator.
+
+The v0.6.93 0x4315 shadow model validates the current-kept path only. It does not
+remove the authoritative rejectedMask reference-sync bridge.
 
 0x4130 is not yet fully authoritative because the diagnostic still lacks a faithful
 transcription of the 0x3C0A tile lookup over VRAM.
@@ -337,7 +349,7 @@ tools/mame/states/**/*.sta
 - The official validation target is still one active enemy.
 - Multi-enemy validation is planned but not yet stable.
 - `EnemyWork.preferred[]` is still authoritative reference-synced in the comparison adapter.
-- Authoritative `rejectedMask` is still reference-synced, although the adapter-level shadow and transition diagnostics now match the current one-enemy trace.
+- Authoritative `rejectedMask` is still reference-synced, although the adapter-level shadow, transition diagnostics, and source-first `0x4315 current kept` shadow now match the current one-enemy trace.
 - Authoritative fallback helper / legacy `fallbackMask` is still reference-synced.
 - Authoritative enemy direction is still reference-synced, although direction shadow diagnostics currently match the one-enemy trace.
 - The release / den-exit path is modeled diagnostically for the first activation transition, but enemy release is not yet independently simulated.
