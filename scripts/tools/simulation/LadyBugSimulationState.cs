@@ -42,11 +42,6 @@ public sealed class LadyBugSimulationState
     private int _fallbackHelperShadowMismatches;
     private string _firstFallbackHelperShadowMismatch = string.Empty;
     private readonly Dictionary<string, int> _fallbackHelperShadowSourceCounts = new();
-    private int _enemyDirectionShadowChecks;
-    private int _enemyDirectionShadowMatches;
-    private int _enemyDirectionShadowMismatches;
-    private string _firstEnemyDirectionShadowMismatch = string.Empty;
-    private readonly Dictionary<string, int> _enemyDirectionShadowSourceCounts = new();
 
 
     public static LadyBugSimulationState FromInitialState(LadyBugSimulationInitialState initialState)
@@ -301,24 +296,6 @@ public sealed class LadyBugSimulationState
             referenceFrame,
             referenceFrame.enemyWork);
 
-        int enemyDirectionShadow = DeriveEnemyDirectionCandidate(
-            previousTempDir,
-            directionValue,
-            previousTempX,
-            previousTempY,
-            rejectedMaskShadow,
-            rejectedMaskShadowSource,
-            referenceFrame.enemyWork,
-            out string enemyDirectionShadowSource);
-
-        EnemyWork.EnemyDirectionShadow = enemyDirectionShadow;
-        EnemyWork.EnemyDirectionShadowSource = enemyDirectionShadowSource;
-        UpdateEnemyDirectionShadowDiagnostics(
-            enemyDirectionShadow,
-            enemyDirectionShadowSource,
-            referenceFrame,
-            referenceFrame.enemyWork);
-
         SyncReferenceRejectedMaskState(EnemyWork, referenceFrame.enemyWork);
         SyncReferenceFallbackState(EnemyWork, referenceFrame.enemyWork);
 
@@ -446,71 +423,6 @@ public sealed class LadyBugSimulationState
             count = 0;
 
         _fallbackHelperShadowSourceCounts[source] = count + 1;
-    }
-
-
-    /// <summary>
-    /// Shadow diagnostic for the final enemy direction selected by the decision layer.
-    ///
-    /// This is deliberately not used to move the enemy yet. The authoritative movement
-    /// still uses the reference MAME direction. This shadow path measures how much of
-    /// the final direction decision can already be explained from the current scratch
-    /// model: preferred[], rejectedMask, fallback helper, and the previous direction.
-    ///
-    /// Fallback direction selection is not implemented yet. When the current trace
-    /// enters a fallback path, the shadow model records an explicit
-    /// FALLBACK_REFERENCE_DIRECTION_BRIDGE source instead of pretending the real
-    /// fallback search is already known.
-    /// </summary>
-    private void UpdateEnemyDirectionShadowDiagnostics(
-        int enemyDirectionShadow,
-        string source,
-        EnemyTraceFrame referenceFrame,
-        EnemyTraceEnemyWorkState? referenceEnemyWork)
-    {
-        if (referenceEnemyWork == null)
-            return;
-
-        _enemyDirectionShadowChecks++;
-        AddEnemyDirectionShadowSource(source);
-
-        int referenceDirection = referenceEnemyWork.tempDir & 0x0F;
-        int candidate = enemyDirectionShadow & 0x0F;
-
-        if (candidate == referenceDirection)
-        {
-            _enemyDirectionShadowMatches++;
-            return;
-        }
-
-        _enemyDirectionShadowMismatches++;
-
-        if (!string.IsNullOrEmpty(_firstEnemyDirectionShadowMismatch))
-            return;
-
-        _firstEnemyDirectionShadowMismatch =
-            "tick=" + referenceFrame.frame +
-            " mameFrame=" + referenceFrame.mameFrame +
-            " pc=" + referenceFrame.pc +
-            " r=" + referenceFrame.r +
-            " activeEnemies=" + CountActiveReferenceEnemies(referenceFrame) +
-            " tempDir=" + FormatByte(referenceEnemyWork.tempDir) +
-            " tempX=" + FormatByte(referenceEnemyWork.tempX) +
-            " tempY=" + FormatByte(referenceEnemyWork.tempY) +
-            " source=" + source +
-            " reference=" + FormatByte(referenceDirection) +
-            " shadow=" + FormatByte(candidate) +
-            " rejectedMask=" + FormatByte(referenceEnemyWork.rejectedMask) +
-            " fallbackHelper=" + FormatByte(referenceEnemyWork.fallbackMask) +
-            " preferred=" + FormatPreferredTuple(referenceEnemyWork.preferred);
-    }
-
-    private void AddEnemyDirectionShadowSource(string source)
-    {
-        if (!_enemyDirectionShadowSourceCounts.TryGetValue(source, out int count))
-            count = 0;
-
-        _enemyDirectionShadowSourceCounts[source] = count + 1;
     }
 
     /// <summary>
@@ -850,7 +762,6 @@ public sealed class LadyBugSimulationState
             builder.Append("preferred[] shadow model: no checks were run");
             AppendRejectedMaskShadowDiagnosticSummary(builder);
             AppendFallbackHelperShadowDiagnosticSummary(builder);
-            AppendEnemyDirectionShadowDiagnosticSummary(builder);
             return builder.ToString();
         }
 
@@ -908,7 +819,6 @@ public sealed class LadyBugSimulationState
 
         AppendRejectedMaskShadowDiagnosticSummary(builder);
         AppendFallbackHelperShadowDiagnosticSummary(builder);
-        AppendEnemyDirectionShadowDiagnosticSummary(builder);
 
         return builder.ToString();
     }
@@ -972,41 +882,6 @@ public sealed class LadyBugSimulationState
         builder.Append(", sources: ");
         bool first = true;
         foreach (KeyValuePair<string, int> pair in _fallbackHelperShadowSourceCounts)
-        {
-            if (!first)
-                builder.Append("; ");
-
-            first = false;
-            builder.Append(pair.Key);
-            builder.Append("=");
-            builder.Append(pair.Value);
-        }
-    }
-
-    private void AppendEnemyDirectionShadowDiagnosticSummary(StringBuilder builder)
-    {
-        if (_enemyDirectionShadowChecks == 0)
-        {
-            builder.Append("; enemy direction shadow model: no checks were run");
-            return;
-        }
-
-        builder.Append("; enemy direction shadow model checks=");
-        builder.Append(_enemyDirectionShadowChecks);
-        builder.Append(", matches=");
-        builder.Append(_enemyDirectionShadowMatches);
-        builder.Append(", mismatches=");
-        builder.Append(_enemyDirectionShadowMismatches);
-
-        if (!string.IsNullOrEmpty(_firstEnemyDirectionShadowMismatch))
-        {
-            builder.Append(", first mismatch: ");
-            builder.Append(_firstEnemyDirectionShadowMismatch);
-        }
-
-        builder.Append(", sources: ");
-        bool first = true;
-        foreach (KeyValuePair<string, int> pair in _enemyDirectionShadowSourceCounts)
         {
             if (!first)
                 builder.Append("; ");
@@ -1149,82 +1024,6 @@ public sealed class LadyBugSimulationState
     {
         while (enemyWork.Preferred.Count < count)
             enemyWork.Preferred.Add(0);
-    }
-
-    /// <summary>
-    /// Partial final-direction shadow model.
-    ///
-    /// This is the first bridge between the reconstructed decision scratch fields and
-    /// the actual direction used for movement. It intentionally covers the currently
-    /// proven cases only:
-    ///
-    /// - plain step: keep previous direction;
-    /// - accepted preferred[0] at a decision center: use preferred[0];
-    /// - rejected preferred[0] while current direction remains valid: keep previous direction;
-    /// - fallback entered: keep an explicit reference-direction bridge until the real
-    ///   fallback direction search is implemented.
-    /// </summary>
-    private static int DeriveEnemyDirectionCandidate(
-        int previousTempDir,
-        int currentTempDir,
-        int previousTempX,
-        int previousTempY,
-        int rejectedMaskShadow,
-        string rejectedMaskShadowSource,
-        EnemyTraceEnemyWorkState? referenceEnemyWork,
-        out string source)
-    {
-        if (referenceEnemyWork == null)
-        {
-            source = "NO_REFERENCE_ENEMYWORK";
-            return IsDirectionBit(currentTempDir) ? currentTempDir : 0;
-        }
-
-        if (!IsDirectionBit(previousTempDir))
-        {
-            source = "INITIAL_REFERENCE_DIRECTION_BRIDGE";
-            return IsDirectionBit(currentTempDir) ? currentTempDir : 0;
-        }
-
-        if (!IsAtDecisionCenter(previousTempX, previousTempY))
-        {
-            if (previousTempDir == 0x02 && currentTempDir == 0x08)
-            {
-                source = "DEN_EXIT_FORCED_UP_BRIDGE";
-                return currentTempDir;
-            }
-
-            source = "PLAIN_STEP_KEEP_CURRENT";
-            return previousTempDir;
-        }
-
-        int preferred0 = GetReferencePreferredDirection(referenceEnemyWork, 0);
-        if (IsDirectionBit(preferred0) && preferred0 == currentTempDir && (rejectedMaskShadow & preferred0) == 0)
-        {
-            source = "DECISION_CENTER_USE_PREFERRED0";
-            return preferred0;
-        }
-
-        if (rejectedMaskShadowSource == "DECISION_CENTER_REVERSE_IGNORED" && previousTempDir == currentTempDir)
-        {
-            source = "DECISION_CENTER_KEEP_CURRENT_REVERSE_IGNORED";
-            return previousTempDir;
-        }
-
-        if (rejectedMaskShadowSource == "DECISION_CENTER_REJECT_PREFERRED" && previousTempDir == currentTempDir)
-        {
-            source = "DECISION_CENTER_KEEP_CURRENT_AFTER_REJECT";
-            return previousTempDir;
-        }
-
-        if (rejectedMaskShadowSource == "DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS")
-        {
-            source = "FALLBACK_REFERENCE_DIRECTION_BRIDGE";
-            return IsDirectionBit(currentTempDir) ? currentTempDir : previousTempDir;
-        }
-
-        source = "DECISION_CENTER_REFERENCE_DIRECTION_BRIDGE";
-        return IsDirectionBit(currentTempDir) ? currentTempDir : previousTempDir;
     }
 
     /// <summary>
@@ -1618,9 +1417,7 @@ public sealed class LadyBugSimulationState
             RejectedMaskShadow = enemyWork.RejectedMaskShadow,
             RejectedMaskShadowSource = enemyWork.RejectedMaskShadowSource,
             FallbackHelperShadow = enemyWork.FallbackHelperShadow,
-            FallbackHelperShadowSource = enemyWork.FallbackHelperShadowSource,
-            EnemyDirectionShadow = enemyWork.EnemyDirectionShadow,
-            EnemyDirectionShadowSource = enemyWork.EnemyDirectionShadowSource
+            FallbackHelperShadowSource = enemyWork.FallbackHelperShadowSource
         };
 
         clone.Preferred.AddRange(enemyWork.Preferred);

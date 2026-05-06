@@ -39,19 +39,6 @@ public sealed class SimulationEnemyWorkState
     public string FallbackHelperShadowSource { get; set; } = string.Empty;
 
     /// <summary>
-    /// Diagnostic-only candidate for the final enemy direction chosen by the decision layer.
-    /// The adapter still moves enemies using the reference MAME direction while this field
-    /// validates a direction-decision model in parallel.
-    /// </summary>
-    public int EnemyDirectionShadow { get; set; } = -1;
-
-    /// <summary>
-    /// Describes how EnemyDirectionShadow was classified/generated, for example
-    /// PLAIN_STEP_KEEP_CURRENT or DECISION_CENTER_USE_PREFERRED0.
-    /// </summary>
-    public string EnemyDirectionShadowSource { get; set; } = string.Empty;
-
-    /// <summary>
     /// Diagnostic-only candidate for 0x61C1 / EnemyRejectedDirMask.
     /// The adapter still uses RejectedMask as the comparison value while this shadow
     /// field validates the local rejection heuristic in parallel.
