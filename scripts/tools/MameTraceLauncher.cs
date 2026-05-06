@@ -17,6 +17,7 @@ public static class MameTraceLauncher
     private const string RuntimeConfigFileName = "ladybug_sequence_runtime_config.lua";
     private const string DebugStartupScriptFileName = "ladybug_preferred_pc_debug_startup.cmd";
     private const string PreferredPcTraceScriptFileName = "ladybug_preferred_pc_trace.lua";
+    private const string EnemyWorkPcTraceScriptFileName = "ladybug_enemywork_pc_trace.lua";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -59,7 +60,9 @@ public static class MameTraceLauncher
             throw new FileNotFoundException("Lua trace script not found.", luaScriptPath);
 
         bool preferredPcDiagnostic = IsPreferredPcDiagnosticScript(luaScriptPath);
-        bool enableDebugger = settings.EnableDebugger || preferredPcDiagnostic;
+        bool enemyWorkPcDiagnostic = IsEnemyWorkPcDiagnosticScript(luaScriptPath);
+        bool exactPcDiagnostic = preferredPcDiagnostic || enemyWorkPcDiagnostic;
+        bool enableDebugger = settings.EnableDebugger || exactPcDiagnostic;
 
         string saveState = NormalizeSaveStateName(settings.SaveState, result.Messages);
         string expectedStatePath = Path.Combine(stateDirectory, settings.StateSubdir, saveState + ".sta");
@@ -95,7 +98,7 @@ public static class MameTraceLauncher
         }
 
         string fallbackErrorLogPath = Path.Combine(scriptDirectory, "error.log");
-        if (preferredPcDiagnostic && File.Exists(fallbackErrorLogPath))
+        if (exactPcDiagnostic && File.Exists(fallbackErrorLogPath))
         {
             try
             {
@@ -124,6 +127,20 @@ public static class MameTraceLauncher
             }
         }
 
+        string enemyWorkPcAnalysisPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_enemywork_pc_analysis.txt");
+        if (enemyWorkPcDiagnostic && File.Exists(enemyWorkPcAnalysisPath))
+        {
+            try
+            {
+                File.Delete(enemyWorkPcAnalysisPath);
+            }
+            catch (Exception ex)
+            {
+                result.Messages.Add("WARNING: could not delete previous EnemyWork PC analysis:");
+                result.Messages.Add("  " + ex.Message);
+            }
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = mameExecutable,
@@ -141,11 +158,11 @@ public static class MameTraceLauncher
         {
             startInfo.ArgumentList.Add("-debug");
 
-            if (preferredPcDiagnostic)
+            if (exactPcDiagnostic)
             {
                 // The breakpoint action uses logerror. With -log, MAME writes those
                 // lines to error.log in the working directory. This is the most
-                // reliable output for this exact-PC diagnostic.
+                // reliable output for exact-PC diagnostics.
                 startInfo.ArgumentList.Add("-log");
             }
 
@@ -171,7 +188,7 @@ public static class MameTraceLauncher
         result.Messages.Add("Launching MAME:");
         result.Messages.Add("  " + result.CommandPreview);
 
-        int watchdogMilliseconds = preferredPcDiagnostic
+        int watchdogMilliseconds = exactPcDiagnostic
             ? ComputeDiagnosticWatchdogMilliseconds(settings.FramesAfterTick0)
             : 0;
 
@@ -179,6 +196,12 @@ public static class MameTraceLauncher
         {
             result.Messages.Add($"Preferred PC diagnostic watchdog enabled: MAME will be killed after about {watchdogMilliseconds / 1000.0:0.0} seconds of real time if it does not exit by itself.");
             result.Messages.Add("Tip: use framesAfterTick0=250..500 to stay in the one-active-enemy window.");
+            result.Messages.Add("No -seconds_to_run is used because it can stop MAME before autoboot Lua/debugger setup completes.");
+        }
+        else if (enemyWorkPcDiagnostic)
+        {
+            result.Messages.Add($"EnemyWork PC diagnostic watchdog enabled: MAME will be killed after about {watchdogMilliseconds / 1000.0:0.0} seconds of real time if it does not exit by itself.");
+            result.Messages.Add("Tip: use framesAfterTick0=250..600 for focused rejectedMask/fallbackMask captures.");
             result.Messages.Add("No -seconds_to_run is used because it can stop MAME before autoboot Lua/debugger setup completes.");
         }
 
@@ -212,6 +235,30 @@ public static class MameTraceLauncher
             await TryBuildPreferredPcAnalysisAsync(
                 fallbackErrorLogPath,
                 preferredPcAnalysisPath,
+                result.Messages).ConfigureAwait(false);
+
+            result.Messages.Add("This diagnostic output is not a JSONL frame trace and should not be loaded with Charger trace.");
+        }
+        else if (enemyWorkPcDiagnostic)
+        {
+            result.TracePath = string.Empty;
+            result.InitialSnapshotPath = string.Empty;
+            result.SummaryPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_enemywork_pc_summary.txt");
+
+            string hitLogPath = Path.Combine(outputDirectory, settings.OutputPrefix + "_enemywork_pc_hits.log");
+
+            result.Messages.Add($"MAME exited with code {result.ExitCode}.");
+            result.Messages.Add("Expected EnemyWork exact-PC hit log, if Lua drained debugger.errorlog:");
+            result.Messages.Add("  " + hitLogPath);
+            result.Messages.Add("Expected EnemyWork exact-PC summary, if Lua finish() ran:");
+            result.Messages.Add("  " + result.SummaryPath);
+            result.Messages.Add("Primary MAME error.log, because -log is enabled for this diagnostic:");
+            result.Messages.Add("  " + fallbackErrorLogPath);
+            result.Messages.Add("For this diagnostic, error.log is the most reliable raw output.");
+
+            await TryBuildEnemyWorkPcAnalysisAsync(
+                fallbackErrorLogPath,
+                enemyWorkPcAnalysisPath,
                 result.Messages).ConfigureAwait(false);
 
             result.Messages.Add("This diagnostic output is not a JSONL frame trace and should not be loaded with Charger trace.");
@@ -278,6 +325,42 @@ public static class MameTraceLauncher
         catch (Exception ex)
         {
             messages.Add("WARNING: preferred PC analysis failed:");
+            messages.Add("  " + ex.Message);
+        }
+    }
+
+    private static async Task TryBuildEnemyWorkPcAnalysisAsync(
+        string errorLogPath,
+        string analysisPath,
+        List<string> messages)
+    {
+        try
+        {
+            if (!File.Exists(errorLogPath))
+            {
+                messages.Add("EnemyWork PC analysis skipped: error.log not found.");
+                messages.Add("  " + errorLogPath);
+                return;
+            }
+
+            string errorLogText = await File.ReadAllTextAsync(errorLogPath).ConfigureAwait(false);
+            IReadOnlyList<string> reportLines = LadyBugEnemyWorkPcLogAnalyzer.BuildReport(errorLogText);
+
+            string? directory = Path.GetDirectoryName(analysisPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            await File.WriteAllTextAsync(
+                analysisPath,
+                string.Join(System.Environment.NewLine, reportLines) + System.Environment.NewLine,
+                Encoding.UTF8).ConfigureAwait(false);
+
+            messages.Add("EnemyWork PC analysis generated:");
+            messages.Add("  " + analysisPath);
+        }
+        catch (Exception ex)
+        {
+            messages.Add("WARNING: EnemyWork PC analysis failed:");
             messages.Add("  " + ex.Message);
         }
     }
@@ -356,6 +439,12 @@ public static class MameTraceLauncher
     {
         string fileName = Path.GetFileName(luaScriptPath);
         return string.Equals(fileName, PreferredPcTraceScriptFileName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEnemyWorkPcDiagnosticScript(string luaScriptPath)
+    {
+        string fileName = Path.GetFileName(luaScriptPath);
+        return string.Equals(fileName, EnemyWorkPcTraceScriptFileName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static int ComputeDiagnosticWatchdogMilliseconds(int framesAfterTick0)
