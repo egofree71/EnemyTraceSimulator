@@ -32,6 +32,11 @@ public sealed class LadyBugSimulationState
     private string _firstDenExitCandidate = string.Empty;
     private int _referenceRejectedMaskSyncs;
     private int _referenceFallbackMaskSyncs;
+    private int _rejectedMaskShadowChecks;
+    private int _rejectedMaskShadowMatches;
+    private int _rejectedMaskShadowMismatches;
+    private string _firstRejectedMaskShadowMismatch = string.Empty;
+    private readonly Dictionary<string, int> _rejectedMaskShadowSourceCounts = new();
 
 
     public static LadyBugSimulationState FromInitialState(LadyBugSimulationInitialState initialState)
@@ -255,12 +260,23 @@ public sealed class LadyBugSimulationState
         EnemyWork.TempDir = directionValue;
         EnemyWork.TempX = simulatedEnemy.X;
         EnemyWork.TempY = simulatedEnemy.Y;
-        EnemyWork.RejectedMask = DeriveRejectedMaskCandidate(
+
+        int rejectedMaskShadow = DeriveRejectedMaskCandidate(
             previousTempDir,
             directionValue,
             previousTempX,
             previousTempY,
             previousRejectedMask,
+            referenceFrame.enemyWork,
+            out string rejectedMaskShadowSource);
+
+        EnemyWork.RejectedMask = rejectedMaskShadow;
+        EnemyWork.RejectedMaskShadow = rejectedMaskShadow;
+        EnemyWork.RejectedMaskShadowSource = rejectedMaskShadowSource;
+        UpdateRejectedMaskShadowDiagnostics(
+            rejectedMaskShadow,
+            rejectedMaskShadowSource,
+            referenceFrame,
             referenceFrame.enemyWork);
 
         SyncReferenceRejectedMaskState(EnemyWork, referenceFrame.enemyWork);
@@ -271,6 +287,63 @@ public sealed class LadyBugSimulationState
 
         SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
         UpdatePreferredShadowDiagnostics(EnemyWork, referenceFrame, referenceFrame.enemyWork);
+    }
+
+    /// <summary>
+    /// Shadow diagnostic for 0x61C1 / EnemyRejectedDirMask.
+    ///
+    /// This does not drive the comparison yet. The adapter still syncs the
+    /// authoritative RejectedMask value from MAME immediately after this check.
+    /// The shadow path records whether the local decision-center heuristic can
+    /// explain the end-of-frame rejectedMask seen in the standard JSONL trace.
+    /// </summary>
+    private void UpdateRejectedMaskShadowDiagnostics(
+        int rejectedMaskShadow,
+        string source,
+        EnemyTraceFrame referenceFrame,
+        EnemyTraceEnemyWorkState? referenceEnemyWork)
+    {
+        if (referenceEnemyWork == null)
+            return;
+
+        _rejectedMaskShadowChecks++;
+        AddRejectedMaskShadowSource(source);
+
+        int referenceRejectedMask = referenceEnemyWork.rejectedMask & 0x0F;
+        int candidate = rejectedMaskShadow & 0x0F;
+
+        if (candidate == referenceRejectedMask)
+        {
+            _rejectedMaskShadowMatches++;
+            return;
+        }
+
+        _rejectedMaskShadowMismatches++;
+
+        if (!string.IsNullOrEmpty(_firstRejectedMaskShadowMismatch))
+            return;
+
+        _firstRejectedMaskShadowMismatch =
+            "tick=" + referenceFrame.frame +
+            " mameFrame=" + referenceFrame.mameFrame +
+            " pc=" + referenceFrame.pc +
+            " r=" + referenceFrame.r +
+            " activeEnemies=" + CountActiveReferenceEnemies(referenceFrame) +
+            " tempDir=" + FormatByte(referenceEnemyWork.tempDir) +
+            " tempX=" + FormatByte(referenceEnemyWork.tempX) +
+            " tempY=" + FormatByte(referenceEnemyWork.tempY) +
+            " source=" + source +
+            " reference=" + FormatByte(referenceRejectedMask) +
+            " shadow=" + FormatByte(candidate) +
+            " preferred=" + FormatPreferredTuple(referenceEnemyWork.preferred);
+    }
+
+    private void AddRejectedMaskShadowSource(string source)
+    {
+        if (!_rejectedMaskShadowSourceCounts.TryGetValue(source, out int count))
+            count = 0;
+
+        _rejectedMaskShadowSourceCounts[source] = count + 1;
     }
 
     /// <summary>
@@ -603,10 +676,14 @@ public sealed class LadyBugSimulationState
 
     public string BuildPreferredShadowDiagnosticSummary()
     {
-        if (_preferredShadowChecks == 0)
-            return "preferred[] shadow model: no checks were run";
-
         var builder = new StringBuilder();
+
+        if (_preferredShadowChecks == 0)
+        {
+            builder.Append("preferred[] shadow model: no checks were run");
+            AppendRejectedMaskShadowDiagnosticSummary(builder);
+            return builder.ToString();
+        }
 
         builder.Append("preferred[] shadow model checks=");
         builder.Append(_preferredShadowChecks);
@@ -660,7 +737,44 @@ public sealed class LadyBugSimulationState
             builder.Append(pair.Value);
         }
 
+        AppendRejectedMaskShadowDiagnosticSummary(builder);
+
         return builder.ToString();
+    }
+
+    private void AppendRejectedMaskShadowDiagnosticSummary(StringBuilder builder)
+    {
+        if (_rejectedMaskShadowChecks == 0)
+        {
+            builder.Append("; rejectedMask shadow model: no checks were run");
+            return;
+        }
+
+        builder.Append("; rejectedMask shadow model checks=");
+        builder.Append(_rejectedMaskShadowChecks);
+        builder.Append(", matches=");
+        builder.Append(_rejectedMaskShadowMatches);
+        builder.Append(", mismatches=");
+        builder.Append(_rejectedMaskShadowMismatches);
+
+        if (!string.IsNullOrEmpty(_firstRejectedMaskShadowMismatch))
+        {
+            builder.Append(", first mismatch: ");
+            builder.Append(_firstRejectedMaskShadowMismatch);
+        }
+
+        builder.Append(", sources: ");
+        bool first = true;
+        foreach (KeyValuePair<string, int> pair in _rejectedMaskShadowSourceCounts)
+        {
+            if (!first)
+                builder.Append("; ");
+
+            first = false;
+            builder.Append(pair.Key);
+            builder.Append("=");
+            builder.Append(pair.Value);
+        }
     }
 
     private static bool PreferredTupleEquals(IReadOnlyList<int> a, IReadOnlyList<int> b)
@@ -797,12 +911,12 @@ public sealed class LadyBugSimulationState
     }
 
     /// <summary>
-    /// Partial rejectedMask model.
+    /// Partial rejectedMask shadow model.
     ///
     /// The real arcade code rejects directions while testing preferred candidates
-    /// against maze/door constraints. Until preferred[] is generated locally, this
-    /// method still uses the reference preferred[0] as evidence for the attempted
-    /// candidate.
+    /// against maze/door constraints. Until preferred[] and the local maze checks
+    /// are generated locally, this method still uses reference preferred[0] as the
+    /// candidate that MAME appears to have tried at the decision center.
     /// </summary>
     private static int DeriveRejectedMaskCandidate(
         int previousTempDir,
@@ -810,8 +924,15 @@ public sealed class LadyBugSimulationState
         int previousTempX,
         int previousTempY,
         int previousRejectedMask,
-        EnemyTraceEnemyWorkState? referenceEnemyWork)
+        EnemyTraceEnemyWorkState? referenceEnemyWork,
+        out string source)
     {
+        if (referenceEnemyWork == null)
+        {
+            source = "NO_REFERENCE_ENEMYWORK";
+            return 0;
+        }
+
         // Better 61C1 model:
         //
         // 61C1 is the direction candidate that was tried and rejected at a decision
@@ -821,11 +942,9 @@ public sealed class LadyBugSimulationState
         // use the reference preferred[0] as the candidate that the arcade tried at
         // the center before the movement step. This matches the observed cases:
         //
-        // - tick 21  : previous center (58,96), preferred[0]=01, final=01 -> C1=00
-        // - tick 37  : previous center (48,96), preferred[0]=04, final=04 -> C1=00
-        // - tick 69  : previous center (68,96), preferred[0]=04, final=01 -> C1=04
-        // - tick 101 : previous center (48,96), preferred[0]=01, final=02 -> C1=01
-        // - tick 245 : previous center (58,76), preferred[0]=08, final=01 -> C1=08
+        // - center candidate accepted       -> C1=00
+        // - 4315 only                      -> candidate rejected, current direction kept
+        // - 4315 -> 4331 -> 4241 fallback  -> candidate and temp direction rejected
         if (IsAtDecisionCenter(previousTempX, previousTempY))
         {
             int preferred0 = GetReferencePreferredDirection(referenceEnemyWork, 0);
@@ -833,47 +952,51 @@ public sealed class LadyBugSimulationState
             if (IsDirectionBit(preferred0))
             {
                 if (preferred0 == currentTempDir)
+                {
+                    source = "DECISION_CENTER_PREFERRED_ACCEPTED";
                     return 0;
+                }
 
-                // Newly observed case:
-                // tick 373 : previous=08, preferred[0]=02, final=08, MAME C1=00.
-                //
-                // This looks like an ignored reverse preference while the enemy keeps
-                // moving in the same direction. Do not mark that as rejected.
+                // Observed shape:
+                // previous direction is kept while preferred[0] points to the
+                // opposite direction. The arcade does not record that as a rejected
+                // candidate in the current standard trace window.
                 if (previousTempDir == currentTempDir &&
                     AreOppositeDirections(preferred0, currentTempDir))
                 {
+                    source = "DECISION_CENTER_REVERSE_IGNORED";
                     return 0;
                 }
 
                 int rejectedMask = preferred0;
+                source = "DECISION_CENTER_REJECT_PREFERRED";
 
                 // Some decision-center fallbacks reject more than one candidate.
-                // Observed case:
-                // tick 309 : previousTempDir=02, preferred[0]=01, final=08,
-                //            MAME rejectedMask=03.
-                //
-                // So if preferred[0] fails and the previous movement direction was
-                // also not the final direction, keep it in the rejected mask too.
-                // This still preserves earlier validated cases:
-                // - tick 245: previous=01, preferred[0]=08, final=01 -> C1=08
-                // - tick 277: preferred[0]=08, final=08 -> C1=00
+                // Observed exact-PC pattern:
+                // 4315 rejects preferred[0], then 4331 ORs the current temp dir
+                // before entering 4241 fallback.
                 if (IsDirectionBit(previousTempDir) && previousTempDir != currentTempDir)
+                {
                     rejectedMask |= previousTempDir;
+                    source = "DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS";
+                }
 
                 return rejectedMask & 0x0F;
             }
+
+            source = "DECISION_CENTER_NO_PREFERRED0";
+            return 0;
         }
 
-        // Safety fallback for the first validated release case, but only when no
-        // usable preferred[0] candidate was available at a decision center.
-        //
-        // This must not run after a valid preferred[0] matched the final direction.
-        // Example from the current trace:
-        // tick 277 : previous center (48,66), preferred[0]=08, final=08 -> C1=00.
+        // Safety fallback kept from the earlier narrow model, but made explicit as
+        // a source-classified shadow case so it can be measured and removed later.
         if (previousTempDir == 0x02 && currentTempDir == 0x08)
+        {
+            source = "SAFETY_PREVIOUS_02_TO_08";
             return 0x02;
+        }
 
+        source = "PLAIN_STEP";
         return 0;
     }
 
@@ -1149,7 +1272,9 @@ public sealed class LadyBugSimulationState
             RejectedMask = enemyWork.RejectedMask,
             FallbackMask = enemyWork.FallbackMask,
             ChaseRoundRobin = enemyWork.ChaseRoundRobin,
-            PreferredShadowSource = enemyWork.PreferredShadowSource
+            PreferredShadowSource = enemyWork.PreferredShadowSource,
+            RejectedMaskShadow = enemyWork.RejectedMaskShadow,
+            RejectedMaskShadowSource = enemyWork.RejectedMaskShadowSource
         };
 
         clone.Preferred.AddRange(enemyWork.Preferred);

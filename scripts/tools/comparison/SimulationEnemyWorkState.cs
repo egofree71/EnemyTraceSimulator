@@ -24,6 +24,20 @@ public sealed class SimulationEnemyWorkState
     /// 2EC7_RANDOM_RLOW_A or 477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08.
     /// </summary>
     public string PreferredShadowSource { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Diagnostic-only candidate for 0x61C1 / EnemyRejectedDirMask.
+    /// The adapter still uses RejectedMask as the comparison value while this shadow
+    /// field validates the local rejection heuristic in parallel.
+    /// </summary>
+    public int RejectedMaskShadow { get; set; } = -1;
+
+    /// <summary>
+    /// Describes how RejectedMaskShadow was classified/generated, for example
+    /// PLAIN_STEP or DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS.
+    /// </summary>
+    public string RejectedMaskShadowSource { get; set; } = string.Empty;
+
     public List<int> ChaseTimers { get; } = new();
     public int ChaseRoundRobin { get; set; } = -1;
 }
