@@ -1154,18 +1154,15 @@ public sealed class LadyBugSimulationState
     /// <summary>
     /// Partial final-direction shadow model.
     ///
-    /// This is the bridge between the reconstructed decision scratch fields and
-    /// the actual direction used for movement. It intentionally still runs in
-    /// shadow mode only: MoveActorOnePixel() continues to use the MAME reference
-    /// direction until this model is validated on more traces.
-    ///
-    /// Covered cases:
+    /// This is the first bridge between the reconstructed decision scratch fields and
+    /// the actual direction used for movement. It intentionally covers the currently
+    /// proven cases only:
     ///
     /// - plain step: keep previous direction;
     /// - accepted preferred[0] at a decision center: use preferred[0];
     /// - rejected preferred[0] while current direction remains valid: keep previous direction;
-    /// - fallback entered: scan the fallback direction order 01,02,04,08 while
-    ///   honoring the reconstructed rejectedMask.
+    /// - fallback entered: keep an explicit reference-direction bridge until the real
+    ///   fallback direction search is implemented.
     /// </summary>
     private static int DeriveEnemyDirectionCandidate(
         int previousTempDir,
@@ -1221,59 +1218,13 @@ public sealed class LadyBugSimulationState
         }
 
         if (rejectedMaskShadowSource == "DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS")
-            return DeriveFallbackDirectionCandidate(previousTempDir, rejectedMaskShadow, out source);
+        {
+            source = "FALLBACK_REFERENCE_DIRECTION_BRIDGE";
+            return IsDirectionBit(currentTempDir) ? currentTempDir : previousTempDir;
+        }
 
         source = "DECISION_CENTER_REFERENCE_DIRECTION_BRIDGE";
         return IsDirectionBit(currentTempDir) ? currentTempDir : previousTempDir;
-    }
-
-    /// <summary>
-    /// Partial fallback direction selector used by the enemy-direction shadow model.
-    ///
-    /// Arcade routine 0x4241 scans candidate direction bits in this order:
-    /// 01, 02, 04, 08. It skips bits already present in 0x61C1 and also skips
-    /// directions rejected by the maze/local-door tests.
-    ///
-    /// The current standard JSONL trace does not expose each failed fallback probe.
-    /// This method therefore implements the proven mask scan and keeps one explicit
-    /// current-trace local-block shape: mask 03 while coming from 02 skips 04 and
-    /// selects 08. That shape matches the exact-PC fallback outcome where left+down
-    /// are rejected and right is locally blocked before up is selected.
-    /// </summary>
-    private static int DeriveFallbackDirectionCandidate(
-        int previousTempDir,
-        int rejectedMask,
-        out string source)
-    {
-        int mask = rejectedMask & 0x0F;
-
-        if (mask == 0x03 && previousTempDir == 0x02)
-        {
-            source = "FALLBACK_SCAN_MASK_03_SKIP_04_SELECT_08";
-            return 0x08;
-        }
-
-        foreach (int direction in FallbackScanOrder())
-        {
-            if ((mask & direction) != 0)
-                continue;
-
-            source = "FALLBACK_SCAN_MASK_" + mask.ToString("X2") + "_SELECT_" + direction.ToString("X2");
-            return direction;
-        }
-
-        // Arcade fallback eventually restarts with A=0 if every bit has been masked.
-        // Keep the same spirit here by selecting the first scan direction.
-        source = "FALLBACK_SCAN_MASK_ALL_RESET_SELECT_01";
-        return 0x01;
-    }
-
-    private static IEnumerable<int> FallbackScanOrder()
-    {
-        yield return 0x01;
-        yield return 0x02;
-        yield return 0x04;
-        yield return 0x08;
     }
 
     /// <summary>
