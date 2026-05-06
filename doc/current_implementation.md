@@ -1,13 +1,13 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.78  
+**Current package version:** v0.6.79  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
 ## Purpose of this document
 
-This document records the current implementation and the reverse-engineering findings that are needed to continue development.
+This document records the current implementation and the reverse-engineering findings needed to continue development.
 
 The README gives a concise project overview. This file keeps the technical detail.
 
@@ -33,19 +33,18 @@ The current implementation can:
 - run a comparison pipeline;
 - validate the current one-enemy reference-synced adapter path;
 - analyze exact-PC preferred[] diagnostic logs;
-- validate a first standalone C# model of the preferred-direction generator;
+- validate a standalone C# model of the preferred-direction generator;
 - shadow-replay the exact-PC preferred[] write stream against MAME snapshots;
 - compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison;
-- report richer first-mismatch context if the preferred[] shadow model fails on a future trace;
 - detect enemy activation / den-exit candidate frames;
-- temporarily reference-sync `rejectedMask` and `fallbackMask` while the rejection/fallback generator is not yet implemented;
-- recognize the `2E97` rotate branch from all four player directions in the adapter preferred[] shadow model.
+- temporarily reference-sync `rejectedMask` and `fallbackMask`;
+- render the player sprite with the corrected `0x6198` direction mapping.
 
 The project does not yet run fully independent arcade enemy AI.
 
 ## 2. Current validation strategy
 
-There are now two complementary diagnostic streams.
+There are two complementary diagnostic streams.
 
 ### 2.1 Standard JSONL trace
 
@@ -142,7 +141,37 @@ This is not the normal comparison format. It is an exact-PC reverse-engineering 
 └─ README.md
 ```
 
-## 4. Window behavior
+## 4. Important runtime encodings
+
+### 4.1 Player direction at 0x6198
+
+The player direction byte used by the preferred[] rotate branch is:
+
+```text
+0x6198 = PLAYER_DIR_CURRENT
+```
+
+Runtime checks in MAME confirmed:
+
+```text
+01 = left
+02 = down
+04 = right
+08 = up
+```
+
+Important distinction:
+
+```text
+This mapping is the player RAM direction encoding used by the 2E97 preferred[] rotate branch.
+Do not invert 02 and 08 when interpreting 0x6198.
+```
+
+### 4.2 Enemy direction notes
+
+The current simulator treats raw trace direction values consistently for visual and comparison purposes, but the next low-level enemy decision work should continue to check whether a given byte is a player direction, enemy direction, joystick bitmask, or transformed board vector before assigning semantic labels like "up" or "down".
+
+## 5. Window behavior
 
 The project uses native subwindows for diagnostic windows:
 
@@ -153,7 +182,7 @@ window/subwindows/embed_subwindows=false
 
 This keeps dump, find, and comparison windows movable outside the main simulator viewport.
 
-## 5. Project entry point
+## 6. Project entry point
 
 The Godot project starts from:
 
@@ -161,94 +190,22 @@ The Godot project starts from:
 scenes/tools/EnemyTraceSimulator.tscn
 ```
 
-The scene is launched directly from Godot while developing the tool.
-
-## 6. Scene structure
-
-The UI is authored in the `.tscn` scene rather than fully created from C# at runtime. This keeps the window visible even if the C# assembly has not been rebuilt yet.
-
-Current scene tree:
-
-```text
-EnemyTraceSimulator (Control)
-└─ Root (MarginContainer)
-   └─ MainLayout (VBoxContainer)
-      ├─ Title (Label)
-      ├─ Toolbar / PlaybackControls (HBoxContainer)
-      │  ├─ SettingsButton
-      │  ├─ LaunchMameLuaButton
-      │  ├─ LoadTraceButton
-      │  ├─ RunSimulationButton
-      │  ├─ PauseResumeButton
-      │  ├─ StepButton
-      │  ├─ TickLabel
-      │  ├─ TickSpinBox
-      │  ├─ DumpFrameButton
-      │  ├─ FindFrameButton
-      │  └─ CompareButton
-      ├─ BoardComparison (HBoxContainer)
-      │  ├─ SimulationBoard
-      │  └─ MameTraceBoard
-      ├─ StatusLabel
-      └─ Console
-```
-
-The toolbar is button-driven. Paths come from configuration and generated trace metadata.
-
-## 7. Current scripts
+## 7. Main scripts
 
 ### 7.1 EnemyTraceSimulatorWindow.cs
 
 Current role:
 
 - root UI controller;
-- binds scene nodes by path;
 - opens and saves the MAME settings dialog;
-- connects button handlers;
-- configures compact playback buttons;
-- loads the default logical maze into both board views;
 - launches MAME/Lua through `MameTraceLauncher`;
 - loads JSONL trace files through `MameTraceLoader`;
 - stores loaded frames in memory;
 - manages playback state;
-- advances playback at 60 Hz while running;
-- supports manual single-frame stepping;
-- supports runtime player debug controls;
-- supports inactive enemy slot diagnostic toggling;
-- supports direct tick navigation;
-- opens the current-frame diagnostic dump window;
-- opens the trace navigation helper window;
-- opens the comparison test window;
-- compares frame metadata, actors, gates, `enemyWork`, timers, and ports;
-- routes comparison through `IEnemySimulationAdapter` implementations;
-- supports preferred[] JSONL diagnostics from `LadyBugPreferredGeneratorDiagnostics`;
-- writes messages to the bottom console and Godot output.
-
-Current playback constant:
-
-```csharp
-private const double PlaybackTickSeconds = 1.0 / 60.0;
-```
-
-Current toolbar / playback buttons:
-
-```text
-⚙    edit MAME trace settings
-↺    restart from the first frame
-▶    resume playback
-❚❚   pause playback
-▶|   advance one tick
-Tick jump to the requested trace tick
-```
-
-Current debug shortcuts:
-
-```text
-Ctrl + D       toggle player debug markers
-Ctrl + arrows  adjust player sprite visual offset
-Ctrl + Home    reset player sprite visual offset
-Ctrl + E       toggle inactive enemy slots
-```
+- supports manual stepping and tick navigation;
+- opens diagnostic windows;
+- runs comparison pipelines;
+- routes comparison through `IEnemySimulationAdapter` implementations.
 
 ### 7.2 EnemyTraceBoardView.cs
 
@@ -262,71 +219,20 @@ Current role:
 - draws player and level-1 enemies when spritesheets are present;
 - falls back to debug markers when spritesheets are absent;
 - hides inactive enemy slots by default;
-- supports optional debug markers.
+- supports optional player debug markers.
 
-Current maze assumptions:
-
-```text
-logical maze width  = 11
-logical maze height = 11
-arcade cell size    = 16 pixels
-```
-
-Wall bit meanings:
+`v0.6.79` fixes player sprite orientation using the observed `0x6198` mapping:
 
 ```text
-Up    = 1
-Down  = 2
-Left  = 4
-Right = 8
+01 left  -> right-facing base frame + horizontal flip
+02 down  -> up-facing base frame    + vertical flip
+04 right -> right-facing base frame
+08 up    -> up-facing base frame
 ```
 
-MAME-to-debug-board actor Y conversion:
+This is a visual-only correction. It does not affect trace parsing, comparison, enemy movement stepping, or preferred[] diagnostics.
 
-```text
-godotArcadeY = 0xDD - mameY
-```
-
-Sprite offsets are visual only. They do not alter raw MAME coordinates.
-
-### 7.3 MameTraceSettings.cs
-
-Current role:
-
-- represents `config/mame_trace_settings.json`;
-- stores paths and launch parameters for MAME;
-- stores trace output parameters;
-- supports project-local `res://` paths;
-- contains optional `enableDebugger`, though the launcher auto-enables debugger mode when the preferred PC diagnostic script is selected.
-
-Typical standard JSONL settings:
-
-```json
-{
-  "mameExecutable": "C:/Path/To/MAME/mame.exe",
-  "game": "ladybug",
-  "romPath": "C:/Path/To/MAME/roms",
-  "stateDirectory": "C:/Path/To/MAME/sta",
-  "stateSubdir": "ladybug",
-  "saveState": "test1",
-  "luaScriptPath": "res://tools/mame/lua/ladybug_sequence_trace.lua",
-  "outputDirectory": "res://traces/mame",
-  "outputPrefix": "ladybug_sequence_v8",
-  "framesAfterTick0": 600
-}
-```
-
-Typical exact-PC diagnostic settings:
-
-```json
-{
-  "luaScriptPath": "res://tools/mame/lua/ladybug_preferred_pc_trace.lua",
-  "outputPrefix": "ladybug_sequence_v8_pcdiag",
-  "framesAfterTick0": 500
-}
-```
-
-### 7.4 MameTraceLauncher.cs
+### 7.3 MameTraceLauncher.cs
 
 Current role:
 
@@ -352,15 +258,7 @@ the launcher automatically enables:
 -debugscript tools/mame/lua/ladybug_preferred_pc_debug_startup.cmd
 ```
 
-It also deletes stale `error.log` and stale preferred-PC analysis output before the run, then generates:
-
-```text
-traces/mame/<outputPrefix>_preferred_pc_analysis.txt
-```
-
-from the new `tools/mame/lua/error.log`.
-
-### 7.5 scripts/tools/trace/
+### 7.4 scripts/tools/trace/
 
 Current role:
 
@@ -368,7 +266,7 @@ Current role:
 - owns JSON / JSONL parsing;
 - centralizes MAME-to-Godot actor coordinate conversion.
 
-Current parsed data includes:
+Parsed data includes:
 
 - frame / tick index;
 - schema, phase, MAME frame, PC, and R register;
@@ -383,24 +281,7 @@ Current parsed data includes:
 
 `preferredChangeEvents` are polling diffs. They do not know the exact write PC.
 
-### 7.6 scripts/tools/comparison/
-
-Current role:
-
-- defines comparison-side data models;
-- runs comparisons between MAME trace frames and simulation frames;
-- reports mismatches;
-- supports identity and injected-mismatch test paths;
-- supports the Lady Bug adapter path.
-
-### 7.7 scripts/tools/simulation/
-
-Current role:
-
-- contains the adapter abstraction;
-- contains the Lady Bug simulation skeleton;
-- contains preferred[] diagnostics;
-- contains the first standalone preferred-direction model.
+### 7.5 scripts/tools/simulation/
 
 Important files:
 
@@ -417,19 +298,9 @@ LadyBugPreferredPcLogAnalyzer.cs
 LadyBugMonsterPreferenceSystem.cs
 ```
 
-`LadyBugPreferredGeneratorDiagnostics` analyzes JSONL `preferredChangeEvents`.
+`LadyBugMonsterPreferenceSystem` models the arcade preferred-direction generator for the validated one-enemy diagnostic windows.
 
-`LadyBugPreferredPcLogAnalyzer` analyzes exact-PC `error.log / LBPREF` data and produces a human-readable report.
-
-`LadyBugMonsterPreferenceSystem` models the arcade preferred-direction generator for the validated one-enemy diagnostic window.
-
-`LadyBugEnemySimulationAdapter` now computes a preferred[] shadow model during standard comparison, but still keeps the MAME reference-synced `preferred[]` as the authoritative state.
-
-`LadyBugSimulationState` now keeps richer first-mismatch details for the preferred[] shadow model. These details are only printed when a mismatch occurs.
-
-`LadyBugSimulationState` recognizes the `2E97` rotate branch from all four direction starts, not only from `08`.
-
-`LadyBugSimulationState` also detects enemy activation / den-exit candidate frames and keeps temporary reference-sync bridges for `rejectedMask` and `fallbackMask` scratch fields.
+`LadyBugEnemySimulationAdapter` computes a preferred[] shadow model during standard comparison, but still keeps the MAME reference-synced `preferred[]` as the authoritative state.
 
 ## 8. Current MAME Lua scripts
 
@@ -459,13 +330,11 @@ It installs debugger breakpoints at:
 0x477D : chase/BFS override writing preferred[]
 ```
 
-The breakpoint action writes `LBPREF` lines through MAME `logerror`, which are captured in:
+The breakpoint action writes `LBPREF` lines through MAME `logerror`, captured in:
 
 ```text
 tools/mame/lua/error.log
 ```
-
-This script requires MAME debugger support. The C# launcher handles debugger arguments automatically.
 
 ## 9. Current preferred[] findings
 
@@ -477,22 +346,13 @@ Relevant arcade RAM:
 61D2       = chaseRoundRobin
 ```
 
-Latest exact-PC report:
+Latest exact-PC report used during this checkpoint:
 
 ```text
 LBPREF hits: 2886
 2EC7_RANDOM_WRITE: 1636
 2E97_ROTATE_WRITE: 1048
 477D_BFS_WRITE: 202
-```
-
-Slot counts:
-
-```text
-slot 0 / 0x61C4: 873
-slot 1 / 0x61C5: 671
-slot 2 / 0x61C6: 671
-slot 3 / 0x61C7: 671
 ```
 
 Slot/BFS correlation:
@@ -510,19 +370,6 @@ Conclusion:
 ```text
 slot0 excess matches BFS/chase overrides exactly.
 477D is overriding preferred[0] / 0x61C4.
-```
-
-Base tuple counts:
-
-```text
-2EC7_RANDOM_WRITE: 409 complete 4-write tuples
-2E97_ROTATE_WRITE: 262 complete 4-write tuples
-```
-
-Rotate branch result in the current capture:
-
-```text
-[04,02,01,08]
 ```
 
 Random branch reconstruction from write-PC R:
@@ -543,60 +390,20 @@ after 04: +0
 after 08: +1
 ```
 
-Current BFS/chase override observations:
-
-```text
-BFS target slot: 0 / 0x61C4 only
-BFS write directions: 04, 08, 02, 01
-active chase timer: chase0
-round robin: rr=01
-```
-
 ## 10. MonsterPreferenceSystem status
 
-The first standalone model is implemented in:
+The standalone model is implemented in:
 
 ```text
 scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
 ```
 
-Implemented pieces:
-
-### 10.1 Rotate branch
-
-Validated model:
-
-```text
-GenerateRotateBranch(playerDirectionCurrent)
-```
-
-For the current capture:
-
-```text
-PLAYER_DIR_CURRENT = 08
-prediction         = [04,02,01,08]
-```
-
-Exact-PC validation result:
-
-```text
-2E97 rotate model from PLAYER_DIR_CURRENT=08 matches: 262/262
-```
-
-### 10.2 Random branch
+### 10.1 Random branch
 
 Validated model:
 
 ```text
 GenerateRandomBranchFromUsedRLow(usedRLowStart)
-```
-
-It uses:
-
-```text
-DirectionFromRandomNibble(rLow)
-AdvanceUsedRLowAfterDirection(rLow, generatedDirection)
-ReconstructUsedRLowFromWritePcR(rAtWritePc, finalDirection)
 ```
 
 Exact-PC validation result:
@@ -605,22 +412,29 @@ Exact-PC validation result:
 2EC7 random model matches: 409/409
 ```
 
-### 10.3 BFS override helper
+### 10.2 Rotate branch
 
-Implemented helper:
+The rotate branch reads `PLAYER_DIR_CURRENT` at `0x6198`.
 
-```text
-TryApplyBfsOverride(preferred, iyAddress, direction)
-```
-
-Current exact-PC capture proves that the observed BFS/chase writes target:
+The adapter shadow classifier recognizes all four direction starts:
 
 ```text
-IY = 61C4
-preferred[0]
+2E97_ROTATE_FROM_01 -> [08,04,02,01]   // from left
+2E97_ROTATE_FROM_02 -> [01,08,04,02]   // from down
+2E97_ROTATE_FROM_04 -> [02,01,08,04]   // from right
+2E97_ROTATE_FROM_08 -> [04,02,01,08]   // from up
 ```
 
-### 10.4 Exact-PC shadow replay validation
+It also recognizes observed slot-0 BFS overlays over each rotate base:
+
+```text
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_01
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_02
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_04
+477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08
+```
+
+### 10.3 Exact-PC shadow replay validation
 
 `LadyBugPreferredPcLogAnalyzer` performs a shadow replay of the complete exact-PC `LBPREF` stream.
 
@@ -640,38 +454,60 @@ Meaning:
 - observed `477D` BFS/chase writes can be applied as one-slot overrides;
 - full BFS pathfinding is still not implemented, because BFS direction is currently taken from the observed `477D` hit.
 
-### 10.5 Adapter shadow compare validation
+### 10.4 Adapter shadow compare validation
 
-`LadyBugEnemySimulationAdapter` now computes a preferred[] shadow model while keeping the reference-synced `EnemyWork.preferred[]` as the authoritative comparison value.
+`LadyBugEnemySimulationAdapter` computes a preferred[] shadow model while keeping the reference-synced `EnemyWork.preferred[]` as the authoritative comparison value.
 
-Current standard JSONL result:
-
-```text
-preferred[] shadow model checks=796
-matches=796
-mismatches=0
-```
-
-The overall comparison remains clean:
+Validated rotate-branch traces:
 
 ```text
-Comparison [Lady Bug reference-direction step]: comparedFrames=801, mismatches=0
-Comparison result: no mismatch. Pipeline is valid.
+FROM_01 / left:
+  comparedFrames=501
+  preferred[] shadow model checks=500
+  preferred[] shadow matches=500
+  preferred[] shadow mismatches=0
+  2E97_ROTATE_FROM_01=204
+  477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_01=20
+
+FROM_02 / down:
+  comparedFrames=501
+  preferred[] shadow model checks=486
+  preferred[] shadow matches=486
+  preferred[] shadow mismatches=0
+  2E97_ROTATE_FROM_02=208
+  477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_02=13
+
+FROM_04 / right:
+  comparedFrames=501
+  preferred[] shadow model checks=486
+  preferred[] shadow matches=486
+  preferred[] shadow mismatches=0
+  2E97_ROTATE_FROM_04=204
+  477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_04=17
+
+FROM_08 / up:
+  comparedFrames=501
+  preferred[] shadow model checks=490
+  preferred[] shadow matches=490
+  preferred[] shadow mismatches=0
+  2E97_ROTATE_FROM_08=204
+  477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08=20
 ```
 
-The source summary includes base random, base rotate, and observed BFS overlay cases, for example:
+Current validated standard JSONL traces include:
 
 ```text
-2E97_ROTATE_FROM_08=241
-477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08=95
-2EC7_RANDOM_RLOW_8=100
+normal one-enemy trace:
+  comparedFrames=801
+  preferred[] shadow model checks=796
+  preferred[] shadow mismatches=0
+
+den-exit / one-enemy rotate traces:
+  FROM_01 / left  -> preferred[] shadow mismatches=0
+  FROM_02 / down  -> preferred[] shadow mismatches=0
+  FROM_04 / right -> preferred[] shadow mismatches=0
+  FROM_08 / up    -> preferred[] shadow mismatches=0
 ```
-
-This confirms that the adapter can currently reproduce the observed end-of-frame `preferred[]` values for the one-enemy JSONL trace by combining:
-
-- compatible `2EC7` random tuples;
-- `2E97` rotate tuples;
-- observed slot-0 BFS/chase overlays.
 
 Important limitation:
 
@@ -680,199 +516,37 @@ The adapter still does not independently compute the BFS/chase direction.
 The BFS overlay direction is inferred from the observed reference preferred[] value.
 ```
 
-### 10.6 Adapter first-mismatch diagnostics
+## 11. Den-exit diagnostics and temporary bridges
 
-`v0.6.74` improves the adapter-level preferred[] shadow diagnostics.
+The adapter detects enemy activation / den-exit candidate frames.
 
-When the preferred[] shadow path succeeds, the output remains compact:
-
-```text
-preferred[] shadow model checks=796, matches=796, mismatches=0
-```
-
-If a future trace produces a mismatch, the adapter now records richer first-mismatch context:
-
-```text
-tick=...
-mameFrame=...
-pc=...
-r=...
-activeEnemies=...
-tempDir=...
-tempX=...
-tempY=...
-chaseTimers=[...]
-chaseRoundRobin=...
-source=...
-reference=[..]
-shadow=[..]
-```
-
-The current trace still has no mismatch, so this extra context is not printed in normal successful runs. The diagnostic exists to make the next failing trace easier to analyze.
-
-
-### 10.7 Den-exit candidate diagnostics
-
-`v0.6.75` added a diagnostic-only detector for enemy activation / den-exit-like frames.
-
-This was motivated by a trace saved just before the first enemy leaves the monster den. In that trace, the first active enemy appears at tick 5:
-
-```text
-First active enemy frame: index=5, tick=5, active=1
-```
-
-The adapter now reports:
+A den-exit candidate summary includes data such as:
 
 ```text
 enemy activations=1
 den-exit candidates=1
-first den-exit candidate: tick=5 mameFrame=10 pc=459E r=40 slot=0 raw=82 enemyXY=(58,87) enemyDir=08 tempDir=08 tempX=58 tempY=87 rejectedMask=04 preferred=[04,04,04,04] activeEnemies=1
+first den-exit candidate: tick=...
 ```
 
-Current interpretation:
-
-- this is a special monster release / den-exit sequence;
-- the enemy is forced upward;
-- the enemy position and direction match MAME;
-- `preferred[]` remains fully validated;
-- `rejectedMask` and `fallbackMask` are scratch fields from logic that is not yet independently modeled.
-
-### 10.8 Temporary rejectedMask / fallbackMask bridges
-
-`v0.6.76` first added a den-exit-specific bridge for the first transient `rejectedMask`, and synchronized `fallbackMask` from MAME.
-
-That reduced the den-exit trace from hundreds of mismatches to only a few remaining `rejectedMask` mismatches.
-
-`v0.6.77` then made the bridge explicit and simpler:
+`rejectedMask` and `fallbackMask` are currently reference-synced scratch fields:
 
 ```text
 rejectedMask is reference-synced from MAME.
 fallbackMask is reference-synced from MAME.
 ```
 
-This matches the current adapter status: these fields are diagnostic scratch state, and their generator has not yet been reconstructed.
+This avoids misleading mismatches in den-exit / special movement windows while the real rejection and fallback generator is still unknown.
 
-Current den-exit validation result:
+## 12. Current comparison behavior
 
-```text
-Comparison [Lady Bug reference-direction step]: comparedFrames=501, mismatches=0
-preferred[] shadow model checks=496, matches=496, mismatches=0
-enemy activations=1
-den-exit candidates=1
-reference rejectedMask syncs=6
-reference fallbackMask syncs=1
-Comparison result: no mismatch. Pipeline is valid.
-```
-
-This gives two useful validated standard JSONL traces:
-
-```text
-normal one-enemy trace:
-  comparedFrames=801
-  preferred[] shadow model checks=796
-  preferred[] shadow mismatches=0
-
-den-exit one-enemy trace:
-  comparedFrames=501
-  preferred[] shadow model checks=496
-  preferred[] shadow mismatches=0
-```
-
-Important limitation:
-
-```text
-rejectedMask and fallbackMask are still reference-synced scratch fields.
-The real rejection/fallback generator is not implemented yet.
-```
-
-
-### 10.9 Rotate branch from all player directions
-
-`v0.6.78` generalizes the adapter preferred[] shadow classifier for the `2E97` rotate branch.
-
-Previously, the adapter recognized only:
-
-```text
-2E97_ROTATE_FROM_08 -> [04,02,01,08]
-```
-
-A new den-exit trace starts with the player direction `04`:
-
-```text
-Player frame 0: dir=04
-```
-
-The shadow classifier initially produced:
-
-```text
-preferred[] shadow model checks=486
-matches=265
-mismatches=221
-source=unclassified
-first mismatch reference=[02,01,08,04]
-```
-
-That tuple is exactly the `2E97` rotate branch from player direction `04`.
-
-The classifier now recognizes all four direction starts:
-
-```text
-2E97_ROTATE_FROM_01 -> [08,04,02,01]
-2E97_ROTATE_FROM_02 -> [01,08,04,02]
-2E97_ROTATE_FROM_04 -> [02,01,08,04]
-2E97_ROTATE_FROM_08 -> [04,02,01,08]
-```
-
-It also recognizes observed slot-0 BFS overlays over each rotate base:
-
-```text
-477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_01
-477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_02
-477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_04
-477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_08
-```
-
-Current validation result for the player-dir-04 den-exit trace:
-
-```text
-Comparison [Lady Bug reference-direction step]: comparedFrames=501, mismatches=0
-preferred[] shadow model checks=486, matches=486, mismatches=0
-enemy activations=1
-den-exit candidates=1
-2E97_ROTATE_FROM_04=204
-477D_OBSERVED_SLOT0_OVER_2E97_ROTATE_FROM_04=17
-Comparison result: no mismatch. Pipeline is valid.
-```
-
-Current validated standard JSONL traces:
-
-```text
-normal one-enemy trace:
-  comparedFrames=801
-  preferred[] shadow model checks=796
-  preferred[] shadow mismatches=0
-
-den-exit one-enemy trace, player direction 08:
-  comparedFrames=501
-  preferred[] shadow model checks=496
-  preferred[] shadow mismatches=0
-
-den-exit one-enemy trace, player direction 04:
-  comparedFrames=501
-  preferred[] shadow model checks=486
-  preferred[] shadow mismatches=0
-```
-
-## 11. Current comparison behavior
-
-The Lady Bug adapter currently validates a one-enemy path with reference synchronization.
+The Lady Bug adapter currently validates one-enemy paths with reference synchronization.
 
 Still reference-synced:
 
 - enemy movement direction;
 - authoritative `EnemyWork.preferred[]`;
-- `rejectedMask` scratch field;
-- `fallbackMask` scratch field;
+- `rejectedMask`;
+- `fallbackMask`;
 - `chaseTimers[]`;
 - `chaseRoundRobin`.
 
@@ -891,37 +565,37 @@ Partially reconstructed:
 
 The adapter still does not independently decide enemy direction.
 
-## 12. Current limitations
+## 13. Current limitations
 
-### 12.1 Multi-enemy traces are not official yet
+### 13.1 Multi-enemy traces are not official yet
 
 The current validation target is one active enemy. Multi-enemy traces are deferred until the shared `EnemyWork` scratch state can be attributed to enemy slots more explicitly.
 
-### 12.2 preferred[] is still reference-synced in the adapter
+### 13.2 preferred[] is still reference-synced in the adapter
 
 The standalone model and adapter shadow compare are validated on the current one-enemy traces, but the simulation adapter has not yet replaced the MAME reference-sync for authoritative `preferred[]`.
 
-### 12.3 rejectedMask and fallbackMask are still reference-synced
+### 13.3 rejectedMask and fallbackMask are still reference-synced
 
 `rejectedMask` and `fallbackMask` are currently synchronized from MAME. This avoids misleading mismatches in den-exit / special movement windows while the real rejection and fallback generator is still unknown.
 
-### 12.4 chase state is still reference-synced
+### 13.4 chase state is still reference-synced
 
 `chaseTimers[]` and `chaseRoundRobin` remain synchronized from MAME. The exact-PC diagnostic currently proves how BFS writes into preferred[0], but not the full independent chase activation logic.
 
-### 12.5 BFS pathfinding is not yet implemented
+### 13.5 BFS pathfinding is not yet implemented
 
 The exact-PC shadow replay and adapter shadow compare apply or infer BFS/chase overlays from observed reference data. They do not yet compute the BFS direction independently.
 
-### 12.6 Actor coordinate rendering is still diagnostic
+### 13.6 Actor rendering is diagnostic
 
-The MAME Y mirror is good enough for the current viewer, but rendering offsets are not gameplay coordinates.
+The MAME Y mirror is good enough for the current viewer, but rendering offsets are not gameplay coordinates. Player sprite orientation now follows the observed `0x6198` encoding, but sprite rendering is still diagnostic and separate from gameplay simulation.
 
-### 12.7 Generated logs are local artifacts
+### 13.7 Generated logs are local artifacts
 
 Generated logs and reports should not normally be committed.
 
-## 13. Git ignore policy
+## 14. Git ignore policy
 
 Keep source, scripts, configuration templates, and documentation.
 
@@ -945,15 +619,15 @@ If a generated file was committed accidentally, remove it from Git tracking with
 git rm --cached path/to/generated/file
 ```
 
-## 14. Planned next steps
+## 15. Planned next steps
 
 ### v0.6 next: more traces, then isolate rejection/fallback
 
-The adapter preferred[] shadow model is now validated on a normal one-enemy trace and two den-exit one-enemy traces, including rotate-branch starts from player directions `08` and `04`. The next target is to collect more traces, then start isolating the real rejection/fallback generator.
+The adapter preferred[] shadow model is validated on a normal one-enemy trace and den-exit / one-enemy rotate traces covering player directions `01`, `02`, `04`, and `08`.
 
 Suggested order:
 
-1. generate additional one-enemy standard JSONL traces with other player directions and timings;
+1. generate additional one-enemy standard JSONL traces with different timings;
 2. run `Compare > Run Lady Bug reference-direction step`;
 3. inspect the preferred[] shadow summary;
 4. if a mismatch appears, use the first-mismatch diagnostic context to decide whether the cause is random branch, rotate branch, or observed BFS overlay;

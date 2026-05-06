@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.78**
+Current checkpoint: **v0.6.79**
 
 The project currently supports two complementary workflows:
 
@@ -14,7 +14,8 @@ The project currently supports two complementary workflows:
    - exports frame-by-frame state from MAME;
    - loads the trace in Godot;
    - visually replays MAME state;
-   - compares MAME frames with the C# simulation adapter.
+   - compares MAME frames with the C# simulation adapter;
+   - runs the adapter-level `preferred[]` shadow comparison.
 
 2. **Exact-PC preferred[] diagnostic workflow**
    - uses MAME debugger breakpoints;
@@ -36,6 +37,7 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - standard JSONL trace export and loading;
 - rendering of maze, gates, player, and enemy slots;
 - optional sprite rendering with fallback debug markers;
+- corrected player sprite direction display using the observed `0x6198` mapping;
 - current-frame dump window;
 - trace navigation helper window;
 - comparison window;
@@ -45,42 +47,54 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - JSONL diagnostics for `EnemyWork.preferred[]`;
 - exact-PC diagnostics for `EnemyWork.preferred[]`;
 - automatic analysis of MAME `error.log` preferred[] events;
-- first standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs;
+- standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs;
 - preferred[] shadow replay diagnostic validating the modeled write sequence against MAME snapshots;
 - preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
-- richer first-mismatch diagnostics for future preferred[] shadow failures;
+- preferred[] rotate-branch shadow recognition generalized and validated for all four player directions;
 - den-exit candidate diagnostics for enemy activation traces;
-- temporary reference-sync bridge for `rejectedMask` and `fallbackMask` scratch fields;
-- preferred[] rotate-branch shadow recognition generalized to all four player directions.
+- temporary reference-sync bridges for `rejectedMask` and `fallbackMask` scratch fields.
 
 ## Current validation checkpoint
 
-The current validated path is still intentionally conservative.
+The current validated path is intentionally conservative.
 
-The C# adapter can compare against a one-active-enemy MAME trace, but some systems are still synchronized from the MAME reference while they are being reverse-engineered:
+The C# adapter can compare against one-active-enemy MAME traces, but some systems are still synchronized from the MAME reference while they are being reverse-engineered:
 
 - enemy movement direction;
-- `EnemyWork.preferred[]`;
+- authoritative `EnemyWork.preferred[]`;
+- `rejectedMask`;
+- `fallbackMask`;
 - chase timers;
 - chase round-robin state.
 
-The current reverse-engineering focus is:
+The current reverse-engineering focus remains:
 
 ```text
 EnemyWork.preferred[] = 0x61C4..0x61C7
 ```
 
-The exact-PC diagnostic has confirmed that `preferred[]` is produced by a base generator and then may be overridden by chase/BFS logic.
+The exact-PC diagnostic confirmed that `preferred[]` is produced by a base generator and then may be overridden by chase/BFS logic.
 
-The standalone C# model can replay the full exact-PC `preferred[]` stream for the current one-enemy diagnostic capture, including observed BFS overrides, while matching the MAME pre-write snapshots.
+The standard JSONL adapter now computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including den-exit traces and rotate-branch cases for all four player directions.
 
-The standard JSONL adapter now also computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including den-exit traces where the first enemy leaves the monster den and a rotate-branch case from player direction `04`.
+## Player direction mapping
 
-The detailed findings are documented in:
+The player direction byte used by the preferred[] rotate branch is stored at:
 
 ```text
-doc/current_implementation.md
+0x6198 = PLAYER_DIR_CURRENT
 ```
+
+Runtime checks in MAME confirmed:
+
+```text
+01 = left
+02 = down
+04 = right
+08 = up
+```
+
+This mapping is also used by the debug-board player sprite rendering.
 
 ## Running the standard JSONL workflow
 
@@ -119,7 +133,11 @@ Typical standard settings:
 Lancer MAME/Lua
 ```
 
-6. Load the generated trace and compare.
+6. Load the generated trace and compare:
+
+```text
+Compare > Run Lady Bug reference-direction step
+```
 
 ## Running the exact-PC preferred[] diagnostic
 
@@ -174,6 +192,7 @@ Important files:
 ```text
 scenes/tools/EnemyTraceSimulator.tscn
 scripts/tools/EnemyTraceSimulatorWindow.cs
+scripts/tools/EnemyTraceBoardView.cs
 scripts/tools/MameTraceLauncher.cs
 scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
 scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
@@ -207,14 +226,14 @@ tools/mame/states/**/*.sta
 - `EnemyWork.preferred[]` is still reference-synced in the comparison adapter.
 - `rejectedMask` and `fallbackMask` are still reference-synced scratch fields.
 - Chase timers and round-robin state are still reference-synced.
-- BFS direction is still observed from `477D` in the shadow replay and adapter shadow compare; full BFS pathfinding is not yet implemented.
+- BFS direction is still observed / inferred from MAME in the shadow paths; full BFS pathfinding is not yet implemented.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
 
 ## Roadmap
 
 Near-term:
 
-1. test the adapter preferred[] shadow model on more one-enemy traces, especially different player directions and den-exit timings;
+1. test the adapter preferred[] shadow model on more one-enemy traces and den-exit timings;
 2. start isolating the real `rejectedMask` / fallback generator;
 3. start replacing the reference-synced `preferred[]` only after the shadow path is robust on more traces;
 4. implement chase timer and round-robin behavior;
