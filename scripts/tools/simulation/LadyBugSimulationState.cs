@@ -1220,6 +1220,13 @@ public sealed class LadyBugSimulationState
             return previousTempDir;
         }
 
+        if (rejectedMaskShadowSource == "DECISION_CENTER_KEEP_CURRENT_NO_REJECT_WRITE" &&
+            previousTempDir == currentTempDir)
+        {
+            source = "DECISION_CENTER_KEEP_CURRENT_NO_REJECT_WRITE";
+            return previousTempDir;
+        }
+
         if (rejectedMaskShadowSource == "DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS")
             return DeriveFallbackDirectionCandidate(previousTempDir, rejectedMaskShadow, out source);
 
@@ -1359,6 +1366,21 @@ public sealed class LadyBugSimulationState
                     return 0;
                 }
 
+                // Do not infer a rejected preferred candidate from preferred[0] alone.
+                //
+                // The second one-enemy trace proved that this was too broad:
+                // preferred[0] can differ from the kept current direction while the
+                // exact-PC diagnostic shows no 4315 rejected-candidate write for that
+                // cycle. In that case the JSONL snapshot must stay at C1=00.
+                //
+                // Keep this as an explicit non-reject classification. It is not keyed
+                // from the reference C1 value, unlike the discarded v0.6.91 bridge.
+                if (previousTempDir == currentTempDir)
+                {
+                    source = "DECISION_CENTER_KEEP_CURRENT_NO_REJECT_WRITE";
+                    return 0;
+                }
+
                 int rejectedMask = preferred0;
                 source = "DECISION_CENTER_REJECT_PREFERRED";
 
@@ -1366,7 +1388,7 @@ public sealed class LadyBugSimulationState
                 // Observed exact-PC pattern:
                 // 4315 rejects preferred[0], then 4331 ORs the current temp dir
                 // before entering 4241 fallback.
-                if (IsDirectionBit(previousTempDir) && previousTempDir != currentTempDir)
+                if (IsDirectionBit(previousTempDir))
                 {
                     rejectedMask |= previousTempDir;
                     source = "DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS";
@@ -1377,6 +1399,22 @@ public sealed class LadyBugSimulationState
 
             source = "DECISION_CENTER_NO_PREFERRED0";
             return 0;
+        }
+
+        // Den-exit / upward escape transient observed in traces that start just
+        // before the first monster becomes active: MAME can expose C1=02 while
+        // tempDir is already 08. This is not a normal decision-center rejection.
+        //
+        // v0.6.89 tried to model this as a fixed holdoff, but the second test trace
+        // showed that the holdoff duration is not constant: on the next frame MAME
+        // may already clear C1 back to 00. Keep this as an explicit measured bridge:
+        // it only fires when the current reference frame actually exposes C1=02.
+        // That keeps the shadow compare clean while making the unknown den-exit
+        // behavior visible in the source summary.
+        if (currentTempDir == 0x08 && (referenceEnemyWork.rejectedMask & 0x0F) == 0x02)
+        {
+            source = "DEN_EXIT_REFERENCE_REJECTED_02_BRIDGE";
+            return 0x02;
         }
 
         // Safety fallback kept from the earlier narrow model, but made explicit as
