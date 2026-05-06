@@ -2,20 +2,26 @@
 
 Enemy Trace Simulator is a standalone Godot/.NET diagnostic tool used to validate the enemy movement logic of the arcade game **Lady Bug**.
 
-The repository is separate from the main Lady Bug remake project. Its purpose is to compare a MAME reference trace with a C# / Godot simulation so that the arcade enemy behavior can be reimplemented progressively and safely.
+The repository is separate from the main Lady Bug remake project. Its purpose is to compare a MAME reference trace with a C# / Godot simulation so that the arcade enemy behavior can be reimplemented progressively, safely, and without fitting rules to individual logs.
 
 ## Current status
 
-Current checkpoint: **v0.6.85**
+Current checkpoint: **v0.6.87c**
 
-The project currently supports three complementary workflows:
+Latest validated local commit:
+
+```text
+Add source-first enemy decision diagnostics
+```
+
+The project currently supports four complementary workflows:
 
 1. **Standard JSONL trace workflow**
    - exports frame-by-frame state from MAME;
    - loads the trace in Godot;
    - visually replays MAME state;
-   - compares MAME frames with the C# simulation adapter;
-   - runs adapter-level shadow comparisons for `preferred[]`, `rejectedMask`, and fallback helper state.
+   - compares MAME frames with a C# simulation adapter;
+   - runs adapter-level shadow comparisons for `preferred[]`, `rejectedMask`, fallback helper / `0x61C2`, and enemy direction.
 
 2. **Exact-PC preferred[] diagnostic workflow**
    - uses MAME debugger breakpoints;
@@ -29,7 +35,13 @@ The project currently supports three complementary workflows:
    - writes raw `LBEW` events to `tools/mame/lua/error.log`;
    - automatically generates a cycle-level `Enemy_UpdateOne` decision report in `traces/mame`.
 
-The standard JSONL trace remains the main comparison pipeline. The exact-PC workflows are reverse-engineering aids used for precise CPU-level diagnostics.
+4. **Source-first enemy decision diagnostics**
+   - adds a C# transcription scaffold for selected Z80 blocks from `LadyBug_enemy_management_extract.txt`;
+   - runs decision-model diagnostics in parallel with the current reference-direction comparison;
+   - keeps the comparison non-invasive: the main adapter should still produce zero mismatches;
+   - reports where the source-based model explains or fails to explain MAME scratch state.
+
+The standard JSONL trace remains the main comparison pipeline. The exact-PC workflows and source-first diagnostics are reverse-engineering aids used for precise CPU-level validation.
 
 ## Implemented
 
@@ -60,18 +72,22 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - rejectedMask shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - fallback helper shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
+- enemy direction shadow diagnostics integrated into the Lady Bug adapter;
 - preferred[] rotate-branch shadow recognition generalized and validated for all four player directions;
 - den-exit candidate diagnostics for enemy activation traces;
 - Enemy_UpdateOne cycle classification for rejection/fallback decisions;
-- rejectedMask shadow diagnostics validated on a one-enemy den-exit trace;
-- fallback helper shadow diagnostics validated on a one-enemy den-exit trace;
-- temporary reference-sync bridges for authoritative `rejectedMask` and `fallbackMask` / `0x61C2` helper fields.
+- rejectedMask shadow diagnostics validated on a one-enemy den-exit trace, with one known unresolved mismatch on the current `test1` trace;
+- fallback helper shadow diagnostics validated on the current one-enemy trace;
+- enemy direction shadow diagnostics validated on the current one-enemy trace;
+- temporary reference-sync bridges for authoritative `rejectedMask`, fallback helper / `0x61C2`, preferred[], chase timers, chase round-robin, and enemy direction;
+- source-first decision model scaffold for the enemy Z80 decision path;
+- source-first diagnostic adapter / summary for the decision model.
 
 ## Current validation checkpoint
 
 The current validated path is intentionally conservative.
 
-The C# adapter can compare against one-active-enemy MAME traces, but some systems are still synchronized from the MAME reference while they are being reverse-engineered:
+The C# adapter can compare against one-active-enemy MAME traces, but several systems are still synchronized from the MAME reference while they are being reverse-engineered:
 
 - enemy movement direction;
 - authoritative `EnemyWork.preferred[]`;
@@ -104,34 +120,41 @@ Current EnemyWork findings:
 0x61C2 = fallback step counter/helper, not a normal direction mask
 ```
 
-The latest standard JSONL comparison validates all three shadow models on the same one-enemy den-exit trace:
+Latest local `test1` JSONL comparison:
 
 ```text
 comparedFrames=501
 mismatches=0
 
 preferred[] shadow model checks=496, matches=496, mismatches=0
-rejectedMask shadow model checks=496, matches=496, mismatches=0
 fallback helper shadow model checks=496, matches=496, mismatches=0
+enemy direction shadow model checks=496, matches=496, mismatches=0
+
+rejectedMask shadow model checks=496, matches=495, mismatches=1
 ```
 
-The fallback helper model is intentionally narrow at this checkpoint. It models the currently validated one-step-per-enemy-update behavior:
+Known unresolved mismatch:
 
 ```text
-fallback helper shadow sources:
-ONE_STEP_PER_ENEMY_UPDATE=496
+tick=245
+mameFrame=250
+tempDir=01
+tempX=57
+tempY=76
+preferred=[08,08,08,01]
+reference rejectedMask=08
+modeled rejectedMask=00
 ```
 
-The exact-PC EnemyWork report still provides the deeper decision-cycle context:
+Interpretation:
 
 ```text
-4315 without 4331/fallback:
-  preferred candidate rejected, current temp direction kept
-
-4315 -> 4331 -> 4241:
-  preferred candidate rejected, current temp direction also rejected,
-  fallback finder selects another direction
+The final direction is already explained correctly, but rejectedMask still misses
+the source-first case where preferred 08 is rejected at 0x4315 and the current
+direction 01 is kept.
 ```
+
+This is the next focused correction target.
 
 ## Player direction mapping
 
@@ -151,6 +174,19 @@ Runtime checks in MAME confirmed:
 ```
 
 This mapping is also used by the debug-board player sprite rendering.
+
+## Enemy direction mapping
+
+Enemy movement direction encoding from `LadyBug_enemy_management_extract.txt`:
+
+```text
+01 = left
+02 = up
+04 = right
+08 = down
+```
+
+This differs from the player RAM direction mapping above. Keep the distinction explicit.
 
 ## Running the standard JSONL workflow
 
@@ -178,8 +214,9 @@ Typical standard settings:
 ```json
 {
   "luaScriptPath": "res://tools/mame/lua/ladybug_sequence_trace.lua",
-  "outputPrefix": "ladybug_sequence_v8",
-  "framesAfterTick0": 600
+  "outputPrefix": "ladybug_sequence_v8_test1",
+  "framesAfterTick0": 500,
+  "includeLogicalMazeEachFrame": true
 }
 ```
 
@@ -194,6 +231,14 @@ Lancer MAME/Lua
 ```text
 Compare > Run Lady Bug reference-direction step
 ```
+
+Expected current result on the validated one-enemy trace:
+
+```text
+mismatches=0
+```
+
+Then inspect the adapter summary for shadow-model diagnostics.
 
 ## Running the exact-PC preferred[] diagnostic
 
@@ -261,6 +306,9 @@ Important: this is not a JSONL trace. Do not load it with the standard trace loa
 ├─ config/
 ├─ data/
 ├─ doc/
+│  ├─ current_implementation.md
+│  ├─ patches/
+│  └─ diagnostics/
 ├─ scenes/
 ├─ scripts/
 │  └─ tools/
@@ -281,13 +329,48 @@ scripts/tools/EnemyTraceSimulatorWindow.cs
 scripts/tools/EnemyTraceBoardView.cs
 scripts/tools/MameTraceLauncher.cs
 scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
+scripts/tools/simulation/LadyBugSimulationState.cs
 scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
+scripts/tools/simulation/LadyBugEnemyDecisionModel.cs
+scripts/tools/simulation/LadyBugStaticMazeRomTable.cs
+scripts/tools/simulation/LadyBugEnemyDecisionTraceDiagnosticAdapter.cs
 scripts/tools/simulation/LadyBugPreferredPcLogAnalyzer.cs
 scripts/tools/simulation/LadyBugEnemyWorkPcLogAnalyzer.cs
 tools/mame/lua/ladybug_sequence_trace.lua
 tools/mame/lua/ladybug_preferred_pc_trace.lua
 tools/mame/lua/ladybug_enemywork_pc_trace.lua
 doc/current_implementation.md
+```
+
+## Source-first decision model files
+
+```text
+scripts/tools/simulation/LadyBugEnemyDecisionModel.cs
+scripts/tools/simulation/LadyBugStaticMazeRomTable.cs
+scripts/tools/simulation/LadyBugEnemyDecisionTraceDiagnosticAdapter.cs
+```
+
+Current source-first coverage:
+
+```text
+0x427E  decision-center pixel predicate
+0x3911  logical maze validation
+0x4130  local / door validation scaffold
+0x4189  forced reversal probe scaffold
+0x4224  one-pixel temp movement
+0x4241  fallback direction scan
+0x42E6  try preferred direction
+0x4347  reverse direction
+0x43BA  apply temp movement step and increment 0x61C2 helper
+0x43D4  commit temp state
+0x43F0  load current state to temp
+```
+
+Important limitation:
+
+```text
+0x4130 is not yet fully authoritative because the diagnostic still lacks a
+faithful transcription of the 0x3C0A tile lookup over VRAM.
 ```
 
 ## Generated files
@@ -313,36 +396,43 @@ tools/mame/states/**/*.sta
 - The official validation target is still one active enemy.
 - Multi-enemy validation is planned but not yet stable.
 - `EnemyWork.preferred[]` is still authoritative reference-synced in the comparison adapter.
-- authoritative `rejectedMask` is still reference-synced, even though it now has a passing shadow model on the latest one-enemy trace.
-- authoritative fallback helper / legacy `fallbackMask` is still reference-synced, even though it now has a passing narrow shadow model on the latest one-enemy trace.
+- authoritative `rejectedMask` is still reference-synced, even though it has a mostly passing shadow model.
+- authoritative fallback helper / legacy `fallbackMask` is still reference-synced.
+- authoritative enemy direction is still reference-synced, although direction shadow diagnostics currently match the one-enemy trace.
 - Chase timers and round-robin state are still reference-synced.
 - BFS direction is still observed / inferred from MAME in the shadow paths; full BFS pathfinding is not yet implemented.
+- `0x4130` local-door validation still needs faithful `0x3C0A` tile lookup over VRAM.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
 
 ## Roadmap
 
 Near-term:
 
-1. read and map the Z80 enemy-decision blocks from `LadyBug_enemy_management_extract.txt`;
-2. implement source-named C# functions for the arcade blocks:
-
-```text
-0x42BA  Enemy_UpdateOne
-0x42E6  Try preferred direction
-0x3911  Logical maze validation
-0x4130  Local / door validation
-0x4241  Fallback direction selection
-0x4347  Forced reversal
-```
-
-3. validate each C# block against exact-PC MAME logs;
-4. avoid trace-specific branches or log-fitting rules;
-5. document and cleanly rename the `fallbackMask` concept where appropriate;
-6. keep authoritative comparison reference-synced until the source-based decision model is validated;
-7. implement chase timer, round-robin behavior, and full BFS/chase direction selection.
+1. fix the known `rejectedMask` shadow mismatch where preferred `08` is rejected but current direction `01` is kept;
+2. validate the correction against exact-PC `0x4315` events;
+3. reconstruct the `0x3C0A` tile lookup so `0x4130` can be validated for real;
+4. replace permissive local-door diagnostic logic with source-faithful tile probing;
+5. validate `0x4241` fallback direction selection against exact-PC fallback cycles;
+6. validate `0x4347` forced reversal with a focused trace;
+7. keep authoritative comparison reference-synced until the source-based decision model is validated;
+8. once stable, switch authoritative `rejectedMask`, fallback helper, and enemy direction away from MAME reference-sync.
 
 Later:
 
-- implement independent enemy direction decisions;
-- expand validation to multi-enemy traces;
+- implement chase activation and timer behavior;
+- implement round-robin behavior independently;
+- implement full BFS/chase direction selection;
+- expand validation to multiple active enemies;
 - add stable regression traces or test fixtures.
+
+## Commit rhythm
+
+Commit after each stable checkpoint that:
+
+```text
+- compiles;
+- keeps the expected comparison result;
+- has updated README.md and doc/current_implementation.md.
+```
+
+This makes it easy to revert to the last known-good state before trying the next source-first reconstruction step.
