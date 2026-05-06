@@ -1,8 +1,8 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.91  
-**Latest validated commit:** `Trace enemy release with exact-PC breakpoints`  
+**Current package version:** v0.6.92  
+**Latest validated commit:** `Model release activation transition from exact-PC cycle`  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -30,7 +30,7 @@ The project does not yet run fully independent arcade enemy AI. The current adap
 
 ## 1.1 Source-first rule for enemy decisions
 
-New enemy decision logic must be implemented from the disassembled source first.
+New enemy decision and release logic must be implemented from the disassembled source first.
 
 Primary source:
 
@@ -60,7 +60,9 @@ The correct development loop is:
 2. transcribe that block into a source-named C# function;
 3. validate the function against standard JSONL traces and exact-PC logs;
 4. only then expand coverage to new traces;
-5. avoid filtering or hiding mismatches unless the source code explains why that state is not comparable.
+5. avoid filtering or hiding mismatches unless the source code or exact-PC cycle boundary explains why that state is not comparable.
+
+v0.6.92 follows this rule: the first activation transition is no longer treated as a normal frame-to-frame continuation from stale `previousFrame.enemyWork`. Instead, the diagnostic uses the exact-PC start state observed for the first active `Enemy_UpdateOne` cycle.
 
 ## 2. Current validation strategy
 
@@ -85,8 +87,7 @@ Used for:
 - adapter-level fallback helper / `0x61C2` shadow compare;
 - adapter-level enemy direction shadow compare;
 - source-first transition diagnostics over frame-level state;
-- source-first release diagnostics over the first activation transition;
-- exact-PC release breakpoints around `0x3061`, `0x4471`, and `0x43D4`.
+- source-first release diagnostics over the first activation transition.
 
 This is the main validation pipeline.
 
@@ -133,7 +134,8 @@ Used for:
 - reverse-engineering `EnemyWork.rejectedMask`;
 - identifying how the fallback helper at `0x61C2` behaves;
 - classifying `Enemy_UpdateOne` decision cycles;
-- detecting local-door rejection, generic fallback, forced reversal, commit, and release-initialization events.
+- detecting local-door rejection, generic fallback, forced reversal, release, and commit events;
+- confirming exact cycle order where frame-level traces are ambiguous.
 
 Raw output:
 
@@ -147,7 +149,7 @@ Automatic report:
 traces/mame/<outputPrefix>_enemywork_pc_analysis.txt
 ```
 
-This is also not a JSONL trace. It should be read as an exact-PC report. v0.6.91 extends this script with release breakpoints.
+This is also not a JSONL trace. It should be read as an exact-PC report.
 
 ### 2.4 Source-first decision diagnostics
 
@@ -162,7 +164,7 @@ scripts/tools/simulation/LadyBugEnemyDecisionTraceDiagnosticAdapter.cs
 Used for:
 
 - running reconstructed decision functions over the loaded MAME trace;
-- validating `0x3911`, `0x42E6`, and `0x4241` behavior progressively;
+- validating `0x3911`, `0x42E6`, `0x4315`, `0x4331`, and `0x4241` behavior progressively;
 - recording where modeled scratch state differs from MAME scratch state;
 - keeping the comparison non-invasive while the decision model is incomplete.
 
@@ -186,16 +188,15 @@ Used for:
 - identifying the first transition where an enemy slot becomes active;
 - comparing the observed slot state against the source initialization shape from `0x3061`;
 - detecting whether the observed slot looks like `0x3061` plus one movement/update step;
-- keeping the den-exit problem visible instead of treating it as a normal plain-step mismatch.
+- providing the release start state now used by the v0.6.92 transition diagnostic.
 
 Important limitation:
 
 ```text
-This is diagnostic only. It does not yet activate an enemy slot, simulate the release
-sequence, or drive the first den-exit movement.
+This is still diagnostic only. It does not yet activate an enemy slot, simulate the full release sequence, or drive the first den-exit movement authoritatively.
 ```
 
-## 3. Current repository structure
+## 3. Repository structure
 
 ```text
 .
@@ -249,9 +250,9 @@ sequence, or drive the first den-exit movement.
 └─ README.md
 ```
 
-## 4. Important runtime encodings
+## 4. Runtime encodings
 
-### 4.1 Player direction at 0x6198
+### 4.1 Player direction at `0x6198`
 
 The player direction byte used by the preferred[] rotate branch is:
 
@@ -268,12 +269,7 @@ Runtime checks in MAME confirmed:
 08 = up
 ```
 
-Important distinction:
-
-```text
-This mapping is the player RAM direction encoding used by the 2E97 preferred[] rotate branch.
-Do not invert 02 and 08 when interpreting 0x6198.
-```
+Do not confuse this with enemy direction encoding.
 
 ### 4.2 Enemy direction encoding
 
@@ -285,8 +281,6 @@ Enemy movement direction encoding from `LadyBug_enemy_management_extract.txt`:
 04 = right
 08 = down
 ```
-
-This differs from the player RAM direction encoding.
 
 ### 4.3 Enemy slot layout
 
@@ -309,7 +303,7 @@ Layout:
 +4 = attribute-related byte.
 ```
 
-### 4.4 EnemyWork addresses currently under investigation
+### 4.4 EnemyWork addresses under investigation
 
 ```text
 61BD = EnemyTemp_Dir
@@ -323,16 +317,11 @@ Layout:
 6200..62AF = logical maze map, 11 x 16 cells
 ```
 
-Important naming note:
-
-```text
-The C# trace/state model still has a legacy name fallbackMask for 0x61C2.
-The exact-PC evidence shows that 0x61C2 behaves more like a fallback step counter/helper than a normal direction mask.
-```
+The C# trace/state model still has a legacy name `fallbackMask` for `0x61C2`. Exact-PC evidence shows that it behaves like a fallback step counter/helper, not a normal direction mask.
 
 ## 5. Main scripts
 
-### 5.1 EnemyTraceSimulatorWindow.cs
+### 5.1 `EnemyTraceSimulatorWindow.cs`
 
 Current role:
 
@@ -347,7 +336,7 @@ Current role:
 - runs comparison pipelines;
 - routes comparison through `IEnemySimulationAdapter` implementations.
 
-### 5.2 EnemyTraceBoardView.cs
+### 5.2 `EnemyTraceBoardView.cs`
 
 Current role:
 
@@ -370,9 +359,9 @@ Player sprite orientation follows the observed `0x6198` mapping:
 08 up    -> up-facing base frame
 ```
 
-This is a visual-only correction. It does not affect trace parsing, comparison, enemy movement stepping, or preferred[] diagnostics.
+This is visual-only and does not affect simulation logic.
 
-### 5.3 MameTraceLauncher.cs
+### 5.3 `MameTraceLauncher.cs`
 
 Current role:
 
@@ -393,70 +382,13 @@ ladybug_enemywork_pc_trace.lua
 
 the launcher automatically enables MAME debugger/log mode with the generated debug startup script.
 
-### 5.4 scripts/tools/trace/
+## 6. MAME Lua scripts
 
-Current role:
+### 6.1 `ladybug_sequence_trace.lua`
 
-- owns trace model classes;
-- owns JSON / JSONL parsing;
-- centralizes MAME-to-Godot actor coordinate conversion.
+Standard JSONL trace script.
 
-Parsed data includes:
-
-- frame / tick index;
-- schema, phase, MAME frame, PC, and R register;
-- player state;
-- enemy slots;
-- gate states;
-- `enemyWork`;
-- timers;
-- input ports;
-- optional raw memory blocks;
-- optional `preferredChangeEvents`.
-
-`preferredChangeEvents` are polling diffs. They do not know the exact write PC.
-
-### 5.5 scripts/tools/simulation/
-
-Important files:
-
-```text
-IEnemySimulationAdapter.cs
-SimulationAdapterResult.cs
-IdentityTraceSimulationAdapter.cs
-InjectedMismatchSimulationAdapter.cs
-LadyBugSimulationInitialState.cs
-LadyBugSimulationState.cs
-LadyBugEnemySimulationAdapter.cs
-LadyBugMonsterPreferenceSystem.cs
-LadyBugPreferredGeneratorDiagnostics.cs
-LadyBugPreferredPcLogAnalyzer.cs
-LadyBugEnemyWorkPcLogAnalyzer.cs
-LadyBugEnemyDecisionModel.cs
-LadyBugStaticMazeRomTable.cs
-LadyBugEnemyDecisionTraceDiagnosticAdapter.cs
-LadyBugEnemyReleaseModel.cs
-```
-
-`LadyBugMonsterPreferenceSystem` models the arcade preferred-direction generator for the validated one-enemy diagnostic windows.
-
-`LadyBugEnemySimulationAdapter` computes preferred[], `rejectedMask`, fallback helper, enemy direction, decision transition diagnostics, and release diagnostics during standard comparison, but still keeps MAME reference-synced values as authoritative state.
-
-`LadyBugEnemyWorkPcLogAnalyzer` analyzes exact-PC `LBEW` events and groups them into `Enemy_UpdateOne` cycles.
-
-`LadyBugEnemyDecisionModel` is the additive source-first C# transcription scaffold for the Z80 enemy decision path.
-
-`LadyBugEnemyDecisionTraceDiagnosticAdapter` runs decision-model diagnostics over loaded trace frames while returning identity frames, so the normal comparison pipeline remains safe.
-
-`LadyBugEnemyReleaseModel` records the source-shaped release initialization around `0x05AE` / `0x3061` and compares it with activation transitions.
-
-## 6. Current MAME Lua scripts
-
-### 6.1 ladybug_sequence_trace.lua
-
-This is the standard JSONL trace script.
-
-Current responsibilities:
+Responsibilities:
 
 - cooperate with the runtime Lua configuration generated by C#;
 - load a MAME save-state;
@@ -467,11 +399,11 @@ Current responsibilities:
 - optionally export the logical maze `0x6200..0x62AF`;
 - export safe polling diffs for `EnemyWork.preferred[]` as `preferredChangeEvents`.
 
-### 6.2 ladybug_preferred_pc_trace.lua
+### 6.2 `ladybug_preferred_pc_trace.lua`
 
-This is the exact-PC preferred[] diagnostic script.
+Exact-PC preferred[] diagnostic script.
 
-It installs debugger breakpoints at:
+Breakpoints:
 
 ```text
 0x2E97 : base preferred generation, player-dir / rotate branch
@@ -479,36 +411,34 @@ It installs debugger breakpoints at:
 0x477D : chase/BFS override writing preferred[]
 ```
 
-The breakpoint action writes `LBPREF` lines through MAME `logerror`, captured in:
+### 6.3 `ladybug_enemywork_pc_trace.lua`
+
+Exact-PC EnemyWork decision diagnostic script.
+
+Key breakpoints include:
 
 ```text
-tools/mame/lua/error.log
-```
-
-### 6.3 ladybug_enemywork_pc_trace.lua
-
-This is the exact-PC EnemyWork decision diagnostic script.
-
-It installs debugger breakpoints at:
-
-```text
-3911_LOGICAL_MAZE_VALIDATE
-4130_LOCAL_DOOR_CHECK_ENTRY
-4187_LOCAL_DOOR_REJECT
-42CC_REJECT_RESET
-42CF_FALLBACK_RESET
-4315_REJECT_OR_CANDIDATE
-4331_REJECT_OR_TEMPDIR
-43C4_FALLBACK_STEP_INC
-43C5_FALLBACK_STEP_READ
-43D4_COMMIT_TEMP_STATE
-4241_FALLBACK_ENTRY
-4347_FORCED_REVERSAL
+05AE_RELEASE_HELPER_ENTRY
+05B6_RELEASE_SLOT_TEST
+05C3_RELEASE_CALL_3061
+05CC_RELEASE_RAW81_WRITE
 3061_RELEASE_INIT_ENTRY
 3070_RELEASE_INIT_RAW82
 3074_RELEASE_INIT_X58
 3078_RELEASE_INIT_Y86
 3080_RELEASE_INIT_SPRITE
+3911_LOGICAL_MAZE_VALIDATE
+4130_LOCAL_DOOR_CHECK_ENTRY
+4187_LOCAL_DOOR_REJECT
+42CC_REJECT_RESET
+42CF_FALLBACK_RESET
+4241_FALLBACK_ENTRY
+4315_REJECT_OR_CANDIDATE
+4331_REJECT_OR_TEMPDIR
+43C4_FALLBACK_STEP_INC
+43C5_FALLBACK_STEP_READ
+43D4_COMMIT_TEMP_STATE
+4347_FORCED_REVERSAL
 4471_ALT_RELEASE_CALL_3061
 ```
 
@@ -560,8 +490,6 @@ The adapter shadow classifier recognizes all four direction starts:
 It also recognizes observed slot-0 BFS overlays over each rotate base.
 
 ### 7.3 Adapter shadow compare validation
-
-`LadyBugEnemySimulationAdapter` computes a preferred[] shadow model while keeping the reference-synced `EnemyWork.preferred[]` as the authoritative comparison value.
 
 Latest checkpoint:
 
@@ -617,29 +545,16 @@ rejectedMask shadow matches=496
 rejectedMask shadow mismatches=0
 ```
 
-The transition-oriented diagnostic still reports one mismatch at the release boundary:
+Current transition diagnostic validation:
 
 ```text
-tick=5
-source=PLAIN_STEP_OUTSIDE_CENTER
-referenceRejected=02
-modeledRejected=00
-```
-
-Interpretation:
-
-```text
-The adapter-level shadow now matches the frame-level MAME values, but the transition
-diagnostic correctly reveals that the first activation is not a normal continuous
-movement transition. It should be handled by a source-first release simulation, not
-by a generic outside-center rule.
+rejectedMaskMatchesModeled=496
+rejectedMaskDiffersFromModeled=0
 ```
 
 ### 8.2 `61C2` interpretation
 
-`61C2` was previously called `fallbackMask` in the C# DTO/state model.
-
-The current exact-PC evidence indicates that it is not a normal direction mask. It behaves as a fallback step counter/helper:
+`61C2` behaves as a fallback step counter/helper:
 
 ```text
 61C2 = fallback step counter/helper
@@ -662,16 +577,7 @@ fallback helper shadow mismatches=0
 fallback helper shadow sources: ONE_STEP_PER_ENEMY_UPDATE=496
 ```
 
-Important limitation:
-
-```text
-This does not yet implement full fallback direction selection authoritatively.
-It only validates the observed 0x61C2 helper value in parallel.
-```
-
 ### 8.3 Enemy direction shadow status
-
-The adapter includes an enemy direction shadow model in parallel with the reference-synced authoritative direction.
 
 Latest checkpoint:
 
@@ -687,7 +593,7 @@ Important limitation:
 This shadow is diagnostic. Authoritative enemy direction is still reference-synced.
 ```
 
-### 8.4 Decision cases now separated
+### 8.4 Decision cases separated
 
 Case A: preferred rejected, current direction kept.
 
@@ -703,6 +609,13 @@ Meaning:
 a preferred candidate was rejected,
 but the current temp direction remained acceptable,
 so the enemy kept moving in the current direction.
+```
+
+The current trace has two modeled instances:
+
+```text
+candidate=02 startDir=08 nextDir=08: first release activation cycle
+candidate=08 startDir=01 nextDir=01: normal later decision cycle
 ```
 
 Case B: preferred rejected, current direction also rejected, fallback entered.
@@ -723,19 +636,33 @@ then the fallback finder selected another direction.
 
 Case C: first activation / release transition.
 
-Pattern:
+v0.6.91 exact-PC report showed that the first active cycle is not a `0x4241` fallback. It is:
 
 ```text
-previous frame has no active enemy slot
-current frame has slot raw=82, x=58, y=87, temp=08:58,87, rejected=02
+cycle=0
+startTmp=08:58,86
+preferred=[02,02,02,02]
+rejectWrites=4315_REJECT_OR_CANDIDATE@4315:A=02
+fallbackEntries=none
+nextTmp=08:58,87
+```
+
+v0.6.92 models this as:
+
+```text
+3061_4315_RELEASE_PREFERRED_REJECTED_CURRENT_KEPT
 ```
 
 Meaning:
 
 ```text
-This is not a normal continuation of previous EnemyWork. It should be explained by
-the release path around 0x05AE / 0x3061 and the first update step.
+The release-shaped state supplies the true cycle start temp=08:58,86.
+The preferred 02 candidate is rejected at 0x4315.
+The current direction 08 remains valid.
+The movement step reaches 08:58,87.
 ```
+
+This fixes the previous transition mismatch without using a filter.
 
 ### 8.5 Local-door and forced-reversal notes
 
@@ -806,13 +733,6 @@ Implemented predicate:
 (y & 0x0F) == 0x06
 ```
 
-Note:
-
-```text
-This is currently the simple pixel-center predicate, not necessarily the complete
-carry behavior of the full 0x427E helper path.
-```
-
 #### `ValidateLogicalMazeDirection()`
 
 Source scope:
@@ -842,18 +762,11 @@ Source scope:
 0x4130..0x4188
 ```
 
-Behavior:
-
-- applies direction-specific probe offsets;
-- asks a caller-supplied tile reader for the tile at the probe position;
-- rejects door-local blocking tiles.
-
 Current limitation:
 
 ```text
 The source block is scaffolded, but the diagnostic tile reader is permissive.
-The real 0x3C0A tile lookup still needs to be reconstructed before this block can
-be trusted against MAME.
+The real 0x3C0A tile lookup still needs to be reconstructed before this block can be trusted against MAME.
 ```
 
 #### `CheckDoorForcedReversal()`
@@ -863,11 +776,6 @@ Source scope:
 ```text
 0x4189..0x4223
 ```
-
-Behavior:
-
-- probes door-local tiles outside the normal decision-center path;
-- returns true when the arcade would force reversal.
 
 Current limitation:
 
@@ -930,13 +838,6 @@ Behavior:
 - validates through `0x3911` and `0x4130`;
 - selects the first accepted candidate.
 
-Current limitation:
-
-```text
-Because 0x4130 is still using a permissive tile reader in diagnostics, fallback
-validation is not yet complete for door-local cases.
-```
-
 #### `TryPreferredDirection()`
 
 Source scope:
@@ -967,12 +868,6 @@ Behavior:
 - calls the one-pixel temp movement;
 - increments `0x61C2` fallback helper.
 
-Note:
-
-```text
-The stack-dependent loop around 0x43C5 is not fully modeled yet.
-```
-
 #### `LoadCurrentStateToTemp()` and `CommitTempState()`
 
 Source scopes:
@@ -1001,6 +896,7 @@ Relevant source blocks:
 ```text
 0x05AE  scan enemy slots and call release initializer
 0x3061  initialize released enemy slot
+0x4471  alternate observed caller of 0x3061 in exact-PC logs
 ```
 
 Current model captures the observed source initialization shape:
@@ -1009,19 +905,12 @@ Current model captures the observed source initialization shape:
 raw = 0x82
 x   = 0x58
 y   = 0x86
+dir = 0x08
 ```
 
-### 10.2 Current release diagnostic result
+### 10.2 v0.6.90 release diagnostic result
 
-Latest validated one-enemy trace:
-
-```text
-activationTransitions=1
-sourceReleaseLikeTransitions=1
-sourceReleaseAfterStepTransitions=1
-```
-
-First activation context:
+The first activation looked like `0x3061` plus one movement/update step:
 
 ```text
 tick=5
@@ -1039,65 +928,51 @@ matchesYAfterStep=True
 matchesWorkAfterStep=True
 ```
 
-Interpretation:
+### 10.3 v0.6.91 exact-PC correction
 
-```text
-The observed first active enemy does not match the raw 0x3061 initialization exactly,
-because the captured Y is already 0x87 rather than 0x86. It does match 0x3061 plus
-one movement/update step, and EnemyWork also matches the post-step state.
-```
+The exact-PC diagnostic showed that the first active cycle is not a `0x4241` fallback.
 
-### 10.3 Exact-PC release sequencing result v0.6.91
-
-The exact-PC EnemyWork diagnostic was extended with release-related breakpoints.
-The report showed one hit for each release initialization breakpoint:
-
-```text
-4471_ALT_RELEASE_CALL_3061: 1
-3061_RELEASE_INIT_ENTRY: 1
-3070_RELEASE_INIT_RAW82: 1
-3074_RELEASE_INIT_X58: 1
-3078_RELEASE_INIT_Y86: 1
-3080_RELEASE_INIT_SPRITE: 1
-```
-
-This proves that the observed `0x3061` call in this capture came from the alternate caller around `0x4471`, not from a visible `0x05AE` release scan hit in the captured window.
-
-More importantly, the first active enemy movement cycle is now clear:
+It is a `0x4315`-only reject/current-kept cycle:
 
 ```text
 cycle=0
 startTmp=08:58,86
-startC1=00
 startPref=[02,02,02,02]
-startE0=82:58,86
-rejectWrites=4315_REJECT_OR_CANDIDATE@4315:A=02:preC1=00
+rejectWrites=4315_REJECT_OR_CANDIDATE@4315:A=02
 fallbackEntries=none
+fallbackStepReads=1
 nextTmp=08:58,87
-nextE0=82:58,87
 ```
 
-Interpretation:
+It also showed an observed `0x4471_ALT_RELEASE_CALL_3061` after the first commit, which initializes the next slot/staged enemy, not the already-moving slot 0.
+
+### 10.4 v0.6.92 transition diagnostic correction
+
+The transition diagnostic now treats the first activation using the exact-PC start state:
 
 ```text
-The first active enemy is already loaded into the normal Enemy_UpdateOne temp state
-as dir=08, x=58, y=86. The preferred candidate 02 is rejected at 0x4315, but the
-current direction 08 remains valid. No 0x4331 write and no 0x4241 fallback occur.
-The enemy then moves one pixel to y=87 and commits through 0x43D4.
+releaseActivationModeledFromExactPc=1
+firstReleaseActivationModeled:
+  tick=5
+  slotRawXY=82:58,87
+  expected3061=82:58,86
+  work=08:58,87
+  rejected=02
+  exactPcCycle=startTmp=08:58,86 preferred=02 currentKept=08
 ```
 
-This revises the earlier hypothesis:
+This yields:
 
 ```text
-Old hypothesis:
-  tick=5 might be a release-special fallback / den-exit case.
-
-New exact-PC conclusion:
-  tick=5 is a normal 0x4315 preferred-rejected/current-kept cycle, but the standard
-  JSONL transition diagnostic used the wrong pre-state by reading previousFrame.enemyWork.
+rejectedMaskMatchesModeled=496
+rejectedMaskDiffersFromModeled=0
 ```
 
-Therefore the next correction should be in the transition diagnostic, not in a release filter.
+Important:
+
+```text
+This is not an independent release simulation yet. It is a corrected diagnostic model for the first activation transition.
+```
 
 ## 11. Current comparison behavior
 
@@ -1128,20 +1003,13 @@ Partially reconstructed:
 - selected enemy scratch position;
 - movement by one arcade pixel using the MAME reference direction;
 - some `EnemyWork` decision scratch fields;
-- exact-PC decision-cycle classification for rejection/fallback;
+- exact-PC decision-cycle classification for rejection/fallback/release;
 - standard JSONL preferred[], `rejectedMask`, fallback helper, and direction shadow diagnostics;
 - source-first decision model scaffolding;
-- release initialization shape around `0x3061`.
+- release initialization shape around `0x3061`;
+- first activation transition modeled from exact-PC start state.
 
 The adapter still does not independently decide enemy direction authoritatively, and it does not independently release enemies from the den.
-
-Important:
-
-```text
-Do not implement the missing final direction or release logic by adding observed log cases.
-The next implementation step should continue source-based transcription and exact-PC validation,
-not add another trace-specific shadow heuristic.
-```
 
 ## 12. Latest validated console result
 
@@ -1177,45 +1045,25 @@ fallback helper shadow model checks=496, matches=496, mismatches=0
 Transition diagnostic summary:
 
 ```text
-Lady Bug decision diagnostics v0.6.90 transition model:
+Lady Bug decision diagnostics v0.6.92 transition model:
 frames=501
 transitions=500
 enemyWorkTransitions=500
 attributedTransitions=496
-centerTransitions=30
-outsideCenterTransitions=466
+centerTransitions=31
+outsideCenterTransitions=465
+releaseActivationTransitions=1
+releaseActivationModeledFromExactPc=1
 preferredAccepted=20
-preferredRejectedCurrentKept=1
+preferredRejectedCurrentKept=2
 preferredAndPreviousRejectedFallback=8
 reverseIgnored=1
 referenceRejectedMaskNonZero=10
-rejectedMaskMatchesModeled=495
-rejectedMaskDiffersFromModeled=1
+rejectedMaskMatchesModeled=496
+rejectedMaskDiffersFromModeled=0
 ```
 
-Known transition mismatch:
-
-```text
-tick=5 mameFrame=10 slot=0
-prevTmp=02:78,8E
-currTmp=08:58,87
-preferred=02
-source=PLAIN_STEP_OUTSIDE_CENTER
-referenceRejected=02
-modeledRejected=00
-```
-
-Release diagnostic summary:
-
-```text
-Lady Bug enemy release diagnostics v0.6.90:
-transitions=500
-activationTransitions=1
-sourceReleaseLikeTransitions=1
-sourceReleaseAfterStepTransitions=1
-```
-
-First activation:
+First activation modeled:
 
 ```text
 tick=5 mameFrame=10 slot=0 active=0->1
@@ -1223,76 +1071,15 @@ slotRawXY=82:58,87
 expected3061=82:58,86
 work=08:58,87
 rejected=02
-matchesRaw=True
-matchesX=True
-matchesY3061=False
-matchesYAfterStep=True
-matchesWorkAfterStep=True
+exactPcCycle=startTmp=08:58,86 preferred=02 currentKept=08
+source=3061_4315_RELEASE_PREFERRED_REJECTED_CURRENT_KEPT
 ```
 
 Interpretation:
 
 ```text
-The transition model still exposes the release mismatch. The release diagnostic
-classifies it as a source-shaped activation, but does not hide it. This is the
-right state: the next step is to implement and validate release sequencing from
-source/exact-PC logs.
+The earlier release-boundary mismatch has been resolved in the transition diagnostic by using the exact-PC start state for the first active cycle. This is a source-first / exact-PC correction, not a filter.
 ```
-
-
-## 12.1 Latest exact-PC release / EnemyWork result
-
-Diagnostic file:
-
-```text
-traces/mame/ladybug_sequence_v8_enemywork_pcdiag_enemywork_pc_analysis.txt
-```
-
-Summary:
-
-```text
-LBEW hits: 3353
-cycles: 642
-cycles with rejectedMask write candidates: 10
-cycles entering fallback: 8
-cycles with forced reversal: 0
-```
-
-Decision-cycle classification:
-
-```text
-plain step / no rejected candidate: 632
-preferred rejected, current direction kept: 2
-preferred/current rejected, fallback entered: 8
-forced reversal outside decision center: 0
-other / mixed: 0
-```
-
-The two `4315`-only current-kept cycles are:
-
-```text
-candidate=02 startDir=08 nextDir=08: cycle 0
-candidate=08 startDir=01 nextDir=01: cycle 240
-```
-
-This means the first active enemy cycle and the later tick=245 case are the same source pattern:
-
-```text
-4315 without 4331/fallback
-```
-
-Release-related exact-PC events showed:
-
-```text
-4471_ALT_RELEASE_CALL_3061
-3061_RELEASE_INIT_ENTRY
-3070_RELEASE_INIT_RAW82
-3074_RELEASE_INIT_X58
-3078_RELEASE_INIT_Y86
-3080_RELEASE_INIT_SPRITE
-```
-
-The `0x4471 -> 0x3061` sequence happens after the first slot-0 commit and initializes the next slot. It should not be treated as the source of the first slot-0 movement step.
 
 ## 13. Current limitations
 
@@ -1306,29 +1093,17 @@ The standalone model and adapter shadow compare are validated on the current one
 
 ### 13.3 rejectedMask and fallback helper are still authoritative reference-synced
 
-Authoritative `rejectedMask` and the `0x61C2` fallback helper are currently synchronized from MAME. This avoids misleading mismatches in den-exit / special movement windows while the real rejection and fallback generator is still being reconstructed.
+Authoritative `rejectedMask` and the `0x61C2` fallback helper are currently synchronized from MAME. This avoids misleading mismatches while the real rejection and fallback generator is still being reconstructed.
 
-The adapter-level rejectedMask shadow model currently matches the validated trace, but the transition diagnostic still exposes the release boundary as a non-normal movement transition.
-
-The fallback helper shadow model currently matches the validated one-enemy trace.
+The current adapter-level rejectedMask shadow and transition diagnostic both match the validated one-enemy trace.
 
 ### 13.4 enemy direction is still authoritative reference-synced
 
 The direction shadow model currently matches the one-enemy trace, but authoritative enemy direction remains reference-synced until the source-based decision model is validated more broadly.
 
-### 13.5 release / den-exit is not simulated yet
+### 13.5 release is modeled diagnostically, not simulated authoritatively
 
-The source release diagnostic and exact-PC trace now separate two facts:
-
-- the first active slot-0 movement cycle is already a normal `4315` preferred-rejected/current-kept update;
-- the observed `0x4471 -> 0x3061` call initializes the next slot after the first commit.
-
-The simulator still does not independently:
-
-- choose the free enemy slot;
-- initialize it from the arcade release path;
-- attribute the first activation pre-state without relying on MAME;
-- commit the first active state without MAME reference sync.
+v0.6.92 models the first activation transition in the diagnostic, but the simulator still does not independently trigger the release of enemies from the den.
 
 ### 13.6 chase state is still reference-synced
 
@@ -1338,7 +1113,7 @@ The simulator still does not independently:
 
 The exact-PC shadow replay and adapter shadow compare apply or infer BFS/chase overlays from observed reference data. They do not yet compute the BFS direction independently.
 
-### 13.8 0x4130 local-door validation is incomplete
+### 13.8 `0x4130` local-door validation is incomplete
 
 The source-first model contains a `ValidateLocalDoorBlock()` scaffold, but the diagnostic path still uses a permissive tile reader.
 
@@ -1352,11 +1127,7 @@ using captured VRAM, arcade coordinate mapping, and the Lady Bug VRAM column-maj
 
 ### 13.9 Actor rendering is diagnostic
 
-The MAME Y mirror is good enough for the current viewer, but rendering offsets are not gameplay coordinates. Player sprite orientation follows the observed `0x6198` encoding, but sprite rendering is still diagnostic and separate from gameplay simulation.
-
-### 13.10 Generated logs are local artifacts
-
-Generated logs and reports should not normally be committed.
+The MAME Y mirror is good enough for the current viewer, but rendering offsets are not gameplay coordinates. Sprite rendering is still diagnostic and separate from gameplay simulation.
 
 ## 14. Git ignore policy
 
@@ -1385,79 +1156,52 @@ git rm --cached path/to/generated/file
 
 ## 15. Planned next steps
 
-### v0.6 next: fix first-activation transition diagnostic
+### v0.6 next: release simulation source transcription
 
 Immediate target:
 
 ```text
-Fix the remaining transition diagnostic mismatch at tick=5 without hiding it behind
-a den-release filter.
+Move from diagnostic modeling of the first release transition to a real source-first release simulation path.
 ```
 
-Exact-PC basis:
+Expected source basis:
 
 ```text
-cycle=0 startTmp=08:58,86 preferred=02
-4315_REJECT_OR_CANDIDATE writes rejectedMask |= 02
-no 4331
-no 4241
-43C4/43C5 move temp to 08:58,87 and increment/read 61C2
-43D4 commits the state
+0x05AE  scan enemy slots and trigger release initialization
+0x3061  initialize selected slot to raw=82, x=58, y=86
+0x4471  alternate den/release call path observed in exact-PC logs
+0x43F0  load slot state to EnemyWork temp
+0x42E6  preferred decision path
+0x4315  rejected preferred write
+0x43BA  movement step
+0x43D4  commit temp state
 ```
 
-Implementation direction:
+Validation target:
 
 ```text
-When a frame is the first activation for a slot, do not model the transition from
-previousFrame.enemyWork. Use the current frame's activation/source-cycle shape so
-the same 4315 preferred-rejected/current-kept model explains tick=5 and cycle 240.
+The simulator should naturally produce the first activation transition:
+slot0 raw=82 x=58 y=87
+temp=08:58,87
+rejectedMask=02
 ```
 
-Expected result:
+without syncing those values from MAME.
+
+### v0.6 later: local door tile lookup
+
+Reconstruct:
 
 ```text
-rejectedMaskDiffersFromModeled=0
-preferredRejectedCurrentKept=2
+0x3C0A tile lookup
 ```
 
-### Later near-term work
+so `0x4130` can stop using permissive diagnostic behavior.
 
-1. implement release / den-exit as a real source-first simulation path;
-2. validate whether the `tick=5` transition mismatch disappears naturally;
-3. reconstruct the `0x3C0A` tile lookup so `0x4130` can be validated for real;
-4. replace permissive local-door diagnostic logic with source-faithful tile probing;
-5. validate `0x4241` fallback direction selection against exact-PC fallback cycles;
-6. validate `0x4347` forced reversal with a focused trace;
-7. keep authoritative comparison reference-synced until the source-based decision and release models are validated;
-8. once stable, switch authoritative `rejectedMask`, fallback helper, release activation, and enemy direction away from MAME reference-sync.
-
-### Later work
+### Later roadmap
 
 - implement chase activation and timer behavior;
 - implement round-robin behavior independently;
 - implement full BFS/chase direction selection;
 - expand validation to multiple active enemies;
 - add stable regression traces or test fixtures.
-
-## 16. Documentation notes
-
-The files under `doc/diagnostics/` contain useful reverse-engineering notes, but some may describe older checkpoints. The most important files to keep current after each commit are:
-
-```text
-README.md
-doc/current_implementation.md
-```
-
-These two files should always describe the latest stable checkpoint.
-
-## 17. Commit rhythm
-
-Commit after each stable checkpoint that:
-
-```text
-- compiles;
-- keeps the expected comparison result;
-- has updated README.md and doc/current_implementation.md.
-```
-
-This makes it easy to revert to the last known-good state before trying the next source-first reconstruction step.
