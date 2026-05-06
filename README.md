@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.83**
+Current checkpoint: **v0.6.84**
 
 The project currently supports three complementary workflows:
 
@@ -58,10 +58,12 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - standalone `LadyBugMonsterPreferenceSystem` model validated against exact-PC logs;
 - preferred[] shadow replay diagnostic validating the modeled write sequence against MAME snapshots;
 - preferred[] shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
+- rejectedMask shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - preferred[] rotate-branch shadow recognition generalized and validated for all four player directions;
 - den-exit candidate diagnostics for enemy activation traces;
 - Enemy_UpdateOne cycle classification for rejection/fallback decisions;
-- temporary reference-sync bridges for `rejectedMask` and `fallbackMask` scratch fields.
+- rejectedMask shadow diagnostics validated on a one-enemy den-exit trace;
+- temporary reference-sync bridges for authoritative `rejectedMask` and `fallbackMask` scratch fields.
 
 ## Current validation checkpoint
 
@@ -122,6 +124,25 @@ This confirms two important cases:
 ```
 
 The standard JSONL adapter still computes a preferred[] shadow model in parallel. This shadow model does not yet replace the reference-synced `preferred[]`, but it currently matches the loaded one-enemy traces, including den-exit traces and rotate-branch cases for all four player directions.
+
+As of `v0.6.84`, the adapter also computes a `rejectedMask` shadow model in parallel. The authoritative `rejectedMask` is still reference-synced from MAME, but the shadow model currently validates on the latest one-enemy den-exit trace:
+
+```text
+rejectedMask shadow model checks=496
+matches=496
+mismatches=0
+```
+
+Observed shadow sources on that trace:
+
+```text
+SAFETY_PREVIOUS_02_TO_08=1
+PLAIN_STEP=465
+DECISION_CENTER_PREFERRED_ACCEPTED=20
+DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS=8
+DECISION_CENTER_REJECT_PREFERRED=1
+DECISION_CENTER_REVERSE_IGNORED=1
+```
 
 ## Player direction mapping
 
@@ -193,8 +214,7 @@ Typical diagnostic settings:
 
 ```json
 {
-  "luaScriptPath": "res://tools/mame/lua/ladybug_preferred_pc_trace.lua
-tools/mame/lua/ladybug_enemywork_pc_trace.lua",
+  "luaScriptPath": "res://tools/mame/lua/ladybug_preferred_pc_trace.lua",
   "outputPrefix": "ladybug_sequence_v8_pcdiag",
   "framesAfterTick0": 500
 }
@@ -304,7 +324,7 @@ tools/mame/states/**/*.sta
 - The official validation target is still one active enemy.
 - Multi-enemy validation is planned but not yet stable.
 - `EnemyWork.preferred[]` is still reference-synced in the comparison adapter.
-- `rejectedMask` and `fallbackMask` are still reference-synced scratch fields.
+- authoritative `rejectedMask` and `fallbackMask` are still reference-synced scratch fields; `rejectedMask` now has a passing shadow model on the latest one-enemy trace.
 - Chase timers and round-robin state are still reference-synced.
 - BFS direction is still observed / inferred from MAME in the shadow paths; full BFS pathfinding is not yet implemented.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
@@ -313,8 +333,8 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. document and cleanly rename the `fallbackMask` concept where appropriate;
-2. implement a shadow model for `rejectedMask`;
+1. validate the `rejectedMask` shadow model on more one-enemy traces and door states;
+2. document and cleanly rename the `fallbackMask` concept where appropriate;
 3. implement a shadow model for fallback direction selection;
 4. keep authoritative comparison reference-synced until shadow diagnostics pass on more one-enemy traces;
 5. implement chase timer and round-robin behavior;

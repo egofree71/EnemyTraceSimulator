@@ -1,7 +1,7 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.83  
+**Current package version:** v0.6.84  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -38,6 +38,7 @@ The current implementation can:
 - validate a standalone C# model of the preferred-direction generator;
 - shadow-replay the exact-PC preferred[] write stream against MAME snapshots;
 - compute a preferred[] shadow model in the Lady Bug adapter during standard JSONL comparison;
+- compute a `rejectedMask` shadow model in the Lady Bug adapter during standard JSONL comparison;
 - detect enemy activation / den-exit candidate frames;
 - classify `Enemy_UpdateOne` decision cycles;
 - temporarily reference-sync `rejectedMask` and `fallbackMask`;
@@ -63,7 +64,8 @@ Used for:
 - visual playback;
 - comparison against C# simulation frames;
 - safe polling-based `preferredChangeEvents`;
-- adapter-level preferred[] shadow compare.
+- adapter-level preferred[] shadow compare;
+- adapter-level `rejectedMask` shadow compare.
 
 This is the main validation pipeline.
 
@@ -771,6 +773,75 @@ forced reversal outside decision center: 0
 
 So forced reversal is not yet validated by this particular `v0.6.83` report. It remains a future focused-trace target.
 
+### 11.6 Adapter `rejectedMask` shadow validation
+
+`v0.6.84` adds an adapter-level shadow model for `rejectedMask` / `0x61C1`.
+
+The comparison state now carries diagnostic fields in addition to the authoritative reference-synced value:
+
+```text
+RejectedMaskShadow
+RejectedMaskShadowSource
+```
+
+Important behavior:
+
+```text
+RejectedMask remains reference-synced from MAME for authoritative comparison.
+RejectedMaskShadow is computed independently enough to validate the current model.
+RejectedMaskShadow does not yet drive enemy direction decisions.
+```
+
+Latest validated standard JSONL trace:
+
+```text
+comparedFrames=501
+comparison mismatches=0
+
+preferred[] shadow model checks=496
+preferred[] shadow matches=496
+preferred[] shadow mismatches=0
+
+rejectedMask shadow model checks=496
+rejectedMask shadow matches=496
+rejectedMask shadow mismatches=0
+```
+
+Observed `rejectedMask` shadow sources:
+
+```text
+SAFETY_PREVIOUS_02_TO_08=1
+PLAIN_STEP=465
+DECISION_CENTER_PREFERRED_ACCEPTED=20
+DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS=8
+DECISION_CENTER_REJECT_PREFERRED=1
+DECISION_CENTER_REVERSE_IGNORED=1
+```
+
+Current interpretation of these sources:
+
+```text
+PLAIN_STEP:
+  no decision-center rejection in this tick
+
+DECISION_CENTER_PREFERRED_ACCEPTED:
+  preferred candidate accepted, rejectedMask stays clear
+
+DECISION_CENTER_REJECT_PREFERRED:
+  preferred candidate rejected, but current direction remains valid
+
+DECISION_CENTER_REJECT_PREFERRED_AND_PREVIOUS:
+  preferred candidate and current/previous direction rejected
+
+DECISION_CENTER_REVERSE_IGNORED:
+  reverse direction candidate ignored as part of decision-center filtering
+
+SAFETY_PREVIOUS_02_TO_08:
+  currently modeled safety bridge for a den-exit / first-active transient
+```
+
+This shadow model is the standard-JSONL counterpart to the exact-PC `v0.6.83` cycle classification.
+
 ## 12. Den-exit diagnostics and temporary bridges
 
 The adapter detects enemy activation / den-exit candidate frames.
@@ -786,9 +857,11 @@ first den-exit candidate: tick=...
 `rejectedMask` and `fallbackMask` are currently reference-synced scratch fields:
 
 ```text
-rejectedMask is reference-synced from MAME.
-fallbackMask is reference-synced from MAME.
+rejectedMask is reference-synced from MAME for authoritative comparison.
+fallbackMask / 0x61C2 fallback helper is reference-synced from MAME.
 ```
+
+`v0.6.84` also computes `RejectedMaskShadow` in parallel and reports its match/mismatch count. On the latest one-enemy den-exit trace it matches MAME for all checked frames.
 
 This avoids misleading mismatches in den-exit / special movement windows while the real rejection and fallback generator is still being reconstructed.
 
@@ -806,23 +879,28 @@ Still reference-synced:
 
 - enemy movement direction;
 - authoritative `EnemyWork.preferred[]`;
-- `rejectedMask`;
-- `fallbackMask`;
+- authoritative `rejectedMask`;
+- `fallbackMask` / `0x61C2` fallback helper;
 - `chaseTimers[]`;
 - `chaseRoundRobin`.
 
 Shadow-mode only:
 
 - `EnemyWork.preferred[]` simulated in parallel;
+- `rejectedMask` simulated in parallel;
 - source summary for preferred[] shadow model;
+- source summary for `rejectedMask` shadow model;
 - mismatch count for preferred[] shadow model;
+- mismatch count for `rejectedMask` shadow model;
 - richer first-mismatch context if a future trace fails.
 
 Partially reconstructed:
 
 - selected enemy scratch position;
 - movement by one arcade pixel using the MAME reference direction;
-- some `EnemyWork` decision scratch fields.
+- some `EnemyWork` decision scratch fields;
+- exact-PC decision-cycle classification for rejection/fallback;
+- standard JSONL `rejectedMask` shadow diagnostics.
 
 The adapter still does not independently decide enemy direction.
 
@@ -836,9 +914,11 @@ The current validation target is one active enemy. Multi-enemy traces are deferr
 
 The standalone model and adapter shadow compare are validated on the current one-enemy traces, but the simulation adapter has not yet replaced the MAME reference-sync for authoritative `preferred[]`.
 
-### 14.3 rejectedMask and fallbackMask are still reference-synced
+### 14.3 rejectedMask and fallback helper are still authoritative reference-synced
 
-`rejectedMask` and `fallbackMask` are currently synchronized from MAME. This avoids misleading mismatches in den-exit / special movement windows while the real rejection and fallback generator is still unknown.
+Authoritative `rejectedMask` and the `0x61C2` fallback helper are currently synchronized from MAME. This avoids misleading mismatches in den-exit / special movement windows while the real rejection and fallback generator is still being reconstructed.
+
+`v0.6.84` adds a passing `rejectedMask` shadow model on one standard one-enemy trace, but this still needs broader validation before it replaces the reference-synced value.
 
 ### 14.4 chase state is still reference-synced
 
@@ -883,18 +963,22 @@ git rm --cached path/to/generated/file
 
 ## 16. Planned next steps
 
-### v0.6 next: model rejection/fallback in shadow mode
+### v0.6 next: validate rejection shadow, then model fallback
 
 The adapter preferred[] shadow model is validated on a normal one-enemy trace and den-exit / one-enemy rotate traces covering player directions `01`, `02`, `04`, and `08`.
 
+The adapter `rejectedMask` shadow model is now validated on the latest one-enemy den-exit standard JSONL trace.
+
 Suggested order:
 
-1. generate additional one-enemy standard JSONL traces with different timings;
+1. generate additional one-enemy standard JSONL traces with different timings and door states;
 2. run `Compare > Run Lady Bug reference-direction step`;
-3. inspect the preferred[] shadow summary;
-4. if a mismatch appears, use the first-mismatch diagnostic context to decide whether the cause is random branch, rotate branch, or observed BFS overlay;
-5. investigate how `rejectedMask` and `fallbackMask` are produced;
-6. only after clean diagnostics, switch authoritative `preferred[]` away from MAME reference-sync.
+3. inspect both the preferred[] and `rejectedMask` shadow summaries;
+4. if a `rejectedMask` mismatch appears, use the first-mismatch diagnostic context and exact-PC EnemyWork report to identify the missing case;
+5. add focused traces for forced reversal at `4347`;
+6. add focused traces where the player pivots doors near enemy decision centers;
+7. implement a shadow model for fallback direction selection / `0x61C2` helper behavior;
+8. only after clean diagnostics, switch authoritative `rejectedMask` and later fallback helper away from MAME reference-sync.
 
 ### Later work
 
