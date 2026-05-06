@@ -8,6 +8,9 @@ using System.Collections.Generic;
 /// EnemyWork reconstruction. preferred[], rejectedMask, fallback helper, chase timers,
 /// and chase round-robin are temporarily synced from MAME while their real arcade
 /// generators are pending.
+///
+/// v0.6.87b adds a source-first decision diagnostic summary in parallel. The
+/// diagnostic does not drive movement and should not change the mismatch count.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -15,7 +18,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, and fallback-helper shadow models in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, and decision-model shadow summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
@@ -48,6 +51,8 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             frames.Add(simulationState.BuildFrame(i, referenceFrames[i]));
         }
 
+        string decisionDiagnostics = LadyBugEnemyDecisionTraceDiagnostics.BuildSummary(referenceFrames);
+
         return new SimulationAdapterResult(
             frames,
             "Lady Bug reference-synced EnemyWork checkpoint; initial state: " + initialState.Summary +
@@ -55,6 +60,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             "active enemies move one pixel using the MAME direction; " +
             "EnemyWork tempDir/tempX/tempY, transient rejectedMask, fallback helper and preferred[] are temporarily synced from the reference trace while shadow models run in parallel; " +
             simulationState.BuildPreferredShadowDiagnosticSummary() + "; " +
+            decisionDiagnostics + "; " +
             "real enemy decision logic is not implemented yet");
     }
 }
