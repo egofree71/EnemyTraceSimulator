@@ -11,7 +11,6 @@ public partial class EnemyTraceBoardView : Control
     private const int DefaultMazeHeight = 11;
     private const float ArcadeCellSize = 16.0f;
 
-
     private const string PlayerSpriteSheetPath = "res://assets/sprites/player/ladybug_spritesheet.png";
     private static readonly Vector2 PlayerSpriteFrameSize = new(64.0f, 64.0f);
 
@@ -417,7 +416,7 @@ public partial class EnemyTraceBoardView : Control
         Rect2 destination = new(destinationPosition, new Vector2(size, size));
         Rect2 source = new(frame.SourcePosition, PlayerSpriteFrameSize);
 
-        DrawSpriteRegion(_playerSpriteSheet, destination, source, false, false, Colors.White);
+        DrawSpriteRegion(_playerSpriteSheet, destination, source, frame.FlipH, frame.FlipV, Colors.White);
     }
 
     private void DrawSpriteRegion(Texture2D texture, Rect2 destination, Rect2 source, bool flipH, bool flipV, Color modulate)
@@ -497,15 +496,18 @@ public partial class EnemyTraceBoardView : Control
 
     private static PlayerSpriteFrame ResolvePlayerFrame(string? dir)
     {
-        // Player direction encoding, as seen in the trace: 08 = up, 02 = down.
-        // For now the debug renderer uses the first static frame of each animation.
+        // Player RAM direction encoding, as observed at 0x6198:
+        // 01 = left, 02 = down, 04 = right, 08 = up.
+        //
+        // The debug spritesheet provides a right-facing base and an up-facing base.
+        // Left and down are drawn by mirroring those base frames.
         return dir?.ToLowerInvariant() switch
         {
-            "left" or "01" or "1" => new PlayerSpriteFrame(new Vector2(0, 0)),
-            "down" or "02" or "2" => new PlayerSpriteFrame(new Vector2(192, 0)),
-            "right" or "04" or "4" => new PlayerSpriteFrame(new Vector2(0, 0)),
-            "up" or "08" or "8" => new PlayerSpriteFrame(new Vector2(192, 0)),
-            _ => new PlayerSpriteFrame(new Vector2(192, 0))
+            "left" or "01" or "1" => new PlayerSpriteFrame(new Vector2(0, 0), true, false),
+            "down" or "02" or "2" => new PlayerSpriteFrame(new Vector2(192, 0), false, true),
+            "right" or "04" or "4" => new PlayerSpriteFrame(new Vector2(0, 0), false, false),
+            "up" or "08" or "8" => new PlayerSpriteFrame(new Vector2(192, 0), false, false),
+            _ => new PlayerSpriteFrame(new Vector2(192, 0), false, false)
         };
     }
 
@@ -536,7 +538,8 @@ public partial class EnemyTraceBoardView : Control
 
     private static Vector2 PlayerDirectionToVector(string? dir)
     {
-        // Player RAM direction encoding.
+        // Player RAM direction encoding, as observed at 0x6198:
+        // 01 = left, 02 = down, 04 = right, 08 = up.
         return dir?.ToLowerInvariant() switch
         {
             "left" or "01" or "1" => Vector2.Left,
@@ -560,6 +563,6 @@ public partial class EnemyTraceBoardView : Control
         };
     }
 
-    private readonly record struct PlayerSpriteFrame(Vector2 SourcePosition);
+    private readonly record struct PlayerSpriteFrame(Vector2 SourcePosition, bool FlipH, bool FlipV);
     private readonly record struct EnemySpriteFrame(Vector2 SourcePosition, bool FlipH, bool FlipV);
 }
