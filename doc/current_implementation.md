@@ -1,8 +1,8 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.6.90  
-**Latest validated commit:** `Add enemy release source diagnostics`  
+**Current package version:** v0.6.91  
+**Latest validated commit:** `Trace enemy release with exact-PC breakpoints`  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -85,7 +85,8 @@ Used for:
 - adapter-level fallback helper / `0x61C2` shadow compare;
 - adapter-level enemy direction shadow compare;
 - source-first transition diagnostics over frame-level state;
-- source-first release diagnostics over the first activation transition.
+- source-first release diagnostics over the first activation transition;
+- exact-PC release breakpoints around `0x3061`, `0x4471`, and `0x43D4`.
 
 This is the main validation pipeline.
 
@@ -132,7 +133,7 @@ Used for:
 - reverse-engineering `EnemyWork.rejectedMask`;
 - identifying how the fallback helper at `0x61C2` behaves;
 - classifying `Enemy_UpdateOne` decision cycles;
-- detecting local-door rejection, generic fallback, and forced reversal.
+- detecting local-door rejection, generic fallback, forced reversal, commit, and release-initialization events.
 
 Raw output:
 
@@ -146,7 +147,7 @@ Automatic report:
 traces/mame/<outputPrefix>_enemywork_pc_analysis.txt
 ```
 
-This is also not a JSONL trace. It should be read as an exact-PC report.
+This is also not a JSONL trace. It should be read as an exact-PC report. v0.6.91 extends this script with release breakpoints.
 
 ### 2.4 Source-first decision diagnostics
 
@@ -500,8 +501,15 @@ It installs debugger breakpoints at:
 4331_REJECT_OR_TEMPDIR
 43C4_FALLBACK_STEP_INC
 43C5_FALLBACK_STEP_READ
+43D4_COMMIT_TEMP_STATE
 4241_FALLBACK_ENTRY
 4347_FORCED_REVERSAL
+3061_RELEASE_INIT_ENTRY
+3070_RELEASE_INIT_RAW82
+3074_RELEASE_INIT_X58
+3078_RELEASE_INIT_Y86
+3080_RELEASE_INIT_SPRITE
+4471_ALT_RELEASE_CALL_3061
 ```
 
 The breakpoint action writes `LBEW` lines through MAME `logerror`, captured in:
@@ -1039,17 +1047,57 @@ because the captured Y is already 0x87 rather than 0x86. It does match 0x3061 pl
 one movement/update step, and EnemyWork also matches the post-step state.
 ```
 
-### 10.3 What this does not prove yet
+### 10.3 Exact-PC release sequencing result v0.6.91
 
-The release diagnostic does not yet prove the full runtime order. It does not know whether the frame boundary captured:
+The exact-PC EnemyWork diagnostic was extended with release-related breakpoints.
+The report showed one hit for each release initialization breakpoint:
 
-- immediately after `0x3061`;
-- after a call path from `0x05AE`;
-- after an alternate caller such as the known XREF around `0x4471`;
-- after a fallback pass at `0x4241`;
-- after the movement step and commit at `0x43BA` / `0x43D4`.
+```text
+4471_ALT_RELEASE_CALL_3061: 1
+3061_RELEASE_INIT_ENTRY: 1
+3070_RELEASE_INIT_RAW82: 1
+3074_RELEASE_INIT_X58: 1
+3078_RELEASE_INIT_Y86: 1
+3080_RELEASE_INIT_SPRITE: 1
+```
 
-Therefore, the release diagnostic must stay separate from the rejectedMask transition model until exact-PC release logging confirms the true sequence.
+This proves that the observed `0x3061` call in this capture came from the alternate caller around `0x4471`, not from a visible `0x05AE` release scan hit in the captured window.
+
+More importantly, the first active enemy movement cycle is now clear:
+
+```text
+cycle=0
+startTmp=08:58,86
+startC1=00
+startPref=[02,02,02,02]
+startE0=82:58,86
+rejectWrites=4315_REJECT_OR_CANDIDATE@4315:A=02:preC1=00
+fallbackEntries=none
+nextTmp=08:58,87
+nextE0=82:58,87
+```
+
+Interpretation:
+
+```text
+The first active enemy is already loaded into the normal Enemy_UpdateOne temp state
+as dir=08, x=58, y=86. The preferred candidate 02 is rejected at 0x4315, but the
+current direction 08 remains valid. No 0x4331 write and no 0x4241 fallback occur.
+The enemy then moves one pixel to y=87 and commits through 0x43D4.
+```
+
+This revises the earlier hypothesis:
+
+```text
+Old hypothesis:
+  tick=5 might be a release-special fallback / den-exit case.
+
+New exact-PC conclusion:
+  tick=5 is a normal 0x4315 preferred-rejected/current-kept cycle, but the standard
+  JSONL transition diagnostic used the wrong pre-state by reading previousFrame.enemyWork.
+```
+
+Therefore the next correction should be in the transition diagnostic, not in a release filter.
 
 ## 11. Current comparison behavior
 
@@ -1191,6 +1239,61 @@ right state: the next step is to implement and validate release sequencing from
 source/exact-PC logs.
 ```
 
+
+## 12.1 Latest exact-PC release / EnemyWork result
+
+Diagnostic file:
+
+```text
+traces/mame/ladybug_sequence_v8_enemywork_pcdiag_enemywork_pc_analysis.txt
+```
+
+Summary:
+
+```text
+LBEW hits: 3353
+cycles: 642
+cycles with rejectedMask write candidates: 10
+cycles entering fallback: 8
+cycles with forced reversal: 0
+```
+
+Decision-cycle classification:
+
+```text
+plain step / no rejected candidate: 632
+preferred rejected, current direction kept: 2
+preferred/current rejected, fallback entered: 8
+forced reversal outside decision center: 0
+other / mixed: 0
+```
+
+The two `4315`-only current-kept cycles are:
+
+```text
+candidate=02 startDir=08 nextDir=08: cycle 0
+candidate=08 startDir=01 nextDir=01: cycle 240
+```
+
+This means the first active enemy cycle and the later tick=245 case are the same source pattern:
+
+```text
+4315 without 4331/fallback
+```
+
+Release-related exact-PC events showed:
+
+```text
+4471_ALT_RELEASE_CALL_3061
+3061_RELEASE_INIT_ENTRY
+3070_RELEASE_INIT_RAW82
+3074_RELEASE_INIT_X58
+3078_RELEASE_INIT_Y86
+3080_RELEASE_INIT_SPRITE
+```
+
+The `0x4471 -> 0x3061` sequence happens after the first slot-0 commit and initializes the next slot. It should not be treated as the source of the first slot-0 movement step.
+
 ## 13. Current limitations
 
 ### 13.1 Multi-enemy traces are not official yet
@@ -1215,11 +1318,16 @@ The direction shadow model currently matches the one-enemy trace, but authoritat
 
 ### 13.5 release / den-exit is not simulated yet
 
-The source release diagnostic confirms that the first activation looks like `0x3061` plus one movement/update step, but the simulator does not yet independently:
+The source release diagnostic and exact-PC trace now separate two facts:
+
+- the first active slot-0 movement cycle is already a normal `4315` preferred-rejected/current-kept update;
+- the observed `0x4471 -> 0x3061` call initializes the next slot after the first commit.
+
+The simulator still does not independently:
 
 - choose the free enemy slot;
 - initialize it from the arcade release path;
-- run the first fallback/update step from source;
+- attribute the first activation pre-state without relying on MAME;
 - commit the first active state without MAME reference sync.
 
 ### 13.6 chase state is still reference-synced
@@ -1277,48 +1385,39 @@ git rm --cached path/to/generated/file
 
 ## 15. Planned next steps
 
-### v0.6 next: exact-PC release sequencing
+### v0.6 next: fix first-activation transition diagnostic
 
 Immediate target:
 
 ```text
-Find the exact runtime order for the first enemy release / den-exit transition.
+Fix the remaining transition diagnostic mismatch at tick=5 without hiding it behind
+a den-release filter.
 ```
 
-Recommended exact-PC breakpoints:
+Exact-PC basis:
 
 ```text
-0x05AE  release slot scan entry
-0x05C3  free-slot candidate check
-0x05CC  call 0x3061 path
-0x3061  released slot initialization
-0x4471  alternate caller / XREF to 0x3061
-0x4241  fallback entry during den-exit
-0x42CC  rejectedMask reset
-0x42CF  fallback helper reset
-0x4315  preferred rejected write
-0x4331  current temp direction rejected write
-0x43BA  temp movement step
-0x43D4  commit temp state back to enemy slot
+cycle=0 startTmp=08:58,86 preferred=02
+4315_REJECT_OR_CANDIDATE writes rejectedMask |= 02
+no 4331
+no 4241
+43C4/43C5 move temp to 08:58,87 and increment/read 61C2
+43D4 commits the state
 ```
 
-Questions to answer:
+Implementation direction:
 
 ```text
-1. Which caller reaches 0x3061 during the observed first activation?
-2. Is raw=82 visible immediately after 0x3061, or only after a later write?
-3. When exactly does tempDir become 02:58,86?
-4. When exactly is rejectedMask=02 written?
-5. Does 0x4241 select direction 08 during the first den-exit update?
-6. Does 0x43BA move Y from 86 to 87 before the JSONL frame captures the state?
-7. Which commit point writes the final visible slot 82:58,87?
+When a frame is the first activation for a slot, do not model the transition from
+previousFrame.enemyWork. Use the current frame's activation/source-cycle shape so
+the same 4315 preferred-rejected/current-kept model explains tick=5 and cycle 240.
 ```
 
-Expected source basis:
+Expected result:
 
 ```text
-0x05AE / 0x3061 for release slot setup
-0x42BA / 0x42E6 / 0x4241 / 0x43BA / 0x43D4 for first update after release
+rejectedMaskDiffersFromModeled=0
+preferredRejectedCurrentKept=2
 ```
 
 ### Later near-term work
