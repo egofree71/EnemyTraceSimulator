@@ -6,7 +6,7 @@ The repository is separate from the main Lady Bug remake project. Its purpose is
 
 ## Current status
 
-Current checkpoint: **v0.6.87**
+Current checkpoint: **v0.6.86**
 
 The project currently supports three complementary workflows:
 
@@ -61,14 +61,12 @@ The standard JSONL trace remains the main comparison pipeline. The exact-PC work
 - rejectedMask shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - fallback helper shadow compare integrated into the Lady Bug adapter while keeping MAME reference-sync active;
 - enemy direction shadow compare integrated into the Lady Bug adapter while keeping MAME reference-direction movement active;
-- fallback direction shadow model integrated into the enemy direction shadow path;
 - preferred[] rotate-branch shadow recognition generalized and validated for all four player directions;
 - den-exit candidate diagnostics for enemy activation traces;
 - Enemy_UpdateOne cycle classification for rejection/fallback decisions;
 - rejectedMask shadow diagnostics validated on a one-enemy den-exit trace;
 - fallback helper shadow diagnostics validated on a one-enemy den-exit trace;
 - enemy direction shadow diagnostics validated on a one-enemy den-exit trace;
-- fallback direction bridge removed on the current one-enemy den-exit trace;
 - temporary reference-sync bridges for authoritative `rejectedMask`, `fallbackMask` / `0x61C2`, and enemy movement direction.
 
 ## Current validation checkpoint
@@ -117,23 +115,25 @@ fallback helper shadow sources:
 ONE_STEP_PER_ENEMY_UPDATE=496
 ```
 
-The enemy direction shadow model is also diagnostic-only. It explains the observed final direction while movement still uses MAME's reference direction.
-
-As of `v0.6.87`, the previous fallback bridge is removed on the current trace:
+The enemy direction shadow model is also diagnostic-only. It explains the observed final direction while movement still uses MAME's reference direction:
 
 ```text
-FALLBACK_REFERENCE_DIRECTION_BRIDGE=0
+enemy direction shadow sources:
+DEN_EXIT_FORCED_UP_BRIDGE=1
+PLAIN_STEP_KEEP_CURRENT=465
+DECISION_CENTER_USE_PREFERRED0=20
+FALLBACK_REFERENCE_DIRECTION_BRIDGE=8
+DECISION_CENTER_KEEP_CURRENT_AFTER_REJECT=1
+DECISION_CENTER_KEEP_CURRENT_REVERSE_IGNORED=1
 ```
 
-The 8 fallback cases are now classified by the fallback direction shadow scan model:
+The important remaining bridge is:
 
 ```text
-FALLBACK_SCAN_MASK_04_SELECT_01=6
-FALLBACK_SCAN_MASK_01_SELECT_02=1
-FALLBACK_SCAN_MASK_03_SKIP_04_SELECT_08=1
+FALLBACK_REFERENCE_DIRECTION_BRIDGE=8
 ```
 
-Full enemy movement still uses the MAME reference direction, but the final-direction shadow no longer needs the reference fallback-direction bridge on this trace.
+Those 8 decisions still use the observed MAME fallback direction. Full fallback direction selection is not implemented yet.
 
 The exact-PC EnemyWork report still provides the deeper decision-cycle context:
 
@@ -329,7 +329,7 @@ tools/mame/states/**/*.sta
 - authoritative `rejectedMask` is still reference-synced, even though it now has a passing shadow model on the latest one-enemy trace.
 - authoritative fallback helper / legacy `fallbackMask` is still reference-synced, even though it now has a passing narrow shadow model on the latest one-enemy trace.
 - enemy movement direction is still reference-driven; the new enemy direction shadow model validates in parallel only.
-- fallback direction selection now has a first passing shadow model on the current trace, but still needs broader validation.
+- fallback direction selection still has a reference-direction bridge in the shadow model.
 - Chase timers and round-robin state are still reference-synced.
 - BFS direction is still observed / inferred from MAME in the shadow paths; full BFS pathfinding is not yet implemented.
 - Sprite rendering is diagnostic and not intended to be final gameplay rendering.
@@ -338,8 +338,8 @@ tools/mame/states/**/*.sta
 
 Near-term:
 
-1. validate the preferred[], `rejectedMask`, fallback helper, fallback direction, and enemy direction shadow models on more one-enemy traces;
-2. stress the fallback scan model on traces with different positions, rejected masks, and timings;
+1. validate the preferred[], `rejectedMask`, fallback helper, and enemy direction shadow models on more one-enemy traces;
+2. remove or reduce `FALLBACK_REFERENCE_DIRECTION_BRIDGE` by implementing real fallback direction selection;
 3. document and cleanly rename the `fallbackMask` concept where appropriate;
 4. keep authoritative comparison reference-synced until shadow diagnostics pass on more one-enemy traces;
 5. implement chase timer and round-robin behavior;
