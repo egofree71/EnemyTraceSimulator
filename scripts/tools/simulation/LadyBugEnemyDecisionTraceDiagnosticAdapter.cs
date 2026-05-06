@@ -15,6 +15,8 @@ using System.Text;
 /// - uses the previous frame's EnemyWork temp position as the pre-move decision state;
 /// - uses the current frame's preferred[] as the candidate visible at frame end;
 /// - validates the 0x4315 case where preferred is rejected but current direction is kept;
+/// - reports source-first enemy release / den-exit observations separately, without
+///   changing the rejectedMask transition counts;
 /// - keeps 0x4130 local-door validation out of this standard-JSONL diagnostic until
 ///   0x3C0A tile lookup is reconstructed from VRAM.
 /// </summary>
@@ -62,14 +64,17 @@ public static class LadyBugEnemyDecisionTraceDiagnostics
     public static string BuildSummary(IReadOnlyList<EnemyTraceFrame> referenceFrames)
     {
         if (referenceFrames.Count == 0)
-            return "Lady Bug decision diagnostics v0.6.88: empty trace";
+            return "Lady Bug decision diagnostics v0.6.90: empty trace";
 
         var counters = new Counters { Frames = referenceFrames.Count };
 
         for (int i = 1; i < referenceFrames.Count; i++)
             AnalyzeTransition(referenceFrames[i - 1], referenceFrames[i], counters);
 
-        return BuildSummaryText(counters);
+        LadyBugEnemyReleaseModel.ReleaseDiagnostics releaseDiagnostics =
+            LadyBugEnemyReleaseModel.BuildDiagnostics(referenceFrames);
+
+        return BuildSummaryText(counters, releaseDiagnostics);
     }
 
     private static void AnalyzeTransition(
@@ -297,11 +302,13 @@ public static class LadyBugEnemyDecisionTraceDiagnostics
                " modeledRejected=" + FormatByte(modeledRejected);
     }
 
-    private static string BuildSummaryText(Counters counters)
+    private static string BuildSummaryText(
+        Counters counters,
+        LadyBugEnemyReleaseModel.ReleaseDiagnostics releaseDiagnostics)
     {
         var builder = new StringBuilder();
 
-        builder.Append("Lady Bug decision diagnostics v0.6.88 transition model: ");
+        builder.Append("Lady Bug decision diagnostics v0.6.90 transition model: ");
         builder.Append("frames=").Append(counters.Frames);
         builder.Append(", transitions=").Append(counters.Transitions);
         builder.Append(", enemyWorkTransitions=").Append(counters.TransitionsWithEnemyWork);
@@ -339,7 +346,8 @@ public static class LadyBugEnemyDecisionTraceDiagnostics
             }
         }
 
-        builder.Append(". NOTE: this is diagnostic-only. It does not change movement, comparison frames, or the existing reference-sync bridges. The key source-first check is 4315_PREFERRED_REJECTED_CURRENT_KEPT: preferred is ORed into 0x61C1 even when the current direction is kept.");
+        builder.Append(". NOTE: this is diagnostic-only. It does not change movement, comparison frames, or the existing reference-sync bridges. The key source-first check is 4315_PREFERRED_REJECTED_CURRENT_KEPT: preferred is ORed into 0x61C1 even when the current direction is kept. ");
+        builder.Append(releaseDiagnostics.BuildSummaryText());
         return builder.ToString();
     }
 
