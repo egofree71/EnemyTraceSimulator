@@ -11,11 +11,12 @@ using System.Text;
 /// - 0x4130 reads the true tile value immediately after each 0x3C0A call;
 /// - tile values 35/37 reject vertical probes and 3D/3F reject horizontal probes.
 ///
-/// This v0.7.01 class broadens the previous local-door shadow into a full
-/// one-step Enemy_UpdateOne shadow for all active one-enemy transitions. It is
-/// still diagnostic-only: normal cycles load the start scratch from the previous
-/// enemy slot state, matching 0x43F0..0x4405, then choose 0x42E0 or 0x433A via
-/// the source-first 0x427E carry gate and apply the 0x43BA one-pixel step.
+/// This v0.7.03 class keeps the v0.7.01 full one-step Enemy_UpdateOne shadow
+/// over all active one-enemy transitions and adds explicit accounting for the
+/// 0x4189 forced-reversal probe used by the outside-center 0x433A path.
+///
+/// The current static-player sequence only exercises the 0x4189 clear path:
+/// it does not yet prove the 0x4222 carry-set / 0x4347 reversal branch.
 ///
 /// v0.7.00 replaced the old pixel-only center predicate with a source-first
 /// transcription of the full 0x427E decision gate.  The arcade only enters
@@ -30,7 +31,7 @@ using System.Text;
 /// </summary>
 public static class LadyBugEnemyLocalDoor4130ShadowModel
 {
-    private const string Version = "v0.7.01";
+    private const string Version = "v0.7.03";
     private const int VramBase = 0xD000;
     private const int VramLength = 0x0400;
 
@@ -46,6 +47,10 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         public int DecisionGateCarryClear;
         public int OutsideCenterPath;
         public int ForcedReversalApplied;
+        public int ForcedReversalChecks;
+        public int ForcedReversalClear;
+        public int ForcedReversalSet;
+        public int ForcedReversalTileReads;
         public int Checks;
         public int Matches;
         public int Mismatches;
@@ -66,6 +71,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         public string FirstMismatch = string.Empty;
         public readonly Dictionary<string, int> Sources = new(StringComparer.Ordinal);
         public readonly Dictionary<string, int> FirstTileByBranch = new(StringComparer.OrdinalIgnoreCase);
+        public readonly Dictionary<string, int> ForcedReversalTileByBranch = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public static string BuildSummary(IReadOnlyList<EnemyTraceFrame> referenceFrames)
@@ -260,20 +266,27 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
             if (!decisionGate.PixelAligned)
                 counters.PixelUnalignedOutsideCenter++;
 
+            int forcedReadStart = tileReader.ReadCount;
             bool forcedReversal = LadyBugEnemyDecisionModel.CheckDoorForcedReversal(
                 scratch.TempDir,
                 scratch.TempX,
                 scratch.TempY,
                 tileReader.ReadTileAtProbe);
 
+            counters.ForcedReversalChecks++;
+            counters.ForcedReversalTileReads += Math.Max(0, tileReader.ReadCount - forcedReadStart);
+            CountForcedReversalTilesByBranch(counters, tileReader, forcedReadStart);
+
             if (forcedReversal)
             {
                 scratch.TempDir = LadyBugEnemyDecisionModel.ReverseDirection(scratch.TempDir);
+                counters.ForcedReversalSet++;
                 counters.ForcedReversalApplied++;
                 decisionSource = "433A_OUTSIDE_CENTER_FORCED_REVERSAL";
             }
             else
             {
+                counters.ForcedReversalClear++;
                 decisionSource = "433A_OUTSIDE_CENTER_KEEP_DIRECTION";
             }
         }
@@ -362,6 +375,75 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
             string key = read.Branch + ":tile=" + FormatByte(read.Tile);
             Count(counters.FirstTileByBranch, key);
         }
+    }
+
+    private static void CountForcedReversalTilesByBranch(
+        Counters counters,
+        TraceVramTileReader reader,
+        int startIndex)
+    {
+        if (startIndex < 0)
+            startIndex = 0;
+
+        IReadOnlyList<TraceVramTileReader.TileRead> reads = reader.Reads;
+        for (int i = startIndex; i < reads.Count; i++)
+        {
+            TraceVramTileReader.TileRead read = reads[i];
+            string branch = ClassifyForcedReversalBranch(
+                reader.StartDir,
+                reader.StartX,
+                reader.StartY,
+                read.X,
+                read.Y,
+                i - startIndex);
+            Count(counters.ForcedReversalTileByBranch, branch + ":tile=" + FormatByte(read.Tile));
+        }
+    }
+
+    private static string ClassifyForcedReversalBranch(
+        int startDir,
+        int startX,
+        int startY,
+        int probeX,
+        int probeY,
+        int localIndex)
+    {
+        int dx = ((probeX & 0xFF) - (startX & 0xFF)) & 0xFF;
+        int dy = ((probeY & 0xFF) - (startY & 0xFF)) & 0xFF;
+        string suffix = localIndex == 0 ? "first" : "second";
+
+        if ((startDir & LadyBugEnemyDecisionModel.DirLeft) != 0)
+        {
+            if (dx == 0xFF)
+                return "forced-left-first";
+            if (dx == 0xFD)
+                return "forced-left-second";
+            return "forced-left-" + suffix;
+        }
+
+        if ((startDir & LadyBugEnemyDecisionModel.DirUp) != 0)
+        {
+            if (dy == 0xFF)
+                return "forced-up-first";
+            if (dy == 0xF9)
+                return "forced-up-second";
+            return "forced-up-" + suffix;
+        }
+
+        if ((startDir & LadyBugEnemyDecisionModel.DirRight) != 0)
+        {
+            if (dx == 0x02)
+                return "forced-right-first";
+            if (dx == 0x08)
+                return "forced-right-second";
+            return "forced-right-" + suffix;
+        }
+
+        if (dy == 0x02)
+            return "forced-down-first";
+        if (dy == 0x04)
+            return "forced-down-second";
+        return "forced-down-" + suffix;
     }
 
     private static bool TrySelectPreferred(EnemyTraceFrame frame, int slot, out int preferred)
@@ -468,6 +550,10 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         builder.Append(", decisionGateCarryClear=").Append(counters.DecisionGateCarryClear);
         builder.Append(", outsideCenterPath=").Append(counters.OutsideCenterPath);
         builder.Append(", forcedReversalApplied=").Append(counters.ForcedReversalApplied);
+        builder.Append(", forcedReversalChecks=").Append(counters.ForcedReversalChecks);
+        builder.Append(", forcedReversalClear=").Append(counters.ForcedReversalClear);
+        builder.Append(", forcedReversalSet=").Append(counters.ForcedReversalSet);
+        builder.Append(", forcedReversalTileReads=").Append(counters.ForcedReversalTileReads);
         builder.Append(", checks=").Append(counters.Checks);
         builder.Append(", matches=").Append(counters.Matches);
         builder.Append(", mismatches=").Append(counters.Mismatches);
@@ -493,6 +579,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
 
         builder.Append(", sources: ").Append(DescribeDictionary(counters.Sources));
         builder.Append(", tiles: ").Append(DescribeDictionary(counters.FirstTileByBranch));
+        builder.Append(", forcedReversalTiles: ").Append(DescribeDictionary(counters.ForcedReversalTileByBranch));
 
         if (counters.Checks == 0 && counters.SkippedMissingVram > 0)
         {
@@ -500,7 +587,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         }
         else
         {
-            builder.Append(". NOTE: shadow-only; all active normal cycles load scratch from the previous slot state following 0x43F0..0x4405, use the full 0x427E carry gate, run either 0x42E0 preferred-decision or 0x433A outside-center keep/reverse logic, then apply the one-pixel 0x43BA step; authoritative enemy direction/rejectedMask remain reference-synced.");
+            builder.Append(". NOTE: shadow-only; all active normal cycles load scratch from the previous slot state following 0x43F0..0x4405, use the full 0x427E carry gate, run either 0x42E0 preferred-decision or 0x433A outside-center keep/reverse logic, account for the 0x4189 forced-reversal probe on outside-center cycles, then apply the one-pixel 0x43BA step; authoritative enemy direction/rejectedMask remain reference-synced. The current static-player sequence validates the 0x4189 clear path only, not the carry-set 0x4347 reversal branch.");
         }
 
         return builder.ToString();
