@@ -2,11 +2,9 @@
 --
 -- Exact-PC MAME debugger trace for Lady Bug EnemyWork decision diagnostics.
 --
--- v0.6.91 extends the existing EnemyWork exact-PC diagnostic with source-first
--- enemy release / den-exit breakpoints. It deliberately keeps the same filename
--- so the existing C# launcher still auto-enables:
---   -debug -log -debugscript ladybug_preferred_pc_debug_startup.cmd
--- and still builds the usual EnemyWork PC analysis report.
+-- v0.6.94 extends the existing EnemyWork exact-PC diagnostic with the
+-- 0x3C0A tile lookup return breakpoint. This is the first safe step toward a
+-- source-faithful 0x4130 / 0x4189 local-door validator.
 --
 -- Core decision breakpoints:
 --   0x42CC : exact reset write to 61C1 / rejectedMask
@@ -34,8 +32,15 @@
 --   0x3080 : sprite/attribute post-init write
 --   0x4471 : alternate call path to 0x3061
 --
+-- Tile lookup breakpoint added in v0.6.94:
+--   0x3C2B : return from GetTileUnderPlayerProbe / 0x3C0A.
+--            At this point HL must contain:
+--              0xD0A0 + ((D & 0xF8) * 4) + (E >> 3)
+--            This formula intentionally preserves the arcade VRAM layout:
+--            columns, bottom-to-top, not row-major screen order.
+--
 -- This is still a diagnostic, not gameplay simulation. Its job is to reveal the
--- exact order of source-PC events around release, fallback, and commit.
+-- exact order of source-PC events around release, fallback, commit, and tile probes.
 
 local CONFIG = {
     output_prefix = "ladybug_sequence_v8_enemywork_pcdiag",
@@ -137,7 +142,7 @@ local function open_outputs_if_needed()
     output_opened_at_frame = mame_frame
 
     hits_file:write("# Lady Bug EnemyWork exact-PC diagnostic hits\n")
-    hits_file:write("# v0.6.91 includes release/den-exit breakpoints around 05AE/3061/4471 plus decision/fallback/commit breakpoints.\n")
+    hits_file:write("# v0.6.94 includes 0x3C0A/0x3C2B tile lookup return logging, plus release and decision breakpoints.\n")
     hits_file:write("# pollTick/mameFrame are Lua drain time, not exact CPU time.\n")
     hits_file:write("# LBEW payload is emitted at the exact breakpoint through MAME debugger logerror.\n")
     hits_file:write("# The launcher enables -log; inspect tools/mame/lua/error.log as primary raw output.\n")
@@ -302,6 +307,12 @@ local function install_breakpoints()
     set_breakpoint(0x43c4, "43C4_FALLBACK_STEP_INC")
     set_breakpoint(0x43c5, "43C5_FALLBACK_STEP_READ")
 
+    -- 0x3C0A returns with HL pointing at the selected VRAM tile.
+    -- This is the source-level bridge needed before 0x4130 can stop using a
+    -- permissive tile reader.  The expected address is:
+    --   0xD0A0 + ((D & 0xF8) * 4) + (E >> 3)
+    set_breakpoint(0x3c2b, "3C2B_TILE_LOOKUP_RETURN")
+
     -- Context around validation / fallback / forced reversal / commit.
     set_breakpoint(0x3911, "3911_LOGICAL_MAZE_VALIDATE")
     set_breakpoint(0x4130, "4130_LOCAL_DOOR_CHECK_ENTRY")
@@ -335,7 +346,7 @@ local function write_summary(reason)
 
     summary_file:write("Lady Bug EnemyWork exact-PC diagnostic summary\n")
     summary_file:write("============================================\n\n")
-    summary_file:write("version: v0.6.91 release/den-exit breakpoint extension\n")
+    summary_file:write("version: v0.6.94 0x3C0A tile lookup return breakpoint extension\n")
     summary_file:write("reason: " .. tostring(reason) .. "\n")
     summary_file:write("save_state: " .. tostring(CONFIG.save_state) .. "\n")
     summary_file:write("frames_after_tick0_to_capture: " .. tostring(CONFIG.frames_after_tick0_to_capture) .. "\n")
@@ -534,4 +545,4 @@ post_load_subscription = emu.add_machine_post_load_notifier(on_post_load)
 reset_subscription = emu.add_machine_reset_notifier(on_reset)
 frame_subscription = emu.add_machine_frame_notifier(on_frame)
 
-emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.91 release breakpoint extension.")
+emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.94 0x3C0A tile lookup breakpoint extension.")
