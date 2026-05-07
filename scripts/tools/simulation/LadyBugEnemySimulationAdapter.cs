@@ -17,6 +17,10 @@ using System.Collections.Generic;
 /// explicitly accounts for the 0x4189 forced-reversal probe on the 0x433A
 /// outside-center path. The current static-player sequence validates the clear
 /// path only; the carry-set 0x4347 reversal branch remains a later milestone.
+///
+/// v0.7.07b appends an explicit preferred[] generator replay-shadow bridge scoped to active-enemy frames. It
+/// does not remove the preferred[] reference sync yet; it documents and measures
+/// the remaining bridge after the exact-PC 0x2E5C generator validation.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -24,7 +28,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, and source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189, and preferred-generator replay-shadow summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
@@ -60,6 +64,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
         string decisionDiagnostics = LadyBugEnemyDecisionTraceDiagnostics.BuildSummary(referenceFrames);
         string sourceFirst4315Shadow = LadyBugEnemySourceFirst4315ShadowModel.BuildSummary(referenceFrames);
         string sourceFirst4130Shadow = LadyBugEnemyLocalDoor4130ShadowModel.BuildSummary(referenceFrames);
+        string preferredReplayShadow = LadyBugEnemyPreferredGeneratorReplayShadowModel.BuildSummary(referenceFrames);
 
         return new SimulationAdapterResult(
             frames,
@@ -71,6 +76,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             decisionDiagnostics + "; " +
             sourceFirst4315Shadow + "; " +
             sourceFirst4130Shadow + "; " +
+            preferredReplayShadow + "; " +
             "real enemy decision logic is not implemented yet");
     }
 }
