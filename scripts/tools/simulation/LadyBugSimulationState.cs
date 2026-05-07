@@ -30,8 +30,6 @@ public sealed class LadyBugSimulationState
     private int _referenceEnemyActivationEvents;
     private int _denExitCandidateEvents;
     private string _firstDenExitCandidate = string.Empty;
-    private int _referenceRejectedMaskSyncs;
-    private int _referenceFallbackMaskSyncs;
     private int _runtimeRejectedMaskModeledKeeps;
     private int _runtimeRejectedMaskModeledDiffers;
     private int _runtimeFallbackHelperModeledKeeps;
@@ -793,18 +791,6 @@ public sealed class LadyBugSimulationState
                 builder.Append(", first den-exit candidate: ");
                 builder.Append(_firstDenExitCandidate);
             }
-        }
-
-        if (_referenceRejectedMaskSyncs > 0)
-        {
-            builder.Append(", reference rejectedMask syncs=");
-            builder.Append(_referenceRejectedMaskSyncs);
-        }
-
-        if (_referenceFallbackMaskSyncs > 0)
-        {
-            builder.Append(", reference fallback helper syncs=");
-            builder.Append(_referenceFallbackMaskSyncs);
         }
 
         if (_runtimeRejectedMaskModeledKeeps > 0 || _runtimeRejectedMaskModeledDiffers > 0)
