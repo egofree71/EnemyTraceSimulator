@@ -11,9 +11,11 @@ using System.Text;
 /// - 0x4130 reads the true tile value immediately after each 0x3C0A call;
 /// - tile values 35/37 reject vertical probes and 3D/3F reject horizontal probes.
 ///
-/// This v0.7.03 class keeps the v0.7.01 full one-step Enemy_UpdateOne shadow
-/// over all active one-enemy transitions and adds explicit accounting for the
-/// 0x4189 forced-reversal probe used by the outside-center 0x433A path.
+/// v0.7.09 keeps the full one-step Enemy_UpdateOne shadow over all active
+/// one-enemy transitions, but no longer reads the selected preferred[slot]
+/// directly from MAME as its decision input.  It asks the v0.7.07b/v0.7.08
+/// replay provider to reconstruct the preferred[] tuple, then consumes the
+/// reconstructed preferred[slot].
 ///
 /// The current static-player sequence only exercises the 0x4189 clear path:
 /// it does not yet prove the 0x4222 carry-set / 0x4347 reversal branch.
@@ -31,7 +33,7 @@ using System.Text;
 /// </summary>
 public static class LadyBugEnemyLocalDoor4130ShadowModel
 {
-    private const string Version = "v0.7.03";
+    private const string Version = "v0.7.09";
     private const int VramBase = 0xD000;
     private const int VramLength = 0x0400;
 
@@ -67,9 +69,16 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         public int PreferredRejectedCurrentKept;
         public int FallbackSelected;
         public int FallbackNotFound;
+        public int PreferredProviderChecks;
+        public int PreferredProviderMatchesReference;
+        public int PreferredProviderDiffersFromReference;
+        public int PreferredProviderSkips;
         public string FirstMatch = string.Empty;
         public string FirstMismatch = string.Empty;
+        public string FirstPreferredProviderMismatch = string.Empty;
         public readonly Dictionary<string, int> Sources = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, int> PreferredProviderSources = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, int> PreferredProviderSkipReasons = new(StringComparer.Ordinal);
         public readonly Dictionary<string, int> FirstTileByBranch = new(StringComparer.OrdinalIgnoreCase);
         public readonly Dictionary<string, int> ForcedReversalTileByBranch = new(StringComparer.OrdinalIgnoreCase);
     }
@@ -117,7 +126,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         LadyBugEnemyReleaseModel.ReleaseTransitionObservation observation,
         Counters counters)
     {
-        if (!TrySelectPreferred(currentFrame, observation.Slot, out int preferred))
+        if (!TrySelectPreferred(currentFrame, observation.Slot, counters, out int preferred, out string preferredProviderSource))
         {
             counters.SkippedMissingPreferred++;
             return;
@@ -142,9 +151,9 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
             scratch,
             preferred,
             observation.Slot,
-            gate.CarrySet
+            (gate.CarrySet
                 ? "3061_427E_CARRY_SET_4130_RELEASE_DECISION"
-                : "3061_427E_CARRY_CLEAR_433A_RELEASE_OUTSIDE_CENTER",
+                : "3061_427E_CARRY_CLEAR_433A_RELEASE_OUTSIDE_CENTER") + ":" + preferredProviderSource,
             gate,
             counters);
     }
@@ -167,7 +176,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         }
 
         int slot = Math.Clamp(currentEnemy.slot, 0, 3);
-        if (!TrySelectPreferred(currentFrame, slot, out int preferred))
+        if (!TrySelectPreferred(currentFrame, slot, counters, out int preferred, out string preferredProviderSource))
         {
             counters.SkippedMissingPreferred++;
             return;
@@ -218,11 +227,11 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
             scratch,
             preferred,
             slot,
-            gate.CarrySet
+            (gate.CarrySet
                 ? "43F0_427E_CARRY_SET_4130_DECISION_CENTER"
                 : gate.PixelAligned
                     ? "43F0_427E_CARRY_CLEAR_433A_OUTSIDE_CENTER"
-                    : "43F0_427E_PIXEL_UNALIGNED_433A_OUTSIDE_CENTER",
+                    : "43F0_427E_PIXEL_UNALIGNED_433A_OUTSIDE_CENTER") + ":" + preferredProviderSource,
             gate,
             counters);
     }
@@ -446,14 +455,59 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         return "forced-down-" + suffix;
     }
 
-    private static bool TrySelectPreferred(EnemyTraceFrame frame, int slot, out int preferred)
+    private static bool TrySelectPreferred(
+        EnemyTraceFrame frame,
+        int slot,
+        Counters counters,
+        out int preferred,
+        out string providerSource)
     {
         preferred = 0;
+        providerSource = "none";
 
-        if (frame.enemyWork == null || frame.enemyWork.preferred.Count <= slot || slot < 0)
+        if (slot < 0 || slot >= LadyBugMonsterPreferenceSystem.PreferredSlotCount)
             return false;
 
-        preferred = frame.enemyWork.preferred[slot] & 0x0F;
+        if (frame.enemyWork == null || frame.enemyWork.preferred.Count <= slot)
+            return false;
+
+        if (!LadyBugEnemyPreferredGeneratorReplayShadowModel.TryBuildPreferredTupleForActiveFrame(
+                frame,
+                out int[] modeledTuple,
+                out providerSource,
+                out string skipReason))
+        {
+            counters.PreferredProviderSkips++;
+            Count(counters.PreferredProviderSkipReasons, string.IsNullOrEmpty(skipReason) ? "unknown" : skipReason);
+            return false;
+        }
+
+        counters.PreferredProviderChecks++;
+        Count(counters.PreferredProviderSources, providerSource);
+
+        preferred = modeledTuple[slot] & 0x0F;
+        int referencePreferred = frame.enemyWork.preferred[slot] & 0x0F;
+
+        if (preferred == referencePreferred)
+        {
+            counters.PreferredProviderMatchesReference++;
+        }
+        else
+        {
+            counters.PreferredProviderDiffersFromReference++;
+            if (string.IsNullOrEmpty(counters.FirstPreferredProviderMismatch))
+            {
+                counters.FirstPreferredProviderMismatch =
+                    "tick=" + frame.frame +
+                    " mameFrame=" + frame.mameFrame +
+                    " slot=" + slot.ToString(CultureInfo.InvariantCulture) +
+                    " provider=" + providerSource +
+                    " reference=" + FormatByte(referencePreferred) +
+                    " modeled=" + FormatByte(preferred) +
+                    " tuple=" + LadyBugMonsterPreferenceSystem.FormatTuple(modeledTuple);
+            }
+        }
+
         return preferred != 0;
     }
 
@@ -563,6 +617,10 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         builder.Append(", preferredRejectedCurrentKept=").Append(counters.PreferredRejectedCurrentKept);
         builder.Append(", fallbackSelected=").Append(counters.FallbackSelected);
         builder.Append(", fallbackNotFound=").Append(counters.FallbackNotFound);
+        builder.Append(", preferredProviderChecks=").Append(counters.PreferredProviderChecks);
+        builder.Append(", preferredProviderMatchesReference=").Append(counters.PreferredProviderMatchesReference);
+        builder.Append(", preferredProviderDiffersFromReference=").Append(counters.PreferredProviderDiffersFromReference);
+        builder.Append(", preferredProviderSkips=").Append(counters.PreferredProviderSkips);
         builder.Append(", skippedMissingEnemyWork=").Append(counters.SkippedMissingEnemyWork);
         builder.Append(", skippedMissingPreferred=").Append(counters.SkippedMissingPreferred);
         builder.Append(", skippedMissingVram=").Append(counters.SkippedMissingVram);
@@ -577,6 +635,11 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         if (!string.IsNullOrEmpty(counters.FirstMismatch))
             builder.Append(", firstMismatch: ").Append(counters.FirstMismatch);
 
+        if (!string.IsNullOrEmpty(counters.FirstPreferredProviderMismatch))
+            builder.Append(", firstPreferredProviderMismatch: ").Append(counters.FirstPreferredProviderMismatch);
+
+        builder.Append(", preferredProviderSources: ").Append(DescribeDictionary(counters.PreferredProviderSources));
+        builder.Append(", preferredProviderSkips: ").Append(DescribeDictionary(counters.PreferredProviderSkipReasons));
         builder.Append(", sources: ").Append(DescribeDictionary(counters.Sources));
         builder.Append(", tiles: ").Append(DescribeDictionary(counters.FirstTileByBranch));
         builder.Append(", forcedReversalTiles: ").Append(DescribeDictionary(counters.ForcedReversalTileByBranch));
@@ -587,7 +650,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         }
         else
         {
-            builder.Append(". NOTE: shadow-only; all active normal cycles load scratch from the previous slot state following 0x43F0..0x4405, use the full 0x427E carry gate, run either 0x42E0 preferred-decision or 0x433A outside-center keep/reverse logic, account for the 0x4189 forced-reversal probe on outside-center cycles, then apply the one-pixel 0x43BA step; authoritative enemy direction/rejectedMask remain reference-synced. The current static-player sequence validates the 0x4189 clear path only, not the carry-set 0x4347 reversal branch.");
+            builder.Append(". NOTE: shadow-only; all active normal cycles load scratch from the previous slot state following 0x43F0..0x4405, use the full 0x427E carry gate, run either 0x42E0 preferred-decision or 0x433A outside-center keep/reverse logic, account for the 0x4189 forced-reversal probe on outside-center cycles, then apply the one-pixel 0x43BA step. v0.7.09 consumes preferred[slot] from the validated preferred replay provider instead of reading the selected value directly from MAME. The provider is still bridge/classifier based until the exact-PC LD A,R tape is injected. The current static-player sequence validates the 0x4189 clear path only, not the carry-set 0x4347 reversal branch.");
         }
 
         return builder.ToString();

@@ -25,6 +25,10 @@ using System.Collections.Generic;
 /// v0.7.08 adds a second bridge check: the selected preferred[slot] consumed by
 /// Enemy_UpdateOne is supplied by the replay/classifier provider and compared
 /// against the reference slot value before any authoritative switch is made.
+///
+/// v0.7.09 moves that bridge into the full source-first Enemy_UpdateOne shadow:
+/// 0x42E0 now consumes preferred[slot] from the replay provider, while the
+/// adapter itself remains reference-synced for visible comparison frames.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -32,7 +36,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189, preferred-generator replay-shadow, and Enemy_UpdateOne preferred-input bridge summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 with replay-provider preferred input, preferred-generator replay-shadow, and Enemy_UpdateOne preferred-input bridge summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
