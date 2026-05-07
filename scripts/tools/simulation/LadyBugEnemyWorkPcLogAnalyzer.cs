@@ -8,7 +8,7 @@ using System.Linq;
 /// tools/mame/lua/ladybug_enemywork_pc_trace.lua.
 ///
 /// The diagnostic is observational: it counts exact-PC events around rejectedMask,
-/// fallbackMask, local-door validation, fallback, forced-reversal paths, the 0x3C0A
+/// fallbackMask, the 0x427E decision gate, local-door validation, fallback, forced-reversal paths, the 0x3C0A
 /// tile-address lookup helper, and the 0x4130 caller-side tile values.
 ///
 /// Important note inherited from v0.6.95:
@@ -110,6 +110,8 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("- 3C2B_TILE_LOOKUP_RETURN validates only the HL address computed by 0x3C0A. 0x3C0A restores AF/BC before returning; A is not the tile value there.");
         lines.Add("- The true 0x4130 tile values are captured at the CP instruction immediately after LD A,(HL): 4144/4157/416A/417D.");
         lines.Add("- A logical maze cell appears to span 2x2 8x8 tiles. 0x4130 still probes one concrete 8x8 tile around that logical cell.");
+        lines.Add("- 427E_DECISION_GATE_ENTRY through 42B8/42E0/433A trace the complete source decision gate, not just the simple pixel alignment predicate.");
+        lines.Add("- 42B6_DECISION_GATE_RET_CARRY_SET means 0x42DD should fall through to 0x42E0 preferred-decision logic; 42B8_DECISION_GATE_RET_CARRY_CLEAR means 0x42DD should jump to 0x433A.");
         lines.Add("- 4187_LOCAL_DOOR_REJECT is the already-observed door/local-tile rejection point.");
         lines.Add("- 4185_LOCAL_DOOR_ACCEPT is the local-door success return path immediately before AND A / RET.");
         lines.Add("- 4241_FALLBACK_ENTRY is the already-observed generic fallback entry point.");

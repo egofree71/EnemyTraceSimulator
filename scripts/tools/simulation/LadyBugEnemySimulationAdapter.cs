@@ -12,6 +12,10 @@ using System.Collections.Generic;
 /// v0.6.93 keeps the reference-synced comparison path unchanged and appends a
 /// source-first 0x4315 shadow check that runs the reconstructed 0x42E6 model over
 /// the exact-PC validated current-kept cycles.
+///
+/// v0.6.98 keeps the non-invasive 0x4130 local-door shadow check, but normal
+/// decision-center cycles now start from the previous enemy slot state, matching
+/// the source load path at 0x43F0..0x4405.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -19,7 +23,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, and source-first 0x4315 summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, and source-first 0x4130 local-door summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
@@ -54,6 +58,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
         string decisionDiagnostics = LadyBugEnemyDecisionTraceDiagnostics.BuildSummary(referenceFrames);
         string sourceFirst4315Shadow = LadyBugEnemySourceFirst4315ShadowModel.BuildSummary(referenceFrames);
+        string sourceFirst4130Shadow = LadyBugEnemyLocalDoor4130ShadowModel.BuildSummary(referenceFrames);
 
         return new SimulationAdapterResult(
             frames,
@@ -64,6 +69,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             simulationState.BuildPreferredShadowDiagnosticSummary() + "; " +
             decisionDiagnostics + "; " +
             sourceFirst4315Shadow + "; " +
+            sourceFirst4130Shadow + "; " +
             "real enemy decision logic is not implemented yet");
     }
 }

@@ -2,8 +2,8 @@
 --
 -- Exact-PC MAME debugger trace for Lady Bug EnemyWork decision diagnostics.
 --
--- v0.6.96 extends the 0x3C0A address diagnostic with exact-PC tile-value
--- breakpoints for the 0x4130 local-door validator.
+-- v0.6.99 extends the 0x4130/0x3C0A diagnostics with exact-PC
+-- breakpoints around the complete 0x427E decision gate.
 --
 -- Core decision breakpoints:
 --   0x42CC : exact reset write to 61C1 / rejectedMask
@@ -45,6 +45,20 @@
 --   0x416A : immediately after 0x4169 LD A,(HL), up branch tile value in A
 --   0x417D : immediately after 0x417C LD A,(HL), right branch tile value in A
 --
+
+-- Decision-gate breakpoints added in v0.6.99:
+--   0x42D2 : load temp dir/x/y before the decision gate call
+--   0x42DA : call Enemy_IsAtDecisionCenter / 0x427E
+--   0x427E : 0x427E entry, after A=tempDir and D/E=temp X/Y are loaded
+--   0x428D : alignment passed; 0x427E is about to inspect direction geometry
+--   0x4292 : horizontal-direction helper path inside 0x427E
+--   0x429A : vertical-direction helper path inside 0x427E
+--   0x42AA : helper compare path before carry/zero decision
+--   0x42B6 : 0x427E returns carry set; caller should execute preferred decision
+--   0x42B8 : 0x427E returns carry clear; caller should skip to forced-reversal path
+--   0x42DD : caller branch point immediately after 0x427E
+--   0x42E0 : preferred decision path was actually entered
+--   0x433A : outside-center / forced-reversal path was actually entered
 -- Important: Lady Bug's logical maze cell appears to be 16x16 pixels, i.e. 2x2
 -- tiles. 0x3C0A/0x4130 still operate on individual 8x8 tile probes inside or
 -- around that logical cell.
@@ -152,7 +166,7 @@ local function open_outputs_if_needed()
     output_opened_at_frame = mame_frame
 
     hits_file:write("# Lady Bug EnemyWork exact-PC diagnostic hits\n")
-    hits_file:write("# v0.6.96 includes 0x4130 local-door tile value breakpoints, plus 0x3C0A address validation.\n")
+    hits_file:write("# v0.6.99 includes 0x427E decision-gate breakpoints, plus 0x4130 tile values and 0x3C0A address validation.\n")
     hits_file:write("# pollTick/mameFrame are Lua drain time, not exact CPU time.\n")
     hits_file:write("# LBEW payload is emitted at the exact breakpoint through MAME debugger logerror.\n")
     hits_file:write("# The launcher enables -log; inspect tools/mame/lua/error.log as primary raw output.\n")
@@ -317,6 +331,24 @@ local function install_breakpoints()
     set_breakpoint(0x43c4, "43C4_FALLBACK_STEP_INC")
     set_breakpoint(0x43c5, "43C5_FALLBACK_STEP_READ")
 
+    -- 0x427E decision gate around Enemy_UpdateOne.
+    -- This is intentionally source-first diagnostic instrumentation: the code
+    -- is more than the simple alignment predicate currently used by the C#
+    -- shadow model. The caller enters 0x42E6 only if 0x427E returns carry set;
+    -- otherwise it jumps to 0x433A forced-reversal / plain movement path.
+    set_breakpoint(0x42d2, "42D2_LOAD_TEMP_BEFORE_DECISION_GATE")
+    set_breakpoint(0x42da, "42DA_CALL_427E_DECISION_GATE")
+    set_breakpoint(0x427e, "427E_DECISION_GATE_ENTRY")
+    set_breakpoint(0x428d, "428D_DECISION_GATE_ALIGNMENT_PASSED")
+    set_breakpoint(0x4292, "4292_DECISION_GATE_HORIZONTAL_HELPER")
+    set_breakpoint(0x429a, "429A_DECISION_GATE_VERTICAL_HELPER")
+    set_breakpoint(0x42aa, "42AA_DECISION_GATE_HELPER_COMPARE")
+    set_breakpoint(0x42b6, "42B6_DECISION_GATE_RET_CARRY_SET")
+    set_breakpoint(0x42b8, "42B8_DECISION_GATE_RET_CARRY_CLEAR")
+    set_breakpoint(0x42dd, "42DD_AFTER_427E_BRANCH_POINT")
+    set_breakpoint(0x42e0, "42E0_ENTER_PREFERRED_DECISION")
+    set_breakpoint(0x433a, "433A_ENTER_OUTSIDE_CENTER_PATH")
+
     -- 0x3C0A returns with HL pointing at the selected VRAM tile.
     -- This validates the source address formula but not the tile value.
     set_breakpoint(0x3c2b, "3C2B_TILE_LOOKUP_RETURN")
@@ -362,7 +394,7 @@ local function write_summary(reason)
 
     summary_file:write("Lady Bug EnemyWork exact-PC diagnostic summary\n")
     summary_file:write("============================================\n\n")
-    summary_file:write("version: v0.6.96 local-door tile value breakpoint extension\n")
+    summary_file:write("version: v0.6.99 0x427E decision-gate breakpoint extension\n")
     summary_file:write("reason: " .. tostring(reason) .. "\n")
     summary_file:write("save_state: " .. tostring(CONFIG.save_state) .. "\n")
     summary_file:write("frames_after_tick0_to_capture: " .. tostring(CONFIG.frames_after_tick0_to_capture) .. "\n")
@@ -561,4 +593,4 @@ post_load_subscription = emu.add_machine_post_load_notifier(on_post_load)
 reset_subscription = emu.add_machine_reset_notifier(on_reset)
 frame_subscription = emu.add_machine_frame_notifier(on_frame)
 
-emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.96 local-door tile value breakpoint extension.")
+emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.99 0x427E decision-gate breakpoint extension.")

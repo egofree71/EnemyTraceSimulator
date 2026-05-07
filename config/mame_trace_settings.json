@@ -8,13 +8,13 @@
   "luaScriptPath": "res://tools/mame/lua/ladybug_enemywork_pc_trace.lua",
   "outputDirectory": "res://traces/mame",
   "outputPrefix": "ladybug_sequence_v8_enemywork_pcdiag",
-  "framesAfterTick0": 500,
+  "framesAfterTick0": 600,
   "windowed": true,
   "enableDebugger": false,
   "autobootDelay": 1,
   "exitWhenDone": true,
   "pauseWhenDone": false,
   "flushEveryTraceLine": true,
-  "includeFullMemoryEachFrame": false,
+  "includeFullMemoryEachFrame": true,
   "includeLogicalMazeEachFrame": true
 }
