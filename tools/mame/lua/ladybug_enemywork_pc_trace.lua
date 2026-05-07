@@ -2,8 +2,8 @@
 --
 -- Exact-PC MAME debugger trace for Lady Bug EnemyWork decision diagnostics.
 --
--- v0.7.02 extends the EnemyWork exact-PC diagnostics with source-first
--- forced-reversal tile probes around 0x4189 / 0x4347.
+-- v0.7.05b extends the EnemyWork exact-PC diagnostics with source-first
+-- preferred[] generator branch probes around 0x2E5C / 0x2EC7 / 0x477D.
 --
 -- Core decision breakpoints:
 --   0x42CC : exact reset write to 61C1 / rejectedMask
@@ -59,6 +59,22 @@
 --   0x42DD : caller branch point immediately after 0x427E
 --   0x42E0 : preferred decision path was actually entered
 --   0x433A : outside-center / forced-reversal path was actually entered
+
+
+-- Preferred-direction generator breakpoints added in v0.7.05:
+--   0x2E5C : base preferred[] generator entry.
+--   0x2E6A : 61B9 timer threshold value is in A; HL points at 0EA4/0EA5 threshold table.
+--   0x2E84 : input read result is in A before zero/non-zero branch.
+--   0x2E8C : rotate branch selected; A contains PLAYER_DIR_CURRENT.
+--   0x2E91 : rotate loop before SRL A.
+--   0x2E97 : rotate branch writes A into 61C4..61C7.
+--   0x2E9E : random branch selected.
+--   0x2EA3 : random loop before LD A,R.
+--   0x2EA5 : true LD A,R value is now in A before AND 0F.
+--   0x2EC7 : random branch writes A into 61C4..61C7.
+--   0x2ECB : preferred base generator calls BFS/chase override.
+--   0x46D8 : Enemy_ApplyChaseBfsOverride entry.
+--   0x477D : BFS/chase override writes A into preferred[IY-61C4].
 
 -- Forced-reversal tile-value breakpoints added in v0.7.02:
 --   0x4189 : Enemy_CheckDoorForcedReversal entry
@@ -182,7 +198,7 @@ local function open_outputs_if_needed()
     output_opened_at_frame = mame_frame
 
     hits_file:write("# Lady Bug EnemyWork exact-PC diagnostic hits\n")
-    hits_file:write("# v0.6.99 includes 0x427E decision-gate breakpoints, plus 0x4130 tile values and 0x3C0A address validation.\n")
+    hits_file:write("# v0.7.05b includes preferred[] generator, 0x427E decision-gate, 0x4130 tile, and 0x4189 forced-reversal diagnostics.\n")
     hits_file:write("# pollTick/mameFrame are Lua drain time, not exact CPU time.\n")
     hits_file:write("# LBEW payload is emitted at the exact breakpoint through MAME debugger logerror.\n")
     hits_file:write("# The launcher enables -log; inspect tools/mame/lua/error.log as primary raw output.\n")
@@ -383,6 +399,23 @@ local function install_breakpoints()
     set_breakpoint(0x4187, "4187_LOCAL_DOOR_REJECT")
     set_breakpoint(0x4241, "4241_FALLBACK_ENTRY")
 
+    -- 0x2E5C preferred[] generator and BFS/chase override.
+    -- v0.7.05 comments/analyzer expected these labels, but the first package
+    -- accidentally omitted the actual bpset calls. v0.7.05b installs them.
+    set_breakpoint(0x2e5c, "2E5C_PREF_ENTRY")
+    set_breakpoint(0x2e6a, "2E6A_PREF_THRESHOLD_COMPARE")
+    set_breakpoint(0x2e84, "2E84_PREF_INPUT_READ_RESULT")
+    set_breakpoint(0x2e8c, "2E8C_PREF_ROTATE_BRANCH")
+    set_breakpoint(0x2e91, "2E91_PREF_ROTATE_LOOP")
+    set_breakpoint(0x2e97, "2E97_PREF_ROTATE_WRITE")
+    set_breakpoint(0x2e9e, "2E9E_PREF_RANDOM_BRANCH")
+    set_breakpoint(0x2ea3, "2EA3_PREF_RANDOM_LOOP_BEFORE_LD_R")
+    set_breakpoint(0x2ea5, "2EA5_PREF_RANDOM_R_VALUE")
+    set_breakpoint(0x2ec7, "2EC7_PREF_RANDOM_WRITE")
+    set_breakpoint(0x2ecb, "2ECB_PREF_CALL_BFS_OVERRIDE")
+    set_breakpoint(0x46d8, "46D8_BFS_OVERRIDE_ENTRY")
+    set_breakpoint(0x477d, "477D_BFS_OVERRIDE_WRITE")
+
     -- 0x4189 forced-reversal tile probes and caller-side branch points.
     -- These are only meaningful on outside-center cycles that reach 0x433A.
     set_breakpoint(0x4189, "4189_FORCED_REVERSAL_CHECK_ENTRY")
@@ -427,7 +460,7 @@ local function write_summary(reason)
 
     summary_file:write("Lady Bug EnemyWork exact-PC diagnostic summary\n")
     summary_file:write("============================================\n\n")
-    summary_file:write("version: v0.7.02 forced-reversal 0x4189 tile-probe breakpoint extension\n")
+    summary_file:write("version: v0.7.05b preferred[] generator exact-PC breakpoint extension\n")
     summary_file:write("reason: " .. tostring(reason) .. "\n")
     summary_file:write("save_state: " .. tostring(CONFIG.save_state) .. "\n")
     summary_file:write("frames_after_tick0_to_capture: " .. tostring(CONFIG.frames_after_tick0_to_capture) .. "\n")
@@ -626,4 +659,4 @@ post_load_subscription = emu.add_machine_post_load_notifier(on_post_load)
 reset_subscription = emu.add_machine_reset_notifier(on_reset)
 frame_subscription = emu.add_machine_frame_notifier(on_frame)
 
-emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.99 0x427E decision-gate breakpoint extension.")
+emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.7.05 preferred[] generator exact-PC breakpoint extension.")

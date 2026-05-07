@@ -79,6 +79,7 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         AppendCountSection(lines, "Hits by fallbackMask", events.GroupBy(e => e.Fallback).OrderByDescending(g => g.Count()).ThenBy(g => g.Key));
         AppendCountSection(lines, "Hits by derived active enemy count", events.GroupBy(e => e.ActiveEnemyCount.ToString(CultureInfo.InvariantCulture)).OrderByDescending(g => g.Count()).ThenBy(g => g.Key));
 
+        AppendPreferredGeneratorSummary(lines, events);
         AppendTileLookup3C0aSummary(lines, events);
         AppendLocalDoorTileValueSummary(lines, events);
         AppendForcedReversalTileProbeSummary(lines, events);
@@ -92,6 +93,11 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("------------");
         foreach (EnemyWorkPcEvent e in events.Take(60))
             lines.Add(FormatEvent(e));
+
+        AppendEventSection(
+            lines,
+            "First preferred[] generator events",
+            events.Where(IsPreferredGeneratorEvent).Take(120));
 
         AppendEventSection(
             lines,
@@ -130,6 +136,9 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add(string.Empty);
         lines.Add("Interpretation hints");
         lines.Add("--------------------");
+        lines.Add("- 2E5C..2ECB is the base preferred[] generator. 2E97 is the rotate-branch write path; 2EC7 is the LD A,R random-branch write path.");
+        lines.Add("- 2EA5 captures the true A value immediately after LD A,R, before AND 0F. This is the value needed for a source-first random-branch model.");
+        lines.Add("- 477D_BFS_OVERRIDE_WRITE observes the chase/BFS preferred[] overwrite; IY identifies the preferred slot and A is the overwritten direction.");
         lines.Add("- 42CC_REJECT_RESET and 42CF_FALLBACK_RESET are the per-enemy scratch reset writes at the start of Enemy_UpdateOne.");
         lines.Add("- 4315_REJECT_OR_CANDIDATE writes rejectedMask |= rejected preferred candidate after logical/local rejection.");
         lines.Add("- 4331_REJECT_OR_TEMPDIR writes rejectedMask |= current temp direction before entering fallback.");
@@ -149,6 +158,78 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("- Active enemy count is derived by this analyzer from e0..e3 raw bytes because the debugger action cannot call Lua helpers at exact breakpoint time.");
 
         return lines;
+    }
+
+
+    private static void AppendPreferredGeneratorSummary(List<string> lines, IReadOnlyList<EnemyWorkPcEvent> events)
+    {
+        List<EnemyWorkPcEvent> preferredEvents = events
+            .Where(IsPreferredGeneratorEvent)
+            .ToList();
+
+        lines.Add(string.Empty);
+        lines.Add("preferred[] generator exact-PC summary");
+        lines.Add("--------------------------------------");
+
+        if (preferredEvents.Count == 0)
+        {
+            lines.Add("no preferred[] generator events were captured");
+            lines.Add("expected sources when present: 2E5C/2E97/2EA5/2EC7/2ECB/46D8/477D");
+            return;
+        }
+
+        int entries = CountSource(preferredEvents, "2E5C_PREF_ENTRY");
+        int rotateBranch = CountSource(preferredEvents, "2E8C_PREF_ROTATE_BRANCH");
+        int rotateWrites = CountSource(preferredEvents, "2E97_PREF_ROTATE_WRITE");
+        int randomBranch = CountSource(preferredEvents, "2E9E_PREF_RANDOM_BRANCH");
+        int randomRValues = CountSource(preferredEvents, "2EA5_PREF_RANDOM_R_VALUE");
+        int randomWrites = CountSource(preferredEvents, "2EC7_PREF_RANDOM_WRITE");
+        int bfsEntries = CountSource(preferredEvents, "46D8_BFS_OVERRIDE_ENTRY");
+        int bfsWrites = CountSource(preferredEvents, "477D_BFS_OVERRIDE_WRITE");
+
+        lines.Add($"events={preferredEvents.Count}, entries2E5C={entries}, rotateBranch={rotateBranch}, rotateWrites2E97={rotateWrites}, randomBranch={randomBranch}, randomRValues2EA5={randomRValues}, randomWrites2EC7={randomWrites}, bfsEntries46D8={bfsEntries}, bfsWrites477D={bfsWrites}");
+
+        AppendCountSection(lines, "preferred writes by source and A", preferredEvents
+            .Where(e => e.Source.Equals("2E97_PREF_ROTATE_WRITE", StringComparison.OrdinalIgnoreCase) ||
+                        e.Source.Equals("2EC7_PREF_RANDOM_WRITE", StringComparison.OrdinalIgnoreCase) ||
+                        e.Source.Equals("477D_BFS_OVERRIDE_WRITE", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(e => e.Source + ":A=" + e.A)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key));
+
+        AppendCountSection(lines, "random LD A,R low nibble at 2EA5", preferredEvents
+            .Where(e => e.Source.Equals("2EA5_PREF_RANDOM_R_VALUE", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(e => TryParseHexByte(e.A, out int a) ? (a & 0x0F).ToString("X1", CultureInfo.InvariantCulture) : "??")
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key));
+
+        AppendCountSection(lines, "rotate branch playerDir at 2E8C", preferredEvents
+            .Where(e => e.Source.Equals("2E8C_PREF_ROTATE_BRANCH", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(e => e.A)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key));
+
+        AppendCountSection(lines, "BFS override target IY/A at 477D", preferredEvents
+            .Where(e => e.Source.Equals("477D_BFS_OVERRIDE_WRITE", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(e => "IY=" + e.Iy + ":A=" + e.A)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key));
+
+        lines.Add("sample preferred events:");
+        foreach (EnemyWorkPcEvent e in preferredEvents.Take(40))
+            lines.Add("  " + FormatEvent(e));
+    }
+
+    private static bool IsPreferredGeneratorEvent(EnemyWorkPcEvent e)
+    {
+        return e.Source.StartsWith("2E", StringComparison.OrdinalIgnoreCase) ||
+               e.Source.Equals("46D8_BFS_OVERRIDE_ENTRY", StringComparison.OrdinalIgnoreCase) ||
+               e.Source.Equals("477D_BFS_OVERRIDE_WRITE", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CountSource(IEnumerable<EnemyWorkPcEvent> events, string source)
+    {
+        return events.Count(e => e.Source.Equals(source, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void AppendTileLookup3C0aSummary(List<string> lines, IReadOnlyList<EnemyWorkPcEvent> events)
