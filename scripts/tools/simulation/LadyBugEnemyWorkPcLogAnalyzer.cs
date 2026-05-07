@@ -215,9 +215,358 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             .OrderByDescending(g => g.Count())
             .ThenBy(g => g.Key));
 
+        AppendPreferredGeneratorModelValidation(lines, events);
+
         lines.Add("sample preferred events:");
         foreach (EnemyWorkPcEvent e in preferredEvents.Take(40))
             lines.Add("  " + FormatEvent(e));
+    }
+
+
+    private static void AppendPreferredGeneratorModelValidation(List<string> lines, IReadOnlyList<EnemyWorkPcEvent> events)
+    {
+        List<PreferredGeneratorCall> calls = BuildPreferredGeneratorCalls(events);
+
+        int modeledCalls = 0;
+        int branchMatches = 0;
+        int branchMismatches = 0;
+        int baseWriteChecks = 0;
+        int baseWriteMatches = 0;
+        int baseWriteMismatches = 0;
+        int finalTupleChecks = 0;
+        int finalTupleMatches = 0;
+        int finalTupleMismatches = 0;
+        int bfsOverrideChecks = 0;
+        int bfsOverrideValidTargets = 0;
+        int bfsOverrideInvalidTargets = 0;
+        int randomRWritePairs = 0;
+        int randomRWritePairMatches = 0;
+        int randomRWritePairMismatches = 0;
+        string firstMismatch = string.Empty;
+        var branchCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (PreferredGeneratorCall call in calls)
+        {
+            EnemyWorkPcEvent? entryOrNull = call.Entry;
+            if (entryOrNull == null)
+                continue;
+
+            EnemyWorkPcEvent entry = entryOrNull;
+            modeledCalls++;
+            string branch = call.BranchKind;
+            Increment(branchCounts, branch);
+
+            if (!TryModelBasePreferredTuple(call, out int[] baseCandidate, out string modelError))
+            {
+                branchMismatches++;
+                if (string.IsNullOrEmpty(firstMismatch))
+                    firstMismatch = $"call={call.Index} branch={branch} cannot model base tuple: {modelError} entry={FormatEvent(entry)}";
+                continue;
+            }
+
+            branchMatches++;
+
+            List<EnemyWorkPcEvent> baseWrites = call.BaseWrites;
+            for (int i = 0; i < baseWrites.Count && i < baseCandidate.Length; i++)
+            {
+                baseWriteChecks++;
+                if (TryParseHexByte(baseWrites[i].A, out int actualWrite) &&
+                    (actualWrite & 0x0F) == (baseCandidate[i] & 0x0F))
+                {
+                    baseWriteMatches++;
+                }
+                else
+                {
+                    baseWriteMismatches++;
+                    if (string.IsNullOrEmpty(firstMismatch))
+                    {
+                        firstMismatch =
+                            $"call={call.Index} branch={branch} base write mismatch slot={i} " +
+                            $"expected={FormatByte(baseCandidate[i])} actual={baseWrites[i].A} event={FormatEvent(baseWrites[i])}";
+                    }
+                }
+            }
+
+            if (branch.Equals("random", StringComparison.OrdinalIgnoreCase))
+            {
+                int pairs = Math.Min(call.RandomRValues.Count, call.RandomWrites.Count);
+                for (int i = 0; i < pairs; i++)
+                {
+                    randomRWritePairs++;
+                    if (!TryParseHexByte(call.RandomRValues[i].A, out int rValue) ||
+                        !TryParseHexByte(call.RandomWrites[i].A, out int actualDirection))
+                    {
+                        randomRWritePairMismatches++;
+                        continue;
+                    }
+
+                    int expectedDirection = DirectionFromRandomNibble(rValue);
+                    if ((expectedDirection & 0x0F) == (actualDirection & 0x0F))
+                    {
+                        randomRWritePairMatches++;
+                    }
+                    else
+                    {
+                        randomRWritePairMismatches++;
+                        if (string.IsNullOrEmpty(firstMismatch))
+                        {
+                            firstMismatch =
+                                $"call={call.Index} random LD A,R pair mismatch slot={i} " +
+                                $"r={call.RandomRValues[i].A} expected={FormatByte(expectedDirection)} actual={call.RandomWrites[i].A} event={FormatEvent(call.RandomWrites[i])}";
+                        }
+                    }
+                }
+            }
+
+            int[] finalCandidate = (int[])baseCandidate.Clone();
+            foreach (EnemyWorkPcEvent bfsWrite in call.BfsWrites)
+            {
+                bfsOverrideChecks++;
+                if (TryApplyBfsOverride(finalCandidate, bfsWrite, out string bfsError))
+                {
+                    bfsOverrideValidTargets++;
+                }
+                else
+                {
+                    bfsOverrideInvalidTargets++;
+                    if (string.IsNullOrEmpty(firstMismatch))
+                        firstMismatch = $"call={call.Index} invalid BFS override: {bfsError} event={FormatEvent(bfsWrite)}";
+                }
+            }
+
+            if (TryParsePreferredTuple(call.FinalPreferred, out int[] finalObserved))
+            {
+                finalTupleChecks++;
+                if (PreferredTupleEquals(finalCandidate, finalObserved))
+                {
+                    finalTupleMatches++;
+                }
+                else
+                {
+                    finalTupleMismatches++;
+                    if (string.IsNullOrEmpty(firstMismatch))
+                    {
+                        firstMismatch =
+                            $"call={call.Index} final tuple mismatch branch={branch} " +
+                            $"expected={FormatTuple(finalCandidate)} actual={FormatTuple(finalObserved)} " +
+                            $"entry={FormatEvent(entry)} finalEvent={FormatEvent(call.FinalEvent)}";
+                    }
+                }
+            }
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("preferred[] generator C# model validation");
+        lines.Add("-----------------------------------------");
+        lines.Add(
+            $"calls={calls.Count}, modeledCalls={modeledCalls}, branchMatches={branchMatches}, branchMismatches={branchMismatches}, " +
+            $"baseWriteChecks={baseWriteChecks}, baseWriteMatches={baseWriteMatches}, baseWriteMismatches={baseWriteMismatches}");
+        lines.Add(
+            $"randomRWritePairs={randomRWritePairs}, randomRWritePairMatches={randomRWritePairMatches}, randomRWritePairMismatches={randomRWritePairMismatches}");
+        lines.Add(
+            $"bfsOverrideChecks={bfsOverrideChecks}, bfsOverrideValidTargets={bfsOverrideValidTargets}, bfsOverrideInvalidTargets={bfsOverrideInvalidTargets}");
+        lines.Add(
+            $"finalTupleChecks={finalTupleChecks}, finalTupleMatches={finalTupleMatches}, finalTupleMismatches={finalTupleMismatches}");
+
+        lines.Add("branches modeled:");
+        foreach (KeyValuePair<string, int> pair in branchCounts.OrderByDescending(p => p.Value).ThenBy(p => p.Key))
+            lines.Add($"  {pair.Key}: {pair.Value}");
+
+        if (string.IsNullOrEmpty(firstMismatch))
+        {
+            lines.Add("first mismatch: none");
+        }
+        else
+        {
+            lines.Add("first mismatch: " + firstMismatch);
+        }
+    }
+
+    private static List<PreferredGeneratorCall> BuildPreferredGeneratorCalls(IReadOnlyList<EnemyWorkPcEvent> preferredEvents)
+    {
+        var calls = new List<PreferredGeneratorCall>();
+        PreferredGeneratorCall? current = null;
+
+        foreach (EnemyWorkPcEvent e in preferredEvents)
+        {
+            if (e.Source.Equals("2E5C_PREF_ENTRY", StringComparison.OrdinalIgnoreCase))
+            {
+                if (current != null)
+                    calls.Add(current);
+
+                current = new PreferredGeneratorCall(calls.Count, e);
+            }
+
+            current ??= new PreferredGeneratorCall(calls.Count, null);
+            current.Events.Add(e);
+        }
+
+        if (current != null)
+            calls.Add(current);
+
+        return calls;
+    }
+
+    private static bool TryModelBasePreferredTuple(PreferredGeneratorCall call, out int[] candidate, out string error)
+    {
+        candidate = new[] { 0, 0, 0, 0 };
+        error = string.Empty;
+
+        if (call.RotateBranch != null)
+        {
+            if (!TryParseHexByte(call.RotateBranch.A, out int seed))
+            {
+                error = "missing rotate seed/player direction at 2E8C";
+                return false;
+            }
+
+            candidate = GenerateRotateBranch(seed);
+            return true;
+        }
+
+        if (call.RandomBranch != null)
+        {
+            if (call.RandomRValues.Count < 4)
+            {
+                error = $"random branch has only {call.RandomRValues.Count} LD A,R values";
+                return false;
+            }
+
+            for (int i = 0; i < candidate.Length; i++)
+            {
+                if (!TryParseHexByte(call.RandomRValues[i].A, out int rValue))
+                {
+                    error = $"cannot parse random R value at slot {i}";
+                    return false;
+                }
+
+                candidate[i] = DirectionFromRandomNibble(rValue);
+            }
+
+            return true;
+        }
+
+        error = "no rotate or random branch marker found";
+        return false;
+    }
+
+    private static int[] GenerateRotateBranch(int playerDirectionCurrent)
+    {
+        int[] preferred = new int[4];
+        int direction = playerDirectionCurrent & 0x0F;
+
+        for (int i = 0; i < preferred.Length; i++)
+        {
+            direction = RotateRight4(direction);
+            preferred[i] = direction;
+        }
+
+        return preferred;
+    }
+
+    private static int DirectionFromRandomNibble(int rValue)
+    {
+        int value = ((rValue & 0x0F) >> 1) + 1;
+
+        if (value < 3)
+            return 0x01;
+
+        if (value < 5)
+            return 0x02;
+
+        if (value < 7)
+            return 0x04;
+
+        return 0x08;
+    }
+
+    private static int RotateRight4(int direction)
+    {
+        int value = direction & 0x0F;
+        int shifted = (value >> 1) & 0x0F;
+
+        if ((value & 0x01) != 0)
+            shifted |= 0x08;
+
+        return shifted & 0x0F;
+    }
+
+    private static bool TryApplyBfsOverride(int[] preferred, EnemyWorkPcEvent bfsWrite, out string error)
+    {
+        error = string.Empty;
+
+        if (!TryParseHexWord(bfsWrite.Iy, out int iyAddress))
+        {
+            error = "cannot parse IY";
+            return false;
+        }
+
+        int slot = iyAddress - 0x61C4;
+        if (slot < 0 || slot >= preferred.Length)
+        {
+            error = "IY outside preferred[] range: " + bfsWrite.Iy;
+            return false;
+        }
+
+        if (!TryParseHexByte(bfsWrite.A, out int direction) || !IsDirection(direction))
+        {
+            error = "invalid direction A=" + bfsWrite.A;
+            return false;
+        }
+
+        preferred[slot] = direction & 0x0F;
+        return true;
+    }
+
+    private static bool TryParsePreferredTuple(string text, out int[] tuple)
+    {
+        tuple = new[] { 0, 0, 0, 0 };
+        if (string.IsNullOrWhiteSpace(text) || text == "??")
+            return false;
+
+        string[] parts = text.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length < 4)
+            return false;
+
+        for (int i = 0; i < 4; i++)
+        {
+            if (!TryParseHexByte(parts[i], out int value))
+                return false;
+
+            tuple[i] = value & 0x0F;
+        }
+
+        return true;
+    }
+
+    private static bool PreferredTupleEquals(IReadOnlyList<int> a, IReadOnlyList<int> b)
+    {
+        if (a.Count < 4 || b.Count < 4)
+            return false;
+
+        for (int i = 0; i < 4; i++)
+        {
+            if ((a[i] & 0x0F) != (b[i] & 0x0F))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static string FormatTuple(IReadOnlyList<int> values)
+    {
+        return "[" + string.Join(",", values.Take(4).Select(v => FormatByte(v))) + "]";
+    }
+
+    private static string FormatByte(int value)
+    {
+        return (value & 0xFF).ToString("X2", CultureInfo.InvariantCulture);
+    }
+
+    private static bool IsDirection(int value)
+    {
+        int direction = value & 0x0F;
+        return direction == 0x01 || direction == 0x02 || direction == 0x04 || direction == 0x08;
     }
 
     private static bool IsPreferredGeneratorEvent(EnemyWorkPcEvent e)
@@ -1093,6 +1442,60 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             count = 0;
 
         counts[key] = count + 1;
+    }
+
+
+    private sealed class PreferredGeneratorCall
+    {
+        public PreferredGeneratorCall(int index, EnemyWorkPcEvent? entry)
+        {
+            Index = index;
+            Entry = entry;
+        }
+
+        public int Index { get; }
+        public EnemyWorkPcEvent? Entry { get; }
+        public List<EnemyWorkPcEvent> Events { get; } = new();
+
+        public EnemyWorkPcEvent? RotateBranch =>
+            Events.FirstOrDefault(e => e.Source.Equals("2E8C_PREF_ROTATE_BRANCH", StringComparison.OrdinalIgnoreCase));
+
+        public EnemyWorkPcEvent? RandomBranch =>
+            Events.FirstOrDefault(e => e.Source.Equals("2E9E_PREF_RANDOM_BRANCH", StringComparison.OrdinalIgnoreCase));
+
+        public string BranchKind
+        {
+            get
+            {
+                if (RotateBranch != null)
+                    return "rotate";
+
+                if (RandomBranch != null)
+                    return "random";
+
+                return "unknown";
+            }
+        }
+
+        public List<EnemyWorkPcEvent> RotateWrites =>
+            Events.Where(e => e.Source.Equals("2E97_PREF_ROTATE_WRITE", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        public List<EnemyWorkPcEvent> RandomRValues =>
+            Events.Where(e => e.Source.Equals("2EA5_PREF_RANDOM_R_VALUE", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        public List<EnemyWorkPcEvent> RandomWrites =>
+            Events.Where(e => e.Source.Equals("2EC7_PREF_RANDOM_WRITE", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        public List<EnemyWorkPcEvent> BaseWrites =>
+            BranchKind.Equals("rotate", StringComparison.OrdinalIgnoreCase)
+                ? RotateWrites
+                : RandomWrites;
+
+        public List<EnemyWorkPcEvent> BfsWrites =>
+            Events.Where(e => e.Source.Equals("477D_BFS_OVERRIDE_WRITE", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        public EnemyWorkPcEvent FinalEvent => Events.Count == 0 ? Entry! : Events[^1];
+        public string FinalPreferred => FinalEvent.Preferred;
     }
 
     private sealed class CycleView
