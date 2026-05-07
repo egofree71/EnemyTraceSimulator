@@ -12,15 +12,15 @@ doc/current_implementation.md
 
 ## Current status
 
-Current checkpoint: **v0.7.00**
+Current checkpoint: **v0.7.01**
 
 Latest validated code checkpoint:
 
 ```text
-Add source-first 427E decision gate shadow model
+Add source-first Enemy_UpdateOne shadow model
 ```
 
-The main comparison pipeline is still conservative and reference-assisted, but the current source-first shadow diagnostics validate the covered one-enemy decision window on a full-memory trace.
+The main comparison pipeline is still conservative and reference-assisted, but the current source-first shadow model now covers the full active one-enemy `Enemy_UpdateOne` window on the validated full-memory trace.
 
 Latest validated result:
 
@@ -31,13 +31,14 @@ Frame memory blocks: maze=176 bytes, ram=688 bytes, vram=1024 bytes, color=1024 
 
 Comparison [Lady Bug reference-direction step]: comparedFrames=501, mismatches=0
 
-Lady Bug source-first 0x4130 local-door shadow v0.7.00:
-checks=31
-matches=31
+Lady Bug source-first Enemy_UpdateOne shadow v0.7.01:
+sourceUpdateCandidates=496
+checks=496
+matches=496
 mismatches=0
 ```
 
-The important milestone in v0.7.00 is that the local-door / decision-center shadow model now follows the source-first decision gate before entering preferred-direction logic. This removed the last v0.6.98 shadow mismatch without adding a tick-specific rule.
+The important milestone in v0.7.01 is that the source-first shadow now runs through all active normal updates, not only the decision-center cases. It loads the previous enemy slot into scratch, applies the `0x427E` decision gate, branches to either preferred-decision or outside-center logic, and then applies the one-pixel movement step.
 
 ## Methodology rule
 
@@ -63,7 +64,7 @@ Used for:
 - full-memory validation of VRAM-dependent logic;
 - shadow comparisons for enemy decision models.
 
-For the current v0.7.00 validation, use a full-memory trace:
+For the current v0.7.01 validation, use a full-memory trace:
 
 ```json
 {
@@ -211,7 +212,7 @@ Lady Bug’s relevant VRAM tile layout is column-major and bottom-to-top. This m
 
 - The simulation is not yet a fully independent arcade enemy AI.
 - The authoritative comparison remains reference-synced for enemy direction, `preferred[]`, `rejectedMask`, `0x61C2`, chase timers, and round-robin state.
-- The v0.7.00 local-door / decision-gate logic is validated as a shadow diagnostic, not yet as the authoritative driver.
+- The v0.7.01 Enemy_UpdateOne logic is validated as a full active-window shadow diagnostic for the current one-enemy trace, not yet as the authoritative driver.
 - Enemy release / den-exit is still modeled diagnostically for the first activation transition; it does not yet activate slots independently.
 - BFS/chase direction selection is still observed or inferred from MAME in shadow paths.
 - Multi-enemy validation is not yet the stable target.
@@ -221,9 +222,9 @@ Lady Bug’s relevant VRAM tile layout is column-major and bottom-to-top. This m
 
 Near-term:
 
-1. keep v0.7.00 as a stable shadow checkpoint;
+1. keep v0.7.01 as a stable full active-window shadow checkpoint;
 2. add focused validation for forced reversal;
-3. deepen fallback behavior validation now that the local-door and decision-gate shadows match the full-memory trace;
+3. deepen fallback behavior validation across more trace windows;
 4. progressively remove reference-sync bridges only after each source-first block is validated;
 5. implement independent release / den-exit slot activation.
 

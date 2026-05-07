@@ -1,8 +1,8 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.7.00  
-**Latest validated code checkpoint:** `Add source-first 427E decision gate shadow model`  
+**Current package version:** v0.7.01  
+**Latest validated code checkpoint:** `Add source-first Enemy_UpdateOne shadow model`  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -58,7 +58,8 @@ The correct development loop is:
 4. only then expand coverage to new traces;
 5. avoid filtering or hiding mismatches unless the source code or exact-PC cycle boundary explains why that state is not comparable.
 
-v0.7.00 follows this rule: it fixes the remaining v0.6.98 local-door shadow mismatch by adding a source-first transcription of the `0x427E` carry gate, not by special-casing the observed mismatch.
+v0.7.00 followed this rule by fixing the remaining v0.6.98 local-door shadow mismatch with a source-first transcription of the `0x427E` carry gate.  
+v0.7.01 continues the same approach by expanding the validated shadow from decision-center cycles to the full active one-enemy `Enemy_UpdateOne` window.
 
 ## 2. Current validation strategy
 
@@ -84,9 +85,9 @@ Used for:
 - adapter-level enemy direction shadow compare;
 - source-first transition diagnostics over frame-level state;
 - source-first release diagnostics over the first activation transition;
-- full-memory shadow validation for `0x3C0A`, `0x4130`, and `0x427E`.
+- full-memory shadow validation for `0x3C0A`, `0x4130`, `0x427E`, and `Enemy_UpdateOne`.
 
-For v0.7.00, the standard trace must include full memory each frame so the shadow model can read VRAM and color/RAM blocks:
+For v0.7.01, the standard trace must include full memory each frame so the shadow model can read VRAM and color/RAM blocks:
 
 ```json
 {
@@ -168,8 +169,8 @@ scripts/tools/simulation/LadyBugEnemyDecisionGate427EModel.cs
 Used for:
 
 - running reconstructed decision functions over the loaded MAME trace;
-- validating `0x3911`, `0x3C0A`, `0x4130`, `0x427E`, `0x42E6`, `0x4315`, `0x4331`, and `0x4241` behavior progressively;
-- keeping the comparison non-invasive while the decision model is incomplete;
+- validating `0x3911`, `0x3C0A`, `0x4130`, `0x427E`, `0x42E6`, `0x4315`, `0x4331`, `0x4241`, and the one-pixel `Enemy_UpdateOne` step progressively;
+- keeping the comparison non-invasive while the authoritative decision model is incomplete;
 - reporting where modeled scratch state differs from MAME scratch state.
 
 ### 2.5 Source-first release diagnostics
@@ -185,7 +186,7 @@ Used for:
 - identifying the first transition where an enemy slot becomes active;
 - comparing the observed slot state against the source initialization shape from `0x3061`;
 - detecting whether the observed slot looks like `0x3061` plus one movement/update step;
-- providing the release start state used by the v0.6.92+ transition diagnostic and v0.7.00 local-door shadow.
+- providing the release start state used by the v0.6.92+ transition diagnostic and v0.7.01 Enemy_UpdateOne shadow.
 
 ## 3. Runtime encodings
 
@@ -520,7 +521,79 @@ fallbackSelected=8
 
 The difference between exact-PC count `39` and standard-shadow `29` is expected because the exact-PC run captured a longer 600-frame window, while the current standard comparison used the 501-frame full-memory trace.
 
-## 9. Source-first release model
+## 9. Source-first Enemy_UpdateOne shadow
+
+Implemented mainly by:
+
+```text
+scripts/tools/simulation/LadyBugEnemyLocalDoor4130ShadowModel.cs
+scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
+```
+
+Current package:
+
+```text
+v0.7.01 — Enemy_UpdateOne source-first shadow
+```
+
+Purpose:
+
+```text
+Extend the validated 0x427E + 0x4130 decision-center shadow to every active normal Enemy_UpdateOne tick.
+```
+
+Source flow modeled in shadow:
+
+```text
+0x43F0..0x4405  load previous enemy slot into scratch
+0x427E          decide carry set / carry clear
+carry set       -> 0x42E0 preferred/current/fallback path
+carry clear     -> 0x433A outside-center keep/reverse path
+0x43BA          apply one-pixel temp movement step
+```
+
+This is still shadow-only. The authoritative simulation remains reference-synced.
+
+v0.7.01 full-memory validation result:
+
+```text
+Lady Bug source-first Enemy_UpdateOne shadow v0.7.01:
+frames=501
+transitions=500
+releaseActivationTransitions=1
+sourceUpdateCandidates=496
+pixelAlignedCandidates=31
+pixelUnalignedOutsideCenter=465
+decisionGateCarrySet=29
+decisionGateCarryClear=467
+outsideCenterPath=467
+forcedReversalApplied=0
+checks=496
+matches=496
+mismatches=0
+tileReads=978
+tileAddressOutOfRange=0
+preferredAccepted=19
+preferredRejectedCurrentKept=2
+fallbackSelected=8
+fallbackNotFound=0
+```
+
+Interpretation:
+
+```text
+The shadow now explains the whole active one-enemy update window:
+- 31 pixel-aligned candidates;
+- 465 pixel-unaligned outside-center steps;
+- 29 true carry-set decision cycles;
+- 467 carry-clear outside-center paths;
+- 8 fallback selections;
+- 496/496 modeled updates match the MAME reference frame result.
+```
+
+The increase from `tileReads=48` in v0.7.00 to `tileReads=978` in v0.7.01 is expected: v0.7.01 runs the outside-center path over all active ticks, which exercises the tile probes much more often.
+
+## 10. Source-first release model
 
 Implemented file:
 
@@ -562,7 +635,7 @@ v0.6.92+ transition diagnostic treats the first activation as:
 3061_4315_RELEASE_PREFERRED_REJECTED_CURRENT_KEPT
 ```
 
-v0.7.00 local-door shadow uses the release-shaped start state for the first cycle:
+v0.7.01 Enemy_UpdateOne shadow uses the release-shaped start state for the first cycle:
 
 ```text
 3061_427E_CARRY_SET_4130_RELEASE_DECISION:4315_PREFERRED_REJECTED_CURRENT_KEPT=1
@@ -570,7 +643,7 @@ v0.7.00 local-door shadow uses the release-shaped start state for the first cycl
 
 This is still diagnostic only. It does not yet activate enemy slots independently.
 
-## 10. Current comparison behavior
+## 11. Current comparison behavior
 
 Still reference-synced:
 
@@ -591,23 +664,24 @@ Shadow-mode only:
 - source-first release diagnostics;
 - source-first `0x4315 current kept` shadow diagnostics;
 - source-first `0x4130` local-door shadow diagnostics;
-- source-first `0x427E` decision-gate shadow diagnostics.
+- source-first `0x427E` decision-gate shadow diagnostics;
+- source-first full active-window `Enemy_UpdateOne` shadow diagnostics.
 
 Partially reconstructed:
 
 - selected enemy scratch position;
-- movement by one arcade pixel using the MAME reference direction;
+- one-pixel movement step;
 - exact-PC decision-cycle classification for rejection/fallback/release;
 - `0x3911` logical maze validation;
 - `0x3C0A` tile-address lookup;
 - `0x4130` local-door tile validation;
 - `0x427E` decision gate;
-- `0x4241` fallback selection inside the local-door shadow;
+- `0x4241` fallback selection inside the local-door / Enemy_UpdateOne shadow;
 - first activation transition modeled from exact-PC start state.
 
 The adapter still does not independently decide enemy direction authoritatively, and it does not independently release enemies from the den.
 
-## 11. Latest validated console result
+## 12. Latest validated console result
 
 Trace loaded:
 
@@ -668,19 +742,32 @@ Source-first local-door / decision-gate shadow summary:
 
 ```text
 Lady Bug source-first 0x4130 local-door shadow v0.7.00:
-frames=501
-transitions=500
-releaseActivationTransitions=1
 decisionCenterCandidates=31
 pixelAlignedCandidates=31
 decisionGateCarrySet=29
 decisionGateCarryClear=2
 outsideCenterPath=2
-forcedReversalApplied=0
 checks=31
 matches=31
 mismatches=0
-tileReads=48
+fallbackSelected=8
+```
+
+Source-first full Enemy_UpdateOne shadow summary:
+
+```text
+Lady Bug source-first Enemy_UpdateOne shadow v0.7.01:
+sourceUpdateCandidates=496
+pixelAlignedCandidates=31
+pixelUnalignedOutsideCenter=465
+decisionGateCarrySet=29
+decisionGateCarryClear=467
+outsideCenterPath=467
+forcedReversalApplied=0
+checks=496
+matches=496
+mismatches=0
+tileReads=978
 tileAddressOutOfRange=0
 preferredAccepted=19
 preferredRejectedCurrentKept=2
@@ -688,13 +775,13 @@ fallbackSelected=8
 fallbackNotFound=0
 ```
 
-First v0.7.00 match:
+First v0.7.01 match:
 
 ```text
 tick=5
 mameFrame=10
 slot=0
-source=3061_427E_CARRY_SET_4130_RELEASE_DECISION:4315_PREFERRED_REJECTED_CURRENT_KEPT
+source=3061_427E_CARRY_SET_4130_RELEASE_DECISION
 gate=427E_CARRY_SET_HELPER_MATCH/377A_X_TABLE_0DFA
 gateCompare=4:86/86
 start=08:58,86
@@ -704,9 +791,9 @@ model=02:01:08:58,87
 tileReads=down@D211=FF probe=58,88
 ```
 
-## 12. Running the current validation
+## 13. Running the current validation
 
-For the v0.7.00 shadow model, use the standard JSONL script with full memory:
+For the v0.7.01 shadow model, use the standard JSONL script with full memory:
 
 ```text
 Lua script path:
@@ -738,10 +825,10 @@ Expected result:
 ```text
 comparedFrames=501
 mismatches=0
-0x4130 local-door shadow v0.7.00: checks=31, matches=31, mismatches=0
+Enemy_UpdateOne shadow v0.7.01: checks=496, matches=496, mismatches=0
 ```
 
-## 13. Current limitations
+## 14. Current limitations
 
 - The simulation is not yet a full independent arcade enemy AI.
 - The official validation target is still one active enemy.
@@ -754,17 +841,18 @@ mismatches=0
 - Chase timers and round-robin state are still reference-synced.
 - BFS direction is still observed / inferred from MAME in the shadow paths; full BFS pathfinding is not yet implemented.
 - `0x4189 / 0x4347` forced reversal remains scaffolded and still needs a focused validation trace.
+- v0.7.01 validates one active enemy on the current full-memory trace; broader traces are still needed before removing reference-sync bridges.
 
-## 14. Roadmap
+## 15. Roadmap
 
 Near-term:
 
-1. commit v0.7.00 as the stable `0x4130 + 0x427E` shadow checkpoint;
+1. commit v0.7.01 as the stable full active-window Enemy_UpdateOne shadow checkpoint;
 2. add focused exact-PC validation for `0x4189 / 0x4347` forced reversal;
-3. decide whether the `0x4241` fallback logic is now strong enough to become a wider shadow model;
-4. keep authoritative comparison reference-synced until the source-based decision and release models are validated across more traces;
-5. implement independent release / den-exit slot activation;
-6. eventually switch authoritative `rejectedMask`, fallback helper, release activation, and enemy direction away from MAME reference-sync.
+3. validate v0.7.01 against longer or different one-enemy traces;
+4. decide whether the current `0x427E + 0x4130 + 0x4241 + 0x43BA` shadow is strong enough to start reducing reference-sync in a controlled branch;
+5. keep authoritative comparison reference-synced until the source-based decision and release models are validated across more traces;
+6. implement independent release / den-exit slot activation.
 
 Later:
 
