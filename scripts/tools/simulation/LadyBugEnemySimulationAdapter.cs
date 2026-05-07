@@ -43,6 +43,11 @@ using System.Collections.Generic;
 ///
 /// v0.7.14 feeds that same exact-PC aligned provider into the full source-first
 /// Enemy_UpdateOne shadow.
+///
+/// v0.7.15 adds a sync-removal preflight summary for rejectedMask / 0x61C2.
+/// It does not alter the visible simulation yet; it only records whether the
+/// full Enemy_UpdateOne shadow is strong enough to try removing those bridges in
+/// a dedicated shadow branch next.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -50,7 +55,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 with exact-PC aligned preferred input, preferred-generator replay-shadow, Enemy_UpdateOne preferred-input bridge, offline exact-PC preferred-tape import, exact-PC tape alignment, and exact-PC selected preferred-input shadow summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 with exact-PC aligned preferred input, preferred-generator replay-shadow, Enemy_UpdateOne preferred-input bridge, offline exact-PC preferred-tape import, exact-PC tape alignment, exact-PC selected preferred-input shadow, and EnemyWork sync-removal preflight summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
@@ -86,6 +91,8 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
         string decisionDiagnostics = LadyBugEnemyDecisionTraceDiagnostics.BuildSummary(referenceFrames);
         string sourceFirst4315Shadow = LadyBugEnemySourceFirst4315ShadowModel.BuildSummary(referenceFrames);
         string sourceFirst4130Shadow = LadyBugEnemyLocalDoor4130ShadowModel.BuildSummary(referenceFrames);
+        string enemyWorkSyncRemovalPreflight =
+            LadyBugEnemyWorkSyncRemovalPreflightSummaryModel.BuildSummary(sourceFirst4130Shadow);
         string preferredReplayShadow = LadyBugEnemyPreferredGeneratorReplayShadowModel.BuildSummary(referenceFrames);
         string updateOnePreferredInputShadow = LadyBugEnemyUpdateOnePreferredInputShadowModel.BuildSummary(referenceFrames);
         string preferredExactPcTapeImport = LadyBugPreferredExactPcTapeImportSummaryModel.BuildSummary(referenceFrames);
@@ -101,7 +108,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             simulationState.BuildPreferredShadowDiagnosticSummary() + "; " +
             decisionDiagnostics + "; " +
             sourceFirst4315Shadow + "; " +
-            sourceFirst4130Shadow + "; " +
+            enemyWorkSyncRemovalPreflight + "; " +
             preferredReplayShadow + "; " +
             updateOnePreferredInputShadow + "; " +
             preferredExactPcTapeImport + "; " +
