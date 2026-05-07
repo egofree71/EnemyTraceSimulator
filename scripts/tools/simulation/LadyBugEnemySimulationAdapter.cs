@@ -40,6 +40,9 @@ using System.Collections.Generic;
 ///
 /// v0.7.13 adds a selected preferred[slot] shadow that consumes the aligned
 /// exact-PC tape window instead of the standard-trace tuple classifier.
+///
+/// v0.7.14 feeds that same exact-PC aligned provider into the full source-first
+/// Enemy_UpdateOne shadow.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -47,7 +50,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 with replay-provider preferred input, preferred-generator replay-shadow, Enemy_UpdateOne preferred-input bridge, offline exact-PC preferred-tape import, exact-PC tape alignment, and exact-PC selected preferred-input shadow summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 with exact-PC aligned preferred input, preferred-generator replay-shadow, Enemy_UpdateOne preferred-input bridge, offline exact-PC preferred-tape import, exact-PC tape alignment, and exact-PC selected preferred-input shadow summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.

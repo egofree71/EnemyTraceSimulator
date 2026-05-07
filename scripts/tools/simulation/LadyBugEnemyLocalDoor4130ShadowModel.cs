@@ -11,11 +11,11 @@ using System.Text;
 /// - 0x4130 reads the true tile value immediately after each 0x3C0A call;
 /// - tile values 35/37 reject vertical probes and 3D/3F reject horizontal probes.
 ///
-/// v0.7.09 keeps the full one-step Enemy_UpdateOne shadow over all active
-/// one-enemy transitions, but no longer reads the selected preferred[slot]
-/// directly from MAME as its decision input.  It asks the v0.7.07b/v0.7.08
-/// replay provider to reconstruct the preferred[] tuple, then consumes the
-/// reconstructed preferred[slot].
+/// v0.7.14 keeps the full one-step Enemy_UpdateOne shadow over all active
+/// one-enemy transitions, but now consumes preferred[slot] from the imported
+/// exact-PC preferred[] tape window aligned by v0.7.12 / v0.7.13.  The old
+/// standard-trace tuple classifier remains available as a diagnostic, but this
+/// full shadow no longer uses it as its decision input.
 ///
 /// The current static-player sequence only exercises the 0x4189 clear path:
 /// it does not yet prove the 0x4222 carry-set / 0x4347 reversal branch.
@@ -33,7 +33,7 @@ using System.Text;
 /// </summary>
 public static class LadyBugEnemyLocalDoor4130ShadowModel
 {
-    private const string Version = "v0.7.09";
+    private const string Version = "v0.7.14";
     private const int VramBase = 0xD000;
     private const int VramLength = 0x0400;
 
@@ -73,6 +73,18 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         public int PreferredProviderMatchesReference;
         public int PreferredProviderDiffersFromReference;
         public int PreferredProviderSkips;
+        public bool PreferredExactProviderFileFound;
+        public bool PreferredExactProviderUsable;
+        public string PreferredExactProviderImportedPath = string.Empty;
+        public int PreferredExactProviderImportedMarkerCount;
+        public int PreferredExactProviderTapeCalls;
+        public int PreferredExactProviderModeledTapeCalls;
+        public int PreferredExactProviderStandardActiveFrames;
+        public int PreferredExactProviderBestWindowStart;
+        public int PreferredExactProviderBestWindowTupleMatches;
+        public int PreferredExactProviderBestWindowTupleMismatches;
+        public int PreferredExactProviderBestWindowSourceMatches;
+        public int PreferredExactProviderBestWindowSourceMismatches;
         public string FirstMatch = string.Empty;
         public string FirstMismatch = string.Empty;
         public string FirstPreferredProviderMismatch = string.Empty;
@@ -86,17 +98,34 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
     public static string BuildSummary(IReadOnlyList<EnemyTraceFrame> referenceFrames)
     {
         var counters = new Counters { Frames = referenceFrames.Count };
+        LadyBugPreferredExactPcAlignedProvider preferredProvider =
+            LadyBugPreferredExactPcAlignedProvider.Build(referenceFrames);
+
+        counters.PreferredExactProviderFileFound = preferredProvider.FileFound;
+        counters.PreferredExactProviderUsable = preferredProvider.ExactProviderUsable;
+        counters.PreferredExactProviderImportedPath = preferredProvider.ImportedPathDisplay;
+        counters.PreferredExactProviderImportedMarkerCount = preferredProvider.ImportedMarkerCount;
+        counters.PreferredExactProviderTapeCalls = preferredProvider.TapeCalls;
+        counters.PreferredExactProviderModeledTapeCalls = preferredProvider.ModeledTapeCalls;
+        counters.PreferredExactProviderStandardActiveFrames = preferredProvider.StandardActiveProviderFrames;
+        counters.PreferredExactProviderBestWindowStart = preferredProvider.BestWindowStart;
+        counters.PreferredExactProviderBestWindowTupleMatches = preferredProvider.BestWindowTupleMatches;
+        counters.PreferredExactProviderBestWindowTupleMismatches = preferredProvider.BestWindowTupleMismatches;
+        counters.PreferredExactProviderBestWindowSourceMatches = preferredProvider.BestWindowSourceMatches;
+        counters.PreferredExactProviderBestWindowSourceMismatches = preferredProvider.BestWindowSourceMismatches;
 
         for (int i = 1; i < referenceFrames.Count; i++)
-            AnalyzeTransition(referenceFrames[i - 1], referenceFrames[i], counters);
+            AnalyzeTransition(i, referenceFrames[i - 1], referenceFrames[i], counters, preferredProvider);
 
         return BuildSummaryText(counters);
     }
 
     private static void AnalyzeTransition(
+        int currentFrameIndex,
         EnemyTraceFrame previousFrame,
         EnemyTraceFrame currentFrame,
-        Counters counters)
+        Counters counters,
+        LadyBugPreferredExactPcAlignedProvider preferredProvider)
     {
         counters.Transitions++;
 
@@ -114,19 +143,21 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
             releaseObservation.MatchesEnemyWorkAfterFirstStep)
         {
             counters.ReleaseActivationTransitions++;
-            AnalyzeReleaseCandidate(currentFrame, releaseObservation, counters);
+            AnalyzeReleaseCandidate(currentFrameIndex, currentFrame, releaseObservation, counters, preferredProvider);
             return;
         }
 
-        AnalyzeNormalCandidate(previousFrame, currentFrame, counters);
+        AnalyzeNormalCandidate(currentFrameIndex, previousFrame, currentFrame, counters, preferredProvider);
     }
 
     private static void AnalyzeReleaseCandidate(
+        int currentFrameIndex,
         EnemyTraceFrame currentFrame,
         LadyBugEnemyReleaseModel.ReleaseTransitionObservation observation,
-        Counters counters)
+        Counters counters,
+        LadyBugPreferredExactPcAlignedProvider preferredProvider)
     {
-        if (!TrySelectPreferred(currentFrame, observation.Slot, counters, out int preferred, out string preferredProviderSource))
+        if (!TrySelectPreferred(currentFrameIndex, currentFrame, observation.Slot, preferredProvider, counters, out int preferred, out string preferredProviderSource))
         {
             counters.SkippedMissingPreferred++;
             return;
@@ -159,9 +190,11 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
     }
 
     private static void AnalyzeNormalCandidate(
+        int currentFrameIndex,
         EnemyTraceFrame previousFrame,
         EnemyTraceFrame currentFrame,
-        Counters counters)
+        Counters counters,
+        LadyBugPreferredExactPcAlignedProvider preferredProvider)
     {
         if (currentFrame.enemyWork == null)
         {
@@ -176,7 +209,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         }
 
         int slot = Math.Clamp(currentEnemy.slot, 0, 3);
-        if (!TrySelectPreferred(currentFrame, slot, counters, out int preferred, out string preferredProviderSource))
+        if (!TrySelectPreferred(currentFrameIndex, currentFrame, slot, preferredProvider, counters, out int preferred, out string preferredProviderSource))
         {
             counters.SkippedMissingPreferred++;
             return;
@@ -456,8 +489,10 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
     }
 
     private static bool TrySelectPreferred(
+        int frameIndex,
         EnemyTraceFrame frame,
         int slot,
+        LadyBugPreferredExactPcAlignedProvider preferredProvider,
         Counters counters,
         out int preferred,
         out string providerSource)
@@ -471,14 +506,21 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         if (frame.enemyWork == null || frame.enemyWork.preferred.Count <= slot)
             return false;
 
-        if (!LadyBugEnemyPreferredGeneratorReplayShadowModel.TryBuildPreferredTupleForActiveFrame(
-                frame,
-                out int[] modeledTuple,
-                out providerSource,
-                out string skipReason))
+        if (!preferredProvider.ExactProviderUsable)
         {
             counters.PreferredProviderSkips++;
-            Count(counters.PreferredProviderSkipReasons, string.IsNullOrEmpty(skipReason) ? "unknown" : skipReason);
+            Count(counters.PreferredProviderSkipReasons, "exact-provider-not-usable");
+            return false;
+        }
+
+        if (!preferredProvider.TryGetTupleForFrameIndex(
+                frameIndex,
+                out int[] modeledTuple,
+                out providerSource,
+                out int tapeCallIndex))
+        {
+            counters.PreferredProviderSkips++;
+            Count(counters.PreferredProviderSkipReasons, "no-exact-pc-tuple-for-frame");
             return false;
         }
 
@@ -501,6 +543,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
                     "tick=" + frame.frame +
                     " mameFrame=" + frame.mameFrame +
                     " slot=" + slot.ToString(CultureInfo.InvariantCulture) +
+                    " tapeCall=" + tapeCallIndex.ToString(CultureInfo.InvariantCulture) +
                     " provider=" + providerSource +
                     " reference=" + FormatByte(referencePreferred) +
                     " modeled=" + FormatByte(preferred) +
@@ -617,6 +660,19 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         builder.Append(", preferredRejectedCurrentKept=").Append(counters.PreferredRejectedCurrentKept);
         builder.Append(", fallbackSelected=").Append(counters.FallbackSelected);
         builder.Append(", fallbackNotFound=").Append(counters.FallbackNotFound);
+        builder.Append(", preferredProviderMode=exact-PC-aligned");
+        builder.Append(", preferredExactProviderFileFound=").Append(counters.PreferredExactProviderFileFound ? "true" : "false");
+        builder.Append(", preferredExactProviderUsable=").Append(counters.PreferredExactProviderUsable ? "true" : "false");
+        builder.Append(", preferredExactProviderPath=").Append(counters.PreferredExactProviderImportedPath);
+        builder.Append(", preferredExactProviderImportedMarkerCount=").Append(counters.PreferredExactProviderImportedMarkerCount);
+        builder.Append(", preferredExactProviderTapeCalls=").Append(counters.PreferredExactProviderTapeCalls);
+        builder.Append(", preferredExactProviderModeledTapeCalls=").Append(counters.PreferredExactProviderModeledTapeCalls);
+        builder.Append(", preferredExactProviderStandardActiveFrames=").Append(counters.PreferredExactProviderStandardActiveFrames);
+        builder.Append(", preferredExactProviderBestWindowStart=").Append(counters.PreferredExactProviderBestWindowStart);
+        builder.Append(", preferredExactProviderBestWindowTupleMatches=").Append(counters.PreferredExactProviderBestWindowTupleMatches);
+        builder.Append(", preferredExactProviderBestWindowTupleMismatches=").Append(counters.PreferredExactProviderBestWindowTupleMismatches);
+        builder.Append(", preferredExactProviderBestWindowSourceMatches=").Append(counters.PreferredExactProviderBestWindowSourceMatches);
+        builder.Append(", preferredExactProviderBestWindowSourceMismatches=").Append(counters.PreferredExactProviderBestWindowSourceMismatches);
         builder.Append(", preferredProviderChecks=").Append(counters.PreferredProviderChecks);
         builder.Append(", preferredProviderMatchesReference=").Append(counters.PreferredProviderMatchesReference);
         builder.Append(", preferredProviderDiffersFromReference=").Append(counters.PreferredProviderDiffersFromReference);
@@ -650,7 +706,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         }
         else
         {
-            builder.Append(". NOTE: shadow-only; all active normal cycles load scratch from the previous slot state following 0x43F0..0x4405, use the full 0x427E carry gate, run either 0x42E0 preferred-decision or 0x433A outside-center keep/reverse logic, account for the 0x4189 forced-reversal probe on outside-center cycles, then apply the one-pixel 0x43BA step. v0.7.09 consumes preferred[slot] from the validated preferred replay provider instead of reading the selected value directly from MAME. The provider is still bridge/classifier based until the exact-PC LD A,R tape is injected. The current static-player sequence validates the 0x4189 clear path only, not the carry-set 0x4347 reversal branch.");
+            builder.Append(". NOTE: shadow-only; all active normal cycles load scratch from the previous slot state following 0x43F0..0x4405, use the full 0x427E carry gate, run either 0x42E0 preferred-decision or 0x433A outside-center keep/reverse logic, account for the 0x4189 forced-reversal probe on outside-center cycles, then apply the one-pixel 0x43BA step. v0.7.14 consumes preferred[slot] from the imported exact-PC preferred[] tape window aligned in v0.7.12/v0.7.13, instead of using the standard-trace tuple classifier as the decision input. The current static-player sequence validates the 0x4189 clear path only, not the carry-set 0x4347 reversal branch.");
         }
 
         return builder.ToString();
