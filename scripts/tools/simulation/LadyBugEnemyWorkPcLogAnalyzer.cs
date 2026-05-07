@@ -8,12 +8,19 @@ using System.Linq;
 /// tools/mame/lua/ladybug_enemywork_pc_trace.lua.
 ///
 /// The diagnostic is observational: it counts exact-PC events around rejectedMask,
-/// fallbackMask, local-door validation, fallback, and forced-reversal paths. It does
-/// not try to model the decision pipeline yet.
+/// fallbackMask, local-door validation, fallback, forced-reversal paths, and now
+/// the 0x3C0A tile-address lookup helper.
+///
+/// Important v0.6.95 note:
+/// The debugger action logs H and L separately and also logs a convenience "hl"
+/// expression.  Exact-PC 0x3C0A traces showed that the composite "hl" expression
+/// is not reliable in this MAME debugger context.  Tile lookup validation therefore
+/// derives actualHL only from the separate h/l fields.
 /// </summary>
 public static class LadyBugEnemyWorkPcLogAnalyzer
 {
     private const string Marker = "LBEW|";
+    private const string TileLookupReturnSource = "3C2B_TILE_LOOKUP_RETURN";
 
     public static IReadOnlyList<string> BuildReport(string errorLogText)
     {
@@ -39,6 +46,8 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         AppendCountSection(lines, "Hits by fallbackMask", events.GroupBy(e => e.Fallback).OrderByDescending(g => g.Count()).ThenBy(g => g.Key));
         AppendCountSection(lines, "Hits by derived active enemy count", events.GroupBy(e => e.ActiveEnemyCount.ToString(CultureInfo.InvariantCulture)).OrderByDescending(g => g.Count()).ThenBy(g => g.Key));
 
+        AppendTileLookup3C0aSummary(lines, events);
+
         var cycles = BuildCycles(events);
         AppendCycleSummary(lines, cycles);
         AppendDecisionClassification(lines, cycles);
@@ -48,6 +57,11 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("------------");
         foreach (EnemyWorkPcEvent e in events.Take(60))
             lines.Add(FormatEvent(e));
+
+        AppendEventSection(
+            lines,
+            "First 0x3C0A tile lookup return events",
+            events.Where(e => e.Source.Equals(TileLookupReturnSource, StringComparison.OrdinalIgnoreCase)).Take(40));
 
         AppendEventSection(
             lines,
@@ -100,12 +114,163 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("- 4315_REJECT_OR_CANDIDATE writes rejectedMask |= rejected preferred candidate after logical/local rejection.");
         lines.Add("- 4331_REJECT_OR_TEMPDIR writes rejectedMask |= current temp direction before entering fallback.");
         lines.Add("- 43C4_FALLBACK_STEP_INC / 43C5_FALLBACK_STEP_READ observe the fallback-step counter at 61C2.");
+        lines.Add("- 3C2B_TILE_LOOKUP_RETURN validates only the HL address computed by 0x3C0A. 0x3C0A restores AF/BC before returning; A is not the tile value there.");
+        lines.Add("- The true tile value is loaded by each caller after 0x3C0A, for example at 4143/4156/4169/417C in the 0x4130 local-door routine.");
         lines.Add("- 4187_LOCAL_DOOR_REJECT is the already-observed door/local-tile rejection point.");
         lines.Add("- 4241_FALLBACK_ENTRY is the already-observed generic fallback entry point.");
         lines.Add("- 4347_FORCED_REVERSAL is the already-observed forced-reversal point outside normal center decision logic.");
         lines.Add("- Active enemy count is derived by this analyzer from e0..e3 raw bytes because the debugger action cannot call Lua helpers at exact breakpoint time.");
 
         return lines;
+    }
+
+    private static void AppendTileLookup3C0aSummary(List<string> lines, IReadOnlyList<EnemyWorkPcEvent> events)
+    {
+        List<EnemyWorkPcEvent> tileEvents = events
+            .Where(e => e.Source.Equals(TileLookupReturnSource, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        lines.Add(string.Empty);
+        lines.Add("0x3C0A tile-address lookup summary");
+        lines.Add("-----------------------------------");
+
+        if (tileEvents.Count == 0)
+        {
+            lines.Add("no 3C2B_TILE_LOOKUP_RETURN events were captured");
+            lines.Add("expected formula when present: actualHL(H,L) == D0A0 + ((D & F8) * 4) + (E >> 3)");
+            return;
+        }
+
+        int comparable = 0;
+        int matches = 0;
+        int mismatches = 0;
+        int missingRegisters = 0;
+        int compositeHlMatchesActual = 0;
+        int compositeHlDiffersFromActual = 0;
+        string firstMismatch = string.Empty;
+        string firstCompositeDifference = string.Empty;
+        var uniqueAddresses = new HashSet<int>();
+        var uniqueProbeCells = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var contextCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (EnemyWorkPcEvent e in tileEvents)
+        {
+            string context = TileLookupContext(e);
+            Increment(contextCounts, context);
+
+            if (!TryParseHexByte(e.D, out int d) ||
+                !TryParseHexByte(e.E, out int probeE) ||
+                !TryParseHexByte(e.H, out int h) ||
+                !TryParseHexByte(e.L, out int l))
+            {
+                missingRegisters++;
+                continue;
+            }
+
+            comparable++;
+            int expected = Compute3C0aExpectedHl(d, probeE);
+            int actual = ((h & 0xFF) << 8) | (l & 0xFF);
+            uniqueAddresses.Add(actual);
+            uniqueProbeCells.Add($"{(d & 0xF8):X2}:{(probeE >> 3):X2}");
+
+            if (TryParseHexWord(e.HlComposite, out int compositeHl))
+            {
+                if ((compositeHl & 0xFFFF) == actual)
+                {
+                    compositeHlMatchesActual++;
+                }
+                else
+                {
+                    compositeHlDiffersFromActual++;
+                    if (string.IsNullOrEmpty(firstCompositeDifference))
+                    {
+                        firstCompositeDifference =
+                            $"actualHL={FormatWord(actual)} compositeHl={FormatWord(compositeHl)} event={FormatEvent(e)}";
+                    }
+                }
+            }
+
+            if (actual == expected)
+            {
+                matches++;
+            }
+            else
+            {
+                mismatches++;
+                if (string.IsNullOrEmpty(firstMismatch))
+                {
+                    firstMismatch =
+                        $"expectedHL={FormatWord(expected)} actualHL={FormatWord(actual)} D={e.D} E={e.E} event={FormatEvent(e)}";
+                }
+            }
+        }
+
+        lines.Add($"events={tileEvents.Count}, comparable={comparable}, matches={matches}, mismatches={mismatches}, missingRegisters={missingRegisters}");
+        lines.Add($"uniqueActualAddresses={uniqueAddresses.Count}, uniqueProbeCells={uniqueProbeCells.Count}");
+        lines.Add("formula: actualHL = D0A0 + ((D & F8) * 4) + (E >> 3)");
+        lines.Add("mapping: VRAM columns, bottom-to-top; D chooses the screen column group, E>>3 chooses the tile within that column.");
+        lines.Add($"debuggerCompositeHlMatchesActual={compositeHlMatchesActual}, debuggerCompositeHlDiffersFromActual={compositeHlDiffersFromActual}");
+
+        if (!string.IsNullOrEmpty(firstMismatch))
+            lines.Add("first address mismatch: " + firstMismatch);
+
+        if (!string.IsNullOrEmpty(firstCompositeDifference))
+            lines.Add("first ignored composite-HL difference: " + firstCompositeDifference);
+
+        lines.Add("contexts:");
+        foreach (KeyValuePair<string, int> pair in contextCounts.OrderByDescending(p => p.Value).ThenBy(p => p.Key))
+            lines.Add($"  {pair.Key}: {pair.Value}");
+
+        lines.Add("sample computed lookups:");
+        int printed = 0;
+        foreach (EnemyWorkPcEvent e in tileEvents)
+        {
+            if (printed >= 12)
+                break;
+
+            if (!TryParseHexByte(e.D, out int d) ||
+                !TryParseHexByte(e.E, out int probeE) ||
+                !TryParseHexByte(e.H, out int h) ||
+                !TryParseHexByte(e.L, out int l))
+            {
+                continue;
+            }
+
+            int expected = Compute3C0aExpectedHl(d, probeE);
+            int actual = ((h & 0xFF) << 8) | (l & 0xFF);
+            lines.Add($"  D={e.D} E={e.E} actualHL={FormatWord(actual)} expectedHL={FormatWord(expected)} match={actual == expected} context={TileLookupContext(e)}");
+            printed++;
+        }
+    }
+
+    private static int Compute3C0aExpectedHl(int d, int e)
+    {
+        return 0xD0A0 + ((d & 0xF8) * 4) + ((e & 0xFF) >> 3);
+    }
+
+    private static string TileLookupContext(EnemyWorkPcEvent e)
+    {
+        // This is intentionally simple and based on the observable exact-PC state.
+        // 0x3C0A is a shared helper, so until caller-specific tile-load breakpoints
+        // are added, this only labels the most useful context families.
+        if (e.Ix.Equals("61BE", StringComparison.OrdinalIgnoreCase))
+            return "enemyWork-local-door-or-decision";
+
+        if (e.Ix.Equals("6040", StringComparison.OrdinalIgnoreCase))
+            return "enemy-update-probe";
+
+        if (e.Ix.Equals("61A8", StringComparison.OrdinalIgnoreCase))
+            return "player-or-global-probe";
+
+        if (e.Ix.Equals("602B", StringComparison.OrdinalIgnoreCase) ||
+            e.Ix.Equals("6030", StringComparison.OrdinalIgnoreCase) ||
+            e.Ix.Equals("6035", StringComparison.OrdinalIgnoreCase) ||
+            e.Ix.Equals("603A", StringComparison.OrdinalIgnoreCase))
+        {
+            return "enemy-slot-probe";
+        }
+
+        return "other-ix-" + e.Ix;
     }
 
     private static List<EnemyWorkCycle> BuildCycles(IReadOnlyList<EnemyWorkPcEvent> events)
@@ -291,7 +456,7 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
         string doorRejects = cycle.DoorRejects.Count == 0
             ? "none"
-            : string.Join(",", cycle.DoorRejects.Select(e => $"{e.Pc}:A={e.A}:HL={e.Hl}:DE={e.De}"));
+            : string.Join(",", cycle.DoorRejects.Select(e => $"{e.Pc}:A={e.A}:HLactual={e.ActualHlText}:DE={e.DeComposite}"));
 
         string fallbackEntries = cycle.FallbackEntries.Count == 0
             ? "none"
@@ -397,9 +562,14 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             $"r={e.R}",
             $"a={e.A}",
             $"b={e.B}",
+            $"c={e.C}",
             $"d={e.D}",
-            $"hl={e.Hl}",
-            $"de={e.De}",
+            $"e={e.E}",
+            $"h={e.H}",
+            $"l={e.L}",
+            $"actualHL={e.ActualHlText}",
+            $"loggedHL={e.HlComposite}",
+            $"de={e.DeComposite}",
             $"ix={e.Ix}",
             $"iy={e.Iy}",
             $"tmp={e.TempDir}:{e.TempX},{e.TempY}",
@@ -443,7 +613,11 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
                 Get(values, "r"),
                 Get(values, "a"),
                 Get(values, "b"),
+                Get(values, "c"),
                 Get(values, "d"),
+                Get(values, "e"),
+                Get(values, "h"),
+                Get(values, "l"),
                 Get(values, "hl"),
                 Get(values, "de"),
                 Get(values, "ix"),
@@ -523,6 +697,28 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             return false;
 
         return int.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out parsed);
+    }
+
+    private static bool TryParseHexWord(string value, out int parsed)
+    {
+        parsed = 0;
+        if (string.IsNullOrWhiteSpace(value) || value == "??")
+            return false;
+
+        return int.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out parsed);
+    }
+
+    private static string FormatWord(int value)
+    {
+        return (value & 0xFFFF).ToString("X4", CultureInfo.InvariantCulture);
+    }
+
+    private static void Increment(Dictionary<string, int> counts, string key)
+    {
+        if (!counts.TryGetValue(key, out int count))
+            count = 0;
+
+        counts[key] = count + 1;
     }
 
     private sealed class CycleView
@@ -621,9 +817,13 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         string R,
         string A,
         string B,
+        string C,
         string D,
-        string Hl,
-        string De,
+        string E,
+        string H,
+        string L,
+        string HlComposite,
+        string DeComposite,
         string Ix,
         string Iy,
         string TempDir,
@@ -640,6 +840,17 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         EnemySnapshot[] Enemies)
     {
         public int ActiveEnemyCount => CountActiveEnemies(Enemies);
+
+        public string ActualHlText
+        {
+            get
+            {
+                if (!TryParseHexByte(H, out int h) || !TryParseHexByte(L, out int l))
+                    return "????";
+
+                return FormatWord((h << 8) | l);
+            }
+        }
     }
 
     private sealed record EnemySnapshot(string Raw, string X, string Y)
