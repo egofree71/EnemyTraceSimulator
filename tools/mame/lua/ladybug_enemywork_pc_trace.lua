@@ -2,8 +2,8 @@
 --
 -- Exact-PC MAME debugger trace for Lady Bug EnemyWork decision diagnostics.
 --
--- v0.6.99 extends the 0x4130/0x3C0A diagnostics with exact-PC
--- breakpoints around the complete 0x427E decision gate.
+-- v0.7.02 extends the EnemyWork exact-PC diagnostics with source-first
+-- forced-reversal tile probes around 0x4189 / 0x4347.
 --
 -- Core decision breakpoints:
 --   0x42CC : exact reset write to 61C1 / rejectedMask
@@ -59,6 +59,22 @@
 --   0x42DD : caller branch point immediately after 0x427E
 --   0x42E0 : preferred decision path was actually entered
 --   0x433A : outside-center / forced-reversal path was actually entered
+
+-- Forced-reversal tile-value breakpoints added in v0.7.02:
+--   0x4189 : Enemy_CheckDoorForcedReversal entry
+--   0x419E : down first probe after 0x419D LD A,(HL); reject 4A / 45
+--   0x41AF : down second probe after 0x41AE LD A,(HL); reject 41 / 46
+--   0x41C2 : left first probe after 0x41C1 LD A,(HL); reject 45 / 46
+--   0x41D2 : left second probe after 0x41D1 LD A,(HL); reject 4A / 41
+--   0x41E5 : up first probe after 0x41E4 LD A,(HL); reject 49 / 43
+--   0x41F5 : up second probe after 0x41F4 LD A,(HL); reject 41 / 46
+--   0x4208 : right first probe after 0x4207 LD A,(HL); reject 44 / 47
+--   0x4218 : right second probe after 0x4217 LD A,(HL); reject 4A / 41
+--   0x4220 : no forced reversal return path, AND A / RET NC
+--   0x4222 : forced reversal return path, SCF / RET C
+--   0x4342 : caller invokes 0x4189 from the 0x433A outside-center path
+--   0x4345 : caller branch after 0x4189, JR NC skips reversal
+--   0x4356 : reversed direction write point, just before LD (61BD),A
 -- Important: Lady Bug's logical maze cell appears to be 16x16 pixels, i.e. 2x2
 -- tiles. 0x3C0A/0x4130 still operate on individual 8x8 tile probes inside or
 -- around that logical cell.
@@ -361,12 +377,29 @@ local function install_breakpoints()
     set_breakpoint(0x417d, "417D_AFTER_417C_TILE_READ_RIGHT")
     set_breakpoint(0x4185, "4185_LOCAL_DOOR_ACCEPT")
 
-    -- Context around validation / fallback / forced reversal / commit.
+    -- Context around validation / fallback / commit.
     set_breakpoint(0x3911, "3911_LOGICAL_MAZE_VALIDATE")
     set_breakpoint(0x4130, "4130_LOCAL_DOOR_CHECK_ENTRY")
     set_breakpoint(0x4187, "4187_LOCAL_DOOR_REJECT")
     set_breakpoint(0x4241, "4241_FALLBACK_ENTRY")
+
+    -- 0x4189 forced-reversal tile probes and caller-side branch points.
+    -- These are only meaningful on outside-center cycles that reach 0x433A.
+    set_breakpoint(0x4189, "4189_FORCED_REVERSAL_CHECK_ENTRY")
+    set_breakpoint(0x419e, "419E_FORCED_TILE_READ_DOWN_FIRST")
+    set_breakpoint(0x41af, "41AF_FORCED_TILE_READ_DOWN_SECOND")
+    set_breakpoint(0x41c2, "41C2_FORCED_TILE_READ_LEFT_FIRST")
+    set_breakpoint(0x41d2, "41D2_FORCED_TILE_READ_LEFT_SECOND")
+    set_breakpoint(0x41e5, "41E5_FORCED_TILE_READ_UP_FIRST")
+    set_breakpoint(0x41f5, "41F5_FORCED_TILE_READ_UP_SECOND")
+    set_breakpoint(0x4208, "4208_FORCED_TILE_READ_RIGHT_FIRST")
+    set_breakpoint(0x4218, "4218_FORCED_TILE_READ_RIGHT_SECOND")
+    set_breakpoint(0x4220, "4220_FORCED_REVERSAL_RET_CLEAR")
+    set_breakpoint(0x4222, "4222_FORCED_REVERSAL_RET_SET")
+    set_breakpoint(0x4342, "4342_CALL_FORCED_REVERSAL_CHECK")
+    set_breakpoint(0x4345, "4345_AFTER_FORCED_REVERSAL_CHECK")
     set_breakpoint(0x4347, "4347_FORCED_REVERSAL")
+    set_breakpoint(0x4356, "4356_FORCED_REVERSAL_DIR_WRITE")
     set_breakpoint(0x43d4, "43D4_COMMIT_TEMP_STATE")
 
     pcall(function()
@@ -394,7 +427,7 @@ local function write_summary(reason)
 
     summary_file:write("Lady Bug EnemyWork exact-PC diagnostic summary\n")
     summary_file:write("============================================\n\n")
-    summary_file:write("version: v0.6.99 0x427E decision-gate breakpoint extension\n")
+    summary_file:write("version: v0.7.02 forced-reversal 0x4189 tile-probe breakpoint extension\n")
     summary_file:write("reason: " .. tostring(reason) .. "\n")
     summary_file:write("save_state: " .. tostring(CONFIG.save_state) .. "\n")
     summary_file:write("frames_after_tick0_to_capture: " .. tostring(CONFIG.frames_after_tick0_to_capture) .. "\n")

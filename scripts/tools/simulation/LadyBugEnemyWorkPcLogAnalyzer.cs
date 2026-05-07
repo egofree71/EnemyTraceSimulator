@@ -9,7 +9,7 @@ using System.Linq;
 ///
 /// The diagnostic is observational: it counts exact-PC events around rejectedMask,
 /// fallbackMask, the 0x427E decision gate, local-door validation, fallback, forced-reversal paths, the 0x3C0A
-/// tile-address lookup helper, and the 0x4130 caller-side tile values.
+/// tile-address lookup helper, the 0x4130 caller-side tile values, and the 0x4189 forced-reversal tile probes.
 ///
 /// Important note inherited from v0.6.95:
 /// The debugger action logs H and L separately and also logs a convenience "hl"
@@ -32,6 +32,27 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             "up", "02", "4169", "E-07", new[] { "35", "37" }),
         ["417D_AFTER_417C_TILE_READ_RIGHT"] = new(
             "right", "04", "417C", "D+08", new[] { "3F", "3D" })
+    };
+
+
+    private static readonly Dictionary<string, LocalDoorTileBranch> ForcedReversalTileBranches = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["419E_FORCED_TILE_READ_DOWN_FIRST"] = new(
+            "down-first", "08", "419D", "E+02", new[] { "4A", "45" }),
+        ["41AF_FORCED_TILE_READ_DOWN_SECOND"] = new(
+            "down-second", "08", "41AE", "E+04", new[] { "41", "46" }),
+        ["41C2_FORCED_TILE_READ_LEFT_FIRST"] = new(
+            "left-first", "01", "41C1", "D-01", new[] { "45", "46" }),
+        ["41D2_FORCED_TILE_READ_LEFT_SECOND"] = new(
+            "left-second", "01", "41D1", "D-03", new[] { "4A", "41" }),
+        ["41E5_FORCED_TILE_READ_UP_FIRST"] = new(
+            "up-first", "02", "41E4", "E-01", new[] { "49", "43" }),
+        ["41F5_FORCED_TILE_READ_UP_SECOND"] = new(
+            "up-second", "02", "41F4", "E-07", new[] { "41", "46" }),
+        ["4208_FORCED_TILE_READ_RIGHT_FIRST"] = new(
+            "right-first", "04", "4207", "D+02", new[] { "44", "47" }),
+        ["4218_FORCED_TILE_READ_RIGHT_SECOND"] = new(
+            "right-second", "04", "4217", "D+08", new[] { "4A", "41" })
     };
 
     public static IReadOnlyList<string> BuildReport(string errorLogText)
@@ -60,6 +81,7 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
         AppendTileLookup3C0aSummary(lines, events);
         AppendLocalDoorTileValueSummary(lines, events);
+        AppendForcedReversalTileProbeSummary(lines, events);
 
         var cycles = BuildCycles(events);
         AppendCycleSummary(lines, cycles);
@@ -80,6 +102,11 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             lines,
             "First 0x4130 local-door tile value events",
             events.Where(IsLocalDoorTileRead).Take(80));
+
+        AppendEventSection(
+            lines,
+            "First 0x4189 forced-reversal tile probe events",
+            events.Where(IsForcedReversalTileRead).Take(80));
 
         AppendEventSection(
             lines,
@@ -115,7 +142,10 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("- 4187_LOCAL_DOOR_REJECT is the already-observed door/local-tile rejection point.");
         lines.Add("- 4185_LOCAL_DOOR_ACCEPT is the local-door success return path immediately before AND A / RET.");
         lines.Add("- 4241_FALLBACK_ENTRY is the already-observed generic fallback entry point.");
-        lines.Add("- 4347_FORCED_REVERSAL is the already-observed forced-reversal point outside normal center decision logic.");
+        lines.Add("- 4189_FORCED_REVERSAL_CHECK_ENTRY and 4342_CALL_FORCED_REVERSAL_CHECK observe the source path that can reverse EnemyTemp_Dir outside normal center decision logic.");
+        lines.Add("- 419E/41AF/41C2/41D2/41E5/41F5/4208/4218 capture the actual 0x4189 tile values after LD A,(HL), before the CP tests.");
+        lines.Add("- 4222_FORCED_REVERSAL_RET_SET means 0x4189 will return carry set; 4220_FORCED_REVERSAL_RET_CLEAR means it returns carry clear.");
+        lines.Add("- 4347_FORCED_REVERSAL and 4356_FORCED_REVERSAL_DIR_WRITE show the caller-side direction reversal actually being applied.");
         lines.Add("- Active enemy count is derived by this analyzer from e0..e3 raw bytes because the debugger action cannot call Lua helpers at exact breakpoint time.");
 
         return lines;
@@ -338,6 +368,113 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
                 ? FormatWord(Compute3C0aExpectedHl(d, probeE))
                 : "????";
             lines.Add($"  branch={branch.Name} dir={branch.DirectionMask} probeAdjust={branch.ProbeAdjustment} tile={e.A} expectedReject={shouldReject} actualHL={actualHl} expectedHL={expectedHl} D={e.D} E={e.E} tmp={e.TempDir}:{e.TempX},{e.TempY}");
+        }
+    }
+
+
+    private static void AppendForcedReversalTileProbeSummary(List<string> lines, IReadOnlyList<EnemyWorkPcEvent> events)
+    {
+        List<EnemyWorkPcEvent> entries = events.Where(e => e.Source.Equals("4189_FORCED_REVERSAL_CHECK_ENTRY", StringComparison.OrdinalIgnoreCase)).ToList();
+        List<EnemyWorkPcEvent> calls = events.Where(e => e.Source.Equals("4342_CALL_FORCED_REVERSAL_CHECK", StringComparison.OrdinalIgnoreCase)).ToList();
+        List<EnemyWorkPcEvent> branchPoints = events.Where(e => e.Source.Equals("4345_AFTER_FORCED_REVERSAL_CHECK", StringComparison.OrdinalIgnoreCase)).ToList();
+        List<EnemyWorkPcEvent> reads = events.Where(IsForcedReversalTileRead).ToList();
+        List<EnemyWorkPcEvent> returnsClear = events.Where(e => e.Source.Equals("4220_FORCED_REVERSAL_RET_CLEAR", StringComparison.OrdinalIgnoreCase)).ToList();
+        List<EnemyWorkPcEvent> returnsSet = events.Where(e => e.Source.Equals("4222_FORCED_REVERSAL_RET_SET", StringComparison.OrdinalIgnoreCase)).ToList();
+        List<EnemyWorkPcEvent> applied = events.Where(e => e.Source.Equals("4347_FORCED_REVERSAL", StringComparison.OrdinalIgnoreCase)).ToList();
+        List<EnemyWorkPcEvent> writes = events.Where(e => e.Source.Equals("4356_FORCED_REVERSAL_DIR_WRITE", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        lines.Add(string.Empty);
+        lines.Add("0x4189 forced-reversal tile-probe summary");
+        lines.Add("------------------------------------------");
+        lines.Add($"callerCalls4342={calls.Count}, entries4189={entries.Count}, afterCall4345={branchPoints.Count}");
+        lines.Add($"tileProbeReads={reads.Count}, returnsClear4220={returnsClear.Count}, returnsSet4222={returnsSet.Count}, reversalsApplied4347={applied.Count}, directionWrites4356={writes.Count}");
+
+        if (reads.Count == 0)
+        {
+            lines.Add("no forced-reversal tile probes were captured in this trace window");
+            lines.Add("this is not a failure if the loaded sequence has no outside-center door-forced reversal; use this diagnostic on a trace that reaches 4347 or 4222.");
+            return;
+        }
+
+        int comparableAddress = 0;
+        int addressMatches = 0;
+        int addressMismatches = 0;
+        int expectedForceFromTile = 0;
+        int expectedClearFromTile = 0;
+        string firstAddressMismatch = string.Empty;
+        var branchCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var branchTileCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var branchExpectations = new Dictionary<string, (int clear, int force)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (EnemyWorkPcEvent e in reads)
+        {
+            LocalDoorTileBranch branch = ForcedReversalTileBranches[e.Source];
+            Increment(branchCounts, $"{branch.Name}/dir={branch.DirectionMask}");
+            Increment(branchTileCounts, $"{branch.Name}:tile={e.A}");
+
+            bool shouldForce = branch.RejectTiles.Contains(e.A, StringComparer.OrdinalIgnoreCase);
+            if (shouldForce)
+                expectedForceFromTile++;
+            else
+                expectedClearFromTile++;
+
+            branchExpectations.TryGetValue(branch.Name, out (int clear, int force) counts);
+            if (shouldForce)
+                counts.force++;
+            else
+                counts.clear++;
+            branchExpectations[branch.Name] = counts;
+
+            if (TryParseHexByte(e.D, out int d) &&
+                TryParseHexByte(e.E, out int probeE) &&
+                TryGetActualHl(e, out int actual))
+            {
+                comparableAddress++;
+                int expectedHl = Compute3C0aExpectedHl(d, probeE);
+                if (actual == expectedHl)
+                {
+                    addressMatches++;
+                }
+                else
+                {
+                    addressMismatches++;
+                    if (string.IsNullOrEmpty(firstAddressMismatch))
+                    {
+                        firstAddressMismatch =
+                            $"branch={branch.Name} tile={e.A} expectedHL={FormatWord(expectedHl)} actualHL={FormatWord(actual)} event={FormatEvent(e)}";
+                    }
+                }
+            }
+        }
+
+        lines.Add($"expectedClearFromTileValue={expectedClearFromTile}, expectedForceFromTileValue={expectedForceFromTile}");
+        lines.Add($"addressComparable={comparableAddress}, addressMatches={addressMatches}, addressMismatches={addressMismatches}");
+
+        if (!string.IsNullOrEmpty(firstAddressMismatch))
+            lines.Add("first forced-reversal address mismatch: " + firstAddressMismatch);
+
+        lines.Add("branches:");
+        foreach (KeyValuePair<string, int> pair in branchCounts.OrderByDescending(p => p.Value).ThenBy(p => p.Key))
+            lines.Add($"  {pair.Key}: {pair.Value}");
+
+        lines.Add("branch clear/force expectation from tile value:");
+        foreach (KeyValuePair<string, (int clear, int force)> pair in branchExpectations.OrderBy(p => p.Key))
+            lines.Add($"  {pair.Key}: expectedClear={pair.Value.clear}, expectedForce={pair.Value.force}");
+
+        lines.Add("tiles by forced-reversal branch:");
+        foreach (KeyValuePair<string, int> pair in branchTileCounts.OrderByDescending(p => p.Value).ThenBy(p => p.Key))
+            lines.Add($"  {pair.Key}: {pair.Value}");
+
+        lines.Add("sample forced-reversal tile probes:");
+        foreach (EnemyWorkPcEvent e in reads.Take(24))
+        {
+            LocalDoorTileBranch branch = ForcedReversalTileBranches[e.Source];
+            bool shouldForce = branch.RejectTiles.Contains(e.A, StringComparer.OrdinalIgnoreCase);
+            string actualHl = TryGetActualHl(e, out int actual) ? FormatWord(actual) : "????";
+            string expectedHl = TryParseHexByte(e.D, out int d) && TryParseHexByte(e.E, out int probeE)
+                ? FormatWord(Compute3C0aExpectedHl(d, probeE))
+                : "????";
+            lines.Add($"  branch={branch.Name} dir={branch.DirectionMask} probeAdjust={branch.ProbeAdjustment} tile={e.A} expectedForce={shouldForce} actualHL={actualHl} expectedHL={expectedHl} D={e.D} E={e.E} tmp={e.TempDir}:{e.TempX},{e.TempY}");
         }
     }
 
@@ -621,6 +758,11 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
     private static bool IsLocalDoorTileRead(EnemyWorkPcEvent e)
     {
         return LocalDoorTileBranches.ContainsKey(e.Source);
+    }
+
+    private static bool IsForcedReversalTileRead(EnemyWorkPcEvent e)
+    {
+        return ForcedReversalTileBranches.ContainsKey(e.Source);
     }
 
     private static void AppendEventSection(List<string> lines, string title, IEnumerable<EnemyWorkPcEvent> events)
@@ -953,6 +1095,10 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
         public List<EnemyWorkPcEvent> LocalDoorTileReads =>
             Events.Where(IsLocalDoorTileRead)
+            .ToList();
+
+        public List<EnemyWorkPcEvent> ForcedReversalTileReads =>
+            Events.Where(IsForcedReversalTileRead)
             .ToList();
 
         public List<EnemyWorkPcEvent> FallbackEntries =>
