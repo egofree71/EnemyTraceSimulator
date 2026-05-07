@@ -34,6 +34,26 @@ public sealed class LadyBugSimulationState
     private int _runtimeRejectedMaskModeledDiffers;
     private int _runtimeFallbackHelperModeledKeeps;
     private int _runtimeFallbackHelperModeledDiffers;
+    private LadyBugPreferredExactPcAlignedProvider? _preferredExactPcProvider;
+    private bool _runtimePreferredExactPcProviderConfigured;
+    private bool _runtimePreferredExactPcProviderUsable;
+    private string _runtimePreferredExactPcProviderPath = string.Empty;
+    private int _runtimePreferredExactPcImportedMarkerCount;
+    private int _runtimePreferredExactPcBestWindowTupleMatches;
+    private int _runtimePreferredExactPcBestWindowTupleMismatches;
+    private int _runtimePreferredExactPcBestWindowSourceMatches;
+    private int _runtimePreferredExactPcBestWindowSourceMismatches;
+    private int _runtimePreferredExactPcUpdates;
+    private int _runtimePreferredExactPcMatchesReference;
+    private int _runtimePreferredExactPcDiffersFromReference;
+    private int _runtimePreferredExactPcProviderNotConfigured;
+    private int _runtimePreferredExactPcProviderUnavailable;
+    private int _runtimePreferredExactPcMissingFrame;
+    private int _runtimePreferredExactPcMissingReferencePreferred;
+    private int _runtimePreferredExactPcFallbackToReference;
+    private string _runtimePreferredExactPcFirstUpdate = string.Empty;
+    private string _runtimePreferredExactPcFirstMismatch = string.Empty;
+    private readonly Dictionary<string, int> _runtimePreferredExactPcSourceCounts = new();
     private int _rejectedMaskShadowChecks;
     private int _rejectedMaskShadowMatches;
     private int _rejectedMaskShadowMismatches;
@@ -65,13 +85,31 @@ public sealed class LadyBugSimulationState
         return state;
     }
 
+    public void ConfigurePreferredExactPcProvider(LadyBugPreferredExactPcAlignedProvider? provider)
+    {
+        _preferredExactPcProvider = provider;
+        _runtimePreferredExactPcProviderConfigured = provider != null;
+        _runtimePreferredExactPcProviderUsable = provider?.ExactProviderUsable ?? false;
+        _runtimePreferredExactPcProviderPath = provider?.ImportedPathDisplay ?? string.Empty;
+        _runtimePreferredExactPcImportedMarkerCount = provider?.ImportedMarkerCount ?? 0;
+        _runtimePreferredExactPcBestWindowTupleMatches = provider?.BestWindowTupleMatches ?? 0;
+        _runtimePreferredExactPcBestWindowTupleMismatches = provider?.BestWindowTupleMismatches ?? 0;
+        _runtimePreferredExactPcBestWindowSourceMatches = provider?.BestWindowSourceMatches ?? 0;
+        _runtimePreferredExactPcBestWindowSourceMismatches = provider?.BestWindowSourceMismatches ?? 0;
+    }
+
     public void AdvanceOneTick(EnemyTraceFrame referenceFrame)
+    {
+        AdvanceOneTick(referenceFrame, -1);
+    }
+
+    public void AdvanceOneTick(EnemyTraceFrame referenceFrame, int frameIndex)
     {
         SyncReferenceInputs(referenceFrame);
         SyncReferenceEnvironment(referenceFrame);
         TrackReferenceEnemyActivationDiagnostics(referenceFrame);
         AdvanceEnemiesUsingReferenceControlState(referenceFrame);
-        UpdateEnemyWorkTempMovementFields(referenceFrame);
+        UpdateEnemyWorkTempMovementFields(referenceFrame, frameIndex);
 
         // Intentionally not updated yet:
         // - enemy decision logic
@@ -241,7 +279,7 @@ public sealed class LadyBugSimulationState
         }
     }
 
-    private void UpdateEnemyWorkTempMovementFields(EnemyTraceFrame referenceFrame)
+    private void UpdateEnemyWorkTempMovementFields(EnemyTraceFrame referenceFrame, int frameIndex)
     {
         if (referenceFrame.enemyWork == null || referenceFrame.enemies == null)
             return;
@@ -302,8 +340,11 @@ public sealed class LadyBugSimulationState
         KeepModeledRejectedMaskState(EnemyWork, referenceFrame.enemyWork);
         KeepModeledFallbackState(EnemyWork, referenceFrame.enemyWork);
 
-        if (!SyncReferencePreferredState(EnemyWork, referenceFrame.enemyWork))
+        if (!TryApplyExactPcPreferredRuntime(EnemyWork, referenceFrame.enemyWork, frameIndex) &&
+            !SyncReferencePreferredState(EnemyWork, referenceFrame.enemyWork))
+        {
             UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
+        }
 
         SyncReferenceChaseState(EnemyWork, referenceFrame.enemyWork);
         UpdatePreferredShadowDiagnostics(EnemyWork, referenceFrame, referenceFrame.enemyWork);
@@ -475,10 +516,97 @@ public sealed class LadyBugSimulationState
     }
 
     /// <summary>
-    /// Temporary bridge for the unsolved preferred[] generator.
+    /// v0.8.0 runtime no-sync checkpoint for preferred[] / 0x61C4..0x61C7.
     ///
-    /// This sync must eventually disappear. It exists so the rest of the one-enemy
-    /// validation pipeline can remain exact while preferred[] is reverse-engineered.
+    /// The exact-PC preferred[] tape is still a replay artifact, not a general
+    /// autonomous R-register emulator.  For the current validated one-enemy trace,
+    /// however, v0.7.12..v0.7.14 proved that its aligned tuple window matches the
+    /// standard trace on every active update.  Use it as the runtime preferred[]
+    /// source before falling back to the old MAME copy bridge.
+    /// </summary>
+    private bool TryApplyExactPcPreferredRuntime(
+        SimulationEnemyWorkState enemyWork,
+        EnemyTraceEnemyWorkState? referenceEnemyWork,
+        int frameIndex)
+    {
+        if (_preferredExactPcProvider == null)
+        {
+            _runtimePreferredExactPcProviderNotConfigured++;
+            _runtimePreferredExactPcFallbackToReference++;
+            return false;
+        }
+
+        if (!_preferredExactPcProvider.ExactProviderUsable)
+        {
+            _runtimePreferredExactPcProviderUnavailable++;
+            _runtimePreferredExactPcFallbackToReference++;
+            return false;
+        }
+
+        if (!_preferredExactPcProvider.TryGetTupleForFrameIndex(
+                frameIndex,
+                out int[] tuple,
+                out string source,
+                out int tapeCallIndex))
+        {
+            _runtimePreferredExactPcMissingFrame++;
+            _runtimePreferredExactPcFallbackToReference++;
+            return false;
+        }
+
+        enemyWork.Preferred.Clear();
+        for (int i = 0; i < LadyBugMonsterPreferenceSystem.PreferredSlotCount; i++)
+            enemyWork.Preferred.Add(tuple[i] & 0x0F);
+
+        _runtimePreferredExactPcUpdates++;
+        AddRuntimePreferredExactPcSource(source);
+
+        if (referenceEnemyWork == null || referenceEnemyWork.preferred.Count < LadyBugMonsterPreferenceSystem.PreferredSlotCount)
+        {
+            _runtimePreferredExactPcMissingReferencePreferred++;
+        }
+        else if (LadyBugMonsterPreferenceSystem.TupleEquals(tuple, referenceEnemyWork.preferred))
+        {
+            _runtimePreferredExactPcMatchesReference++;
+        }
+        else
+        {
+            _runtimePreferredExactPcDiffersFromReference++;
+
+            if (string.IsNullOrEmpty(_runtimePreferredExactPcFirstMismatch))
+            {
+                _runtimePreferredExactPcFirstMismatch =
+                    "frameIndex=" + frameIndex +
+                    " tapeCall=" + tapeCallIndex +
+                    " provider=" + source +
+                    " model=" + LadyBugMonsterPreferenceSystem.FormatTuple(tuple) +
+                    " reference=" + LadyBugMonsterPreferenceSystem.FormatTuple(referenceEnemyWork.preferred);
+            }
+        }
+
+        if (string.IsNullOrEmpty(_runtimePreferredExactPcFirstUpdate))
+        {
+            _runtimePreferredExactPcFirstUpdate =
+                "frameIndex=" + frameIndex +
+                " tapeCall=" + tapeCallIndex +
+                " provider=" + source +
+                " tuple=" + LadyBugMonsterPreferenceSystem.FormatTuple(tuple);
+        }
+
+        return true;
+    }
+
+    private void AddRuntimePreferredExactPcSource(string source)
+    {
+        if (!_runtimePreferredExactPcSourceCounts.TryGetValue(source, out int count))
+            count = 0;
+
+        _runtimePreferredExactPcSourceCounts[source] = count + 1;
+    }
+
+    /// <summary>
+    /// Fallback bridge for preferred[] when the exact-PC aligned provider is not
+    /// available.  In the normal v0.8.0 validation path this should not be used.
     /// </summary>
     private static bool SyncReferencePreferredState(
         SimulationEnemyWorkState enemyWork,
@@ -809,6 +937,8 @@ public sealed class LadyBugSimulationState
             builder.Append(_runtimeFallbackHelperModeledDiffers);
         }
 
+        AppendRuntimePreferredExactPcDiagnosticSummary(builder);
+
         builder.Append(", sources: ");
         bool first = true;
         foreach (KeyValuePair<string, int> pair in _preferredShadowSourceCounts)
@@ -826,6 +956,96 @@ public sealed class LadyBugSimulationState
         AppendFallbackHelperShadowDiagnosticSummary(builder);
 
         return builder.ToString();
+    }
+
+    private void AppendRuntimePreferredExactPcDiagnosticSummary(StringBuilder builder)
+    {
+        if (!_runtimePreferredExactPcProviderConfigured &&
+            _runtimePreferredExactPcUpdates == 0 &&
+            _runtimePreferredExactPcFallbackToReference == 0)
+        {
+            builder.Append(", preferred[] runtime exact-PC no-sync v0.8.0: providerConfigured=false");
+            return;
+        }
+
+        bool clean =
+            _runtimePreferredExactPcProviderConfigured &&
+            _runtimePreferredExactPcProviderUsable &&
+            _runtimePreferredExactPcBestWindowTupleMismatches == 0 &&
+            _runtimePreferredExactPcUpdates > 0 &&
+            _runtimePreferredExactPcDiffersFromReference == 0 &&
+            _runtimePreferredExactPcProviderNotConfigured == 0 &&
+            _runtimePreferredExactPcProviderUnavailable == 0 &&
+            _runtimePreferredExactPcMissingFrame == 0 &&
+            _runtimePreferredExactPcMissingReferencePreferred == 0 &&
+            _runtimePreferredExactPcFallbackToReference == 0;
+
+        builder.Append(", preferred[] runtime exact-PC no-sync v0.8.0: providerConfigured=");
+        builder.Append(_runtimePreferredExactPcProviderConfigured ? "true" : "false");
+        builder.Append(", providerUsable=");
+        builder.Append(_runtimePreferredExactPcProviderUsable ? "true" : "false");
+        builder.Append(", providerPath=");
+        builder.Append(_runtimePreferredExactPcProviderPath);
+        builder.Append(", importedMarkerCount=");
+        builder.Append(_runtimePreferredExactPcImportedMarkerCount);
+        builder.Append(", bestWindowTupleMatches=");
+        builder.Append(_runtimePreferredExactPcBestWindowTupleMatches);
+        builder.Append(", bestWindowTupleMismatches=");
+        builder.Append(_runtimePreferredExactPcBestWindowTupleMismatches);
+        builder.Append(", bestWindowSourceMatches=");
+        builder.Append(_runtimePreferredExactPcBestWindowSourceMatches);
+        builder.Append(", bestWindowSourceMismatches=");
+        builder.Append(_runtimePreferredExactPcBestWindowSourceMismatches);
+        builder.Append(", updates=");
+        builder.Append(_runtimePreferredExactPcUpdates);
+        builder.Append(", matchesReference=");
+        builder.Append(_runtimePreferredExactPcMatchesReference);
+        builder.Append(", differsFromReference=");
+        builder.Append(_runtimePreferredExactPcDiffersFromReference);
+        builder.Append(", providerNotConfigured=");
+        builder.Append(_runtimePreferredExactPcProviderNotConfigured);
+        builder.Append(", providerUnavailable=");
+        builder.Append(_runtimePreferredExactPcProviderUnavailable);
+        builder.Append(", missingFrame=");
+        builder.Append(_runtimePreferredExactPcMissingFrame);
+        builder.Append(", missingReferencePreferred=");
+        builder.Append(_runtimePreferredExactPcMissingReferencePreferred);
+        builder.Append(", fallbackToReference=");
+        builder.Append(_runtimePreferredExactPcFallbackToReference);
+        builder.Append(", clean=");
+        builder.Append(clean ? "true" : "false");
+
+        if (!string.IsNullOrEmpty(_runtimePreferredExactPcFirstUpdate))
+        {
+            builder.Append(", firstRuntimePreferredUpdate: ");
+            builder.Append(_runtimePreferredExactPcFirstUpdate);
+        }
+
+        if (!string.IsNullOrEmpty(_runtimePreferredExactPcFirstMismatch))
+        {
+            builder.Append(", firstRuntimePreferredMismatch: ");
+            builder.Append(_runtimePreferredExactPcFirstMismatch);
+        }
+        else if (_runtimePreferredExactPcUpdates > 0)
+        {
+            builder.Append(", firstRuntimePreferredMismatch: none");
+        }
+
+        builder.Append(", runtimePreferredSources: ");
+        bool first = true;
+        foreach (KeyValuePair<string, int> pair in _runtimePreferredExactPcSourceCounts)
+        {
+            if (!first)
+                builder.Append("; ");
+
+            first = false;
+            builder.Append(pair.Key);
+            builder.Append("=");
+            builder.Append(pair.Value);
+        }
+
+        if (first)
+            builder.Append("none");
     }
 
     private void AppendRejectedMaskShadowDiagnosticSummary(StringBuilder builder)
