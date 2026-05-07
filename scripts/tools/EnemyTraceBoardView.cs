@@ -1,9 +1,14 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 
 /// <summary>
 /// Lightweight debug renderer for one side of the enemy trace comparison.
 /// It draws the static logical maze, pivoting gates from the trace, the player, and enemies.
+///
+/// v0.7.04 adds a small single-enemy visual diagnostic overlay.  The overlay is intentionally
+/// read-only: it highlights slot 0, draws a recent trail while the replay advances, and shows
+/// the current slot/work RAM values.  It does not affect comparison logic or simulation state.
 /// </summary>
 public partial class EnemyTraceBoardView : Control
 {
@@ -38,6 +43,11 @@ public partial class EnemyTraceBoardView : Control
     // the level-1 sprite closer to the middle of horizontal corridors.
     private static readonly Vector2 EnemySpriteVisualOffsetArcade = new(0.0f, 1.0f);
 
+    private const int FocusEnemySlot = 0;
+    private const int FocusTrailMaxPoints = 80;
+    private const int FocusTrailBreakThresholdTicks = 4;
+    private static readonly Vector2 DenReleaseMarkerMame = new(0x58, 0x86);
+
     private int _mazeWidth = DefaultMazeWidth;
     private int _mazeHeight = DefaultMazeHeight;
     private int[] _wallMasks = new int[DefaultMazeWidth * DefaultMazeHeight];
@@ -49,6 +59,9 @@ public partial class EnemyTraceBoardView : Control
     private bool _enemySpriteLoadAttempted;
     private bool _showPlayerDebugMarkers;
     private bool _showInactiveEnemySlots;
+    private bool _showSingleEnemyFocus = true;
+    private int _lastFocusedSnapshotTick = int.MinValue;
+    private readonly List<FocusedEnemyTrailPoint> _focusedEnemyTrail = new();
 
     public string BoardTitle { get; set; } = "Board";
 
@@ -57,6 +70,8 @@ public partial class EnemyTraceBoardView : Control
     public bool ShowPlayerDebugMarkers => _showPlayerDebugMarkers;
 
     public bool ShowInactiveEnemySlots => _showInactiveEnemySlots;
+
+    public bool ShowSingleEnemyFocus => _showSingleEnemyFocus;
 
     public void SetShowInactiveEnemySlots(bool show)
     {
@@ -78,6 +93,17 @@ public partial class EnemyTraceBoardView : Control
     public void TogglePlayerDebugMarkers()
     {
         SetShowPlayerDebugMarkers(!_showPlayerDebugMarkers);
+    }
+
+    public void SetShowSingleEnemyFocus(bool show)
+    {
+        _showSingleEnemyFocus = show;
+        QueueRedraw();
+    }
+
+    public void ToggleSingleEnemyFocus()
+    {
+        SetShowSingleEnemyFocus(!_showSingleEnemyFocus);
     }
 
     public void SetPlayerSpriteVisualOffsetArcade(Vector2 offsetArcade)
@@ -157,6 +183,7 @@ public partial class EnemyTraceBoardView : Control
     public void SetSnapshot(EnemyTraceFrame snapshot)
     {
         _snapshot = snapshot;
+        UpdateFocusedEnemyTrail(snapshot);
         QueueRedraw();
     }
 
@@ -192,7 +219,10 @@ public partial class EnemyTraceBoardView : Control
         DrawGrid(origin, cell);
         DrawMazeWalls(origin, cell);
         DrawGates(origin, cell);
+        DrawFocusedEnemyTrail(origin, cell);
         DrawActors(origin, cell);
+        DrawFocusedEnemyMarker(origin, cell);
+        DrawFocusedEnemyHud(boardRect, font);
     }
 
     private void EnsurePlayerSpriteLoaded()
@@ -416,7 +446,12 @@ public partial class EnemyTraceBoardView : Control
         Rect2 destination = new(destinationPosition, new Vector2(size, size));
         Rect2 source = new(frame.SourcePosition, PlayerSpriteFrameSize);
 
-        DrawSpriteRegion(_playerSpriteSheet, destination, source, frame.FlipH, frame.FlipV, Colors.White);
+        DrawSpriteRegion(_playerSpriteSheet, destination, source, Colors.White, frame.FlipH, frame.FlipV);
+    }
+
+    private void DrawSpriteRegion(Texture2D texture, Rect2 destination, Rect2 source, Color modulate, bool flipH, bool flipV)
+    {
+        DrawSpriteRegion(texture, destination, source, flipH, flipV, modulate);
     }
 
     private void DrawSpriteRegion(Texture2D texture, Rect2 destination, Rect2 source, bool flipH, bool flipV, Color modulate)
@@ -456,6 +491,170 @@ public partial class EnemyTraceBoardView : Control
         Vector2 direction = isPlayer ? PlayerDirectionToVector(actor.dir) : EnemyDirectionToVector(actor.dir);
         if (direction != Vector2.Zero)
             DrawLine(center, center + direction * radius * 1.6f, Colors.White, 2.0f);
+    }
+
+    private void UpdateFocusedEnemyTrail(EnemyTraceFrame snapshot)
+    {
+        if (!_showSingleEnemyFocus)
+            return;
+
+        int tick = snapshot.frame;
+        if (_lastFocusedSnapshotTick != int.MinValue)
+        {
+            if (tick < _lastFocusedSnapshotTick || tick - _lastFocusedSnapshotTick > FocusTrailBreakThresholdTicks)
+                _focusedEnemyTrail.Clear();
+
+            if (tick == _lastFocusedSnapshotTick)
+                return;
+        }
+
+        _lastFocusedSnapshotTick = tick;
+
+        EnemyTraceActor? focus = FindEnemyBySlot(snapshot, FocusEnemySlot);
+        if (focus == null || !focus.active || !focus.HasKnownPosition)
+            return;
+
+        _focusedEnemyTrail.Add(new FocusedEnemyTrailPoint(tick, focus.x & 0xFF, focus.y & 0xFF, focus.raw & 0xFF, focus.dir));
+
+        while (_focusedEnemyTrail.Count > FocusTrailMaxPoints)
+            _focusedEnemyTrail.RemoveAt(0);
+    }
+
+    private void DrawFocusedEnemyTrail(Vector2 origin, float cell)
+    {
+        if (!_showSingleEnemyFocus)
+            return;
+
+        Vector2 denCenter = ArcadePointToBoard(origin, cell, (int)DenReleaseMarkerMame.X, (int)DenReleaseMarkerMame.Y);
+        DrawDebugMarker(denCenter, new Color(0.45f, 0.95f, 1.0f, 1.0f), "D", cell);
+
+        if (_focusedEnemyTrail.Count == 0)
+            return;
+
+        Color lineColor = new(1.0f, 0.84f, 0.18f, 0.58f);
+        Color dotColor = new(1.0f, 0.84f, 0.18f, 0.82f);
+
+        Vector2? previous = null;
+        foreach (FocusedEnemyTrailPoint point in _focusedEnemyTrail)
+        {
+            Vector2 center = ArcadePointToBoard(origin, cell, point.X, point.Y);
+            if (previous.HasValue)
+                DrawLine(previous.Value, center, lineColor, 2.0f);
+
+            DrawCircle(center, Mathf.Clamp(cell * 0.055f, 2.0f, 4.0f), dotColor);
+            previous = center;
+        }
+    }
+
+    private void DrawFocusedEnemyMarker(Vector2 origin, float cell)
+    {
+        if (!_showSingleEnemyFocus || _snapshot == null)
+            return;
+
+        EnemyTraceActor? focus = FindEnemyBySlot(_snapshot, FocusEnemySlot);
+        if (focus == null || !focus.active || !focus.HasKnownPosition)
+            return;
+
+        Vector2 center = ArcadePointToBoard(origin, cell, focus.x, focus.y);
+        float radius = Mathf.Clamp(cell * 0.34f, 10.0f, 22.0f);
+        Color markerColor = new(1.0f, 0.84f, 0.18f, 1.0f);
+
+        DrawArc(center, radius + 2.0f, 0.0f, Mathf.Tau, 40, Colors.Black, 4.0f);
+        DrawArc(center, radius, 0.0f, Mathf.Tau, 40, markerColor, 2.0f);
+
+        Vector2 direction = EnemyDirectionToVector(focus.dir);
+        if (direction != Vector2.Zero)
+        {
+            DrawLine(center, center + direction * radius * 1.25f, Colors.Black, 5.0f);
+            DrawLine(center, center + direction * radius * 1.25f, markerColor, 3.0f);
+        }
+
+        Font font = GetThemeDefaultFont();
+        DrawString(font, center + new Vector2(radius + 4.0f, -radius), "E0", HorizontalAlignment.Left, -1, 13, markerColor);
+    }
+
+    private void DrawFocusedEnemyHud(Rect2 boardRect, Font font)
+    {
+        if (!_showSingleEnemyFocus || _snapshot == null)
+            return;
+
+        EnemyTraceActor? focus = FindEnemyBySlot(_snapshot, FocusEnemySlot);
+        EnemyTraceEnemyWorkState? work = _snapshot.enemyWork;
+
+        string activeText = focus == null
+            ? "slot0: absent"
+            : $"slot0: raw={Hex(focus.raw)} dir={DirLabel(focus.dir)} xy=({Hex(focus.x)},{Hex(focus.y)}) active={focus.active}";
+
+        string workText = work == null
+            ? "work: none"
+            : $"work: tmp={Hex(work.tempDir)}:({Hex(work.tempX)},{Hex(work.tempY)}) rej={Hex(work.rejectedMask)} fb={Hex(work.fallbackMask)} pref=[{FormatPreferred(work.preferred)}]";
+
+        string tickText = $"tick={_snapshot.frame} mameFrame={_snapshot.mameFrame}";
+        string trailText = $"single-enemy release focus: E0 trail={_focusedEnemyTrail.Count}";
+
+        const float padding = 8.0f;
+        const float lineHeight = 15.0f;
+        float panelWidth = Mathf.Min(430.0f, boardRect.Size.X - 16.0f);
+        float panelHeight = padding * 2.0f + lineHeight * 4.0f;
+        Vector2 panelPos = boardRect.Position + new Vector2(8.0f, boardRect.Size.Y - panelHeight - 8.0f);
+        Rect2 panel = new(panelPos, new Vector2(panelWidth, panelHeight));
+
+        DrawRect(panel, new Color(0.0f, 0.0f, 0.0f, 0.62f), true);
+        DrawRect(panel, new Color(1.0f, 0.84f, 0.18f, 0.65f), false, 1.0f);
+
+        Vector2 textPos = panel.Position + new Vector2(padding, padding + 11.0f);
+        DrawString(font, textPos, trailText, HorizontalAlignment.Left, -1, 12, new Color(1.0f, 0.84f, 0.18f, 1.0f));
+        DrawString(font, textPos + new Vector2(0, lineHeight), tickText, HorizontalAlignment.Left, -1, 12, Colors.White);
+        DrawString(font, textPos + new Vector2(0, lineHeight * 2.0f), activeText, HorizontalAlignment.Left, -1, 12, Colors.White);
+        DrawString(font, textPos + new Vector2(0, lineHeight * 3.0f), workText, HorizontalAlignment.Left, -1, 12, Colors.White);
+    }
+
+    private static EnemyTraceActor? FindEnemyBySlot(EnemyTraceFrame frame, int slot)
+    {
+        if (frame.enemies == null)
+            return null;
+
+        foreach (EnemyTraceActor enemy in frame.enemies)
+        {
+            if (enemy.slot == slot)
+                return enemy;
+        }
+
+        return null;
+    }
+
+    private static string FormatPreferred(List<int>? values)
+    {
+        if (values == null || values.Count == 0)
+            return string.Empty;
+
+        int count = Math.Min(values.Count, 4);
+        var parts = new string[count];
+        for (int i = 0; i < count; i++)
+            parts[i] = Hex(values[i]);
+
+        return string.Join(",", parts);
+    }
+
+    private static string Hex(int value)
+    {
+        return value < 0 ? "--" : (value & 0xFF).ToString("X2");
+    }
+
+    private static string DirLabel(string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir))
+            return "--";
+
+        string lower = dir.ToLowerInvariant();
+        return lower switch
+        {
+            "left" or "01" or "1" => "01/L",
+            "up" or "08" or "8" => "08/U",
+            "right" or "04" or "4" => "04/R",
+            "down" or "02" or "2" => "02/D",
+            _ => dir
+        };
     }
 
     private Vector2 ArcadePointToBoard(Vector2 origin, float cell, int mameX, int mameY)
@@ -565,4 +764,5 @@ public partial class EnemyTraceBoardView : Control
 
     private readonly record struct PlayerSpriteFrame(Vector2 SourcePosition, bool FlipH, bool FlipV);
     private readonly record struct EnemySpriteFrame(Vector2 SourcePosition, bool FlipH, bool FlipV);
+    private readonly record struct FocusedEnemyTrailPoint(int Tick, int X, int Y, int Raw, string? Dir);
 }
