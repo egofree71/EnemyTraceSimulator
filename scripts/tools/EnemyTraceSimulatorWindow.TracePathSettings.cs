@@ -1,67 +1,46 @@
 using Godot;
 using System;
-using System.IO;
+using System.Text.Json;
 
 /// <summary>
-/// Keeps the default trace loader path synchronized with config/mame_trace_settings.json.
+/// Restores the startup trace-path behavior after the v0.7.10 cleanup:
+/// the UI should load the trace described by config/mame_trace_settings.json,
+/// not the old hard-coded ladybug_sequence_v8_trace.jsonl fallback.
 ///
-/// Regression context:
-/// EnemyTraceSimulatorWindow keeps an in-memory _currentTracePath.  After a cold
-/// start, that field used to stay on the hard-coded ladybug_sequence_v8_trace.jsonl
-/// path until MAME was launched in the same session.  When the configured output
-/// prefix is ladybug_sequence_v8_fullmem, pressing "Charger trace" immediately
-/// after starting the simulator therefore tried to load the wrong file.
-///
-/// This partial companion is intentionally small: it does not change trace parsing
-/// or MAME launch behavior.  It only derives the expected standard JSONL trace path
-/// from the current MAME settings once the UI is ready.
+/// This file is intentionally small and non-invasive. It only initializes
+/// _currentTracePath before the user presses "Load trace". When MAME is launched
+/// from the UI, OnLaunchMameLuaPressed still replaces _currentTracePath with the
+/// freshly generated trace path returned by MameTraceLauncher.
 /// </summary>
 public partial class EnemyTraceSimulatorWindow
 {
-    private const string StandardJsonlTraceScriptFileName = "ladybug_sequence_trace.lua";
-    private bool _tracePathRefreshQueuedFromSettings;
-
-    public override void _Notification(int what)
+    private static readonly JsonSerializerOptions TracePathSettingsJsonOptions = new()
     {
-        if (what != NotificationReady || _tracePathRefreshQueuedFromSettings)
-            return;
+        AllowTrailingCommas = true,
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip
+    };
 
-        _tracePathRefreshQueuedFromSettings = true;
-
-        // Run after _Ready() has bound the console, so the user sees the corrected
-        // path in the UI log instead of only the older hard-coded startup line.
-        Callable.From(RefreshTracePathFromSettingsAfterReady).CallDeferred();
+    public override void _EnterTree()
+    {
+        ApplyConfiguredTracePathFromSettings();
     }
 
-    private void RefreshTracePathFromSettingsAfterReady()
+    private void ApplyConfiguredTracePathFromSettings()
     {
-        if (TryBuildConfiguredJsonlTracePath(out string tracePath, out string message))
-        {
-            _currentTracePath = tracePath;
-            Log($"Trace configurée depuis {DefaultMameConfigPath}: {_currentTracePath}");
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(message))
-            Log(message);
-    }
-
-    private bool TryBuildConfiguredJsonlTracePath(out string tracePath, out string message)
-    {
-        tracePath = DefaultTracePath;
-        message = string.Empty;
-
         try
         {
-            MameTraceSettings settings = LoadMameTraceSettings();
-            string scriptFileName = Path.GetFileName(settings.LuaScriptPath.Replace('\\', '/'));
+            string configAbsolutePath = ResolveProjectPath(DefaultMameConfigPath);
+            if (!System.IO.File.Exists(configAbsolutePath))
+                return;
 
-            if (!string.Equals(scriptFileName, StandardJsonlTraceScriptFileName, StringComparison.OrdinalIgnoreCase))
-            {
-                message = $"Trace par défaut conservée: {DefaultTracePath} " +
-                          $"car le script configuré n'est pas une trace JSONL standard ({scriptFileName}).";
-                return false;
-            }
+            string json = System.IO.File.ReadAllText(configAbsolutePath);
+            MameTraceSettings? settings = JsonSerializer.Deserialize<MameTraceSettings>(
+                json,
+                TracePathSettingsJsonOptions);
+
+            if (settings == null)
+                return;
 
             string outputDirectory = string.IsNullOrWhiteSpace(settings.OutputDirectory)
                 ? "res://traces/mame"
@@ -71,17 +50,16 @@ public partial class EnemyTraceSimulatorWindow
                 ? "ladybug_sequence_v8"
                 : settings.OutputPrefix.Trim();
 
-            string absoluteOutputDirectory = ResolveProjectPath(outputDirectory);
-            string absoluteTracePath = Path.Combine(absoluteOutputDirectory, outputPrefix + "_trace.jsonl");
+            string outputDirectoryAbsolute = ResolveProjectPath(outputDirectory);
+            string traceAbsolutePath = System.IO.Path.Combine(
+                outputDirectoryAbsolute,
+                outputPrefix + "_trace.jsonl");
 
-            tracePath = MameTraceLauncher.ToDisplayPath(absoluteTracePath);
-            return true;
+            _currentTracePath = MameTraceLauncher.ToDisplayPath(traceAbsolutePath);
         }
         catch (Exception ex)
         {
-            message = $"Could not derive trace path from {DefaultMameConfigPath}: {ex.Message}. " +
-                      $"Keeping fallback {DefaultTracePath}.";
-            return false;
+            GD.PushWarning("Could not initialize configured trace path from MAME settings: " + ex.Message);
         }
     }
 }
