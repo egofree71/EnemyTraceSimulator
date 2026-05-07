@@ -8,19 +8,31 @@ using System.Linq;
 /// tools/mame/lua/ladybug_enemywork_pc_trace.lua.
 ///
 /// The diagnostic is observational: it counts exact-PC events around rejectedMask,
-/// fallbackMask, local-door validation, fallback, forced-reversal paths, and now
-/// the 0x3C0A tile-address lookup helper.
+/// fallbackMask, local-door validation, fallback, forced-reversal paths, the 0x3C0A
+/// tile-address lookup helper, and the 0x4130 caller-side tile values.
 ///
-/// Important v0.6.95 note:
+/// Important note inherited from v0.6.95:
 /// The debugger action logs H and L separately and also logs a convenience "hl"
-/// expression.  Exact-PC 0x3C0A traces showed that the composite "hl" expression
-/// is not reliable in this MAME debugger context.  Tile lookup validation therefore
+/// expression. Exact-PC 0x3C0A traces showed that the composite "hl" expression is
+/// not reliable in this MAME debugger context. Tile lookup validation therefore
 /// derives actualHL only from the separate h/l fields.
 /// </summary>
 public static class LadyBugEnemyWorkPcLogAnalyzer
 {
     private const string Marker = "LBEW|";
     private const string TileLookupReturnSource = "3C2B_TILE_LOOKUP_RETURN";
+
+    private static readonly Dictionary<string, LocalDoorTileBranch> LocalDoorTileBranches = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["4144_AFTER_4143_TILE_READ_DOWN"] = new(
+            "down", "08", "4143", "E+02", new[] { "35", "37" }),
+        ["4157_AFTER_4156_TILE_READ_LEFT"] = new(
+            "left", "01", "4156", "D-01", new[] { "3D", "3F" }),
+        ["416A_AFTER_4169_TILE_READ_UP"] = new(
+            "up", "02", "4169", "E-07", new[] { "35", "37" }),
+        ["417D_AFTER_417C_TILE_READ_RIGHT"] = new(
+            "right", "04", "417C", "D+08", new[] { "3F", "3D" })
+    };
 
     public static IReadOnlyList<string> BuildReport(string errorLogText)
     {
@@ -47,6 +59,7 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         AppendCountSection(lines, "Hits by derived active enemy count", events.GroupBy(e => e.ActiveEnemyCount.ToString(CultureInfo.InvariantCulture)).OrderByDescending(g => g.Count()).ThenBy(g => g.Key));
 
         AppendTileLookup3C0aSummary(lines, events);
+        AppendLocalDoorTileValueSummary(lines, events);
 
         var cycles = BuildCycles(events);
         AppendCycleSummary(lines, cycles);
@@ -65,6 +78,11 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
         AppendEventSection(
             lines,
+            "First 0x4130 local-door tile value events",
+            events.Where(IsLocalDoorTileRead).Take(80));
+
+        AppendEventSection(
+            lines,
             "Exact rejectedMask writer events",
             events.Where(IsRejectedWriter).Take(80));
 
@@ -79,33 +97,8 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             events.Where(e => e.Source.Equals("4241_FALLBACK_ENTRY", StringComparison.OrdinalIgnoreCase) ||
                               e.Source.Equals("4241_FALLBACK", StringComparison.OrdinalIgnoreCase)).Take(80));
 
-        var rejectedChanges = CollectChanges(events, e => e.Rejected);
-        lines.Add(string.Empty);
-        lines.Add("RejectedMask changes");
-        lines.Add("--------------------");
-        if (rejectedChanges.Count == 0)
-        {
-            lines.Add("none");
-        }
-        else
-        {
-            foreach ((int index, string previous, string current, EnemyWorkPcEvent e) in rejectedChanges.Take(80))
-                lines.Add($"#{index}: {previous}->{current} {FormatEvent(e)}");
-        }
-
-        var fallbackChanges = CollectChanges(events, e => e.Fallback);
-        lines.Add(string.Empty);
-        lines.Add("FallbackMask changes");
-        lines.Add("--------------------");
-        if (fallbackChanges.Count == 0)
-        {
-            lines.Add("none");
-        }
-        else
-        {
-            foreach ((int index, string previous, string current, EnemyWorkPcEvent e) in fallbackChanges.Take(80))
-                lines.Add($"#{index}: {previous}->{current} {FormatEvent(e)}");
-        }
+        AppendChanges(lines, "RejectedMask changes", CollectChanges(events, e => e.Rejected));
+        AppendChanges(lines, "FallbackMask changes", CollectChanges(events, e => e.Fallback));
 
         lines.Add(string.Empty);
         lines.Add("Interpretation hints");
@@ -115,8 +108,10 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("- 4331_REJECT_OR_TEMPDIR writes rejectedMask |= current temp direction before entering fallback.");
         lines.Add("- 43C4_FALLBACK_STEP_INC / 43C5_FALLBACK_STEP_READ observe the fallback-step counter at 61C2.");
         lines.Add("- 3C2B_TILE_LOOKUP_RETURN validates only the HL address computed by 0x3C0A. 0x3C0A restores AF/BC before returning; A is not the tile value there.");
-        lines.Add("- The true tile value is loaded by each caller after 0x3C0A, for example at 4143/4156/4169/417C in the 0x4130 local-door routine.");
+        lines.Add("- The true 0x4130 tile values are captured at the CP instruction immediately after LD A,(HL): 4144/4157/416A/417D.");
+        lines.Add("- A logical maze cell appears to span 2x2 8x8 tiles. 0x4130 still probes one concrete 8x8 tile around that logical cell.");
         lines.Add("- 4187_LOCAL_DOOR_REJECT is the already-observed door/local-tile rejection point.");
+        lines.Add("- 4185_LOCAL_DOOR_ACCEPT is the local-door success return path immediately before AND A / RET.");
         lines.Add("- 4241_FALLBACK_ENTRY is the already-observed generic fallback entry point.");
         lines.Add("- 4347_FORCED_REVERSAL is the already-observed forced-reversal point outside normal center decision logic.");
         lines.Add("- Active enemy count is derived by this analyzer from e0..e3 raw bytes because the debugger action cannot call Lua helpers at exact breakpoint time.");
@@ -160,8 +155,7 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
             if (!TryParseHexByte(e.D, out int d) ||
                 !TryParseHexByte(e.E, out int probeE) ||
-                !TryParseHexByte(e.H, out int h) ||
-                !TryParseHexByte(e.L, out int l))
+                !TryGetActualHl(e, out int actual))
             {
                 missingRegisters++;
                 continue;
@@ -169,7 +163,6 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
             comparable++;
             int expected = Compute3C0aExpectedHl(d, probeE);
-            int actual = ((h & 0xFF) << 8) | (l & 0xFF);
             uniqueAddresses.Add(actual);
             uniqueProbeCells.Add($"{(d & 0xF8):X2}:{(probeE >> 3):X2}");
 
@@ -230,16 +223,119 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
             if (!TryParseHexByte(e.D, out int d) ||
                 !TryParseHexByte(e.E, out int probeE) ||
-                !TryParseHexByte(e.H, out int h) ||
-                !TryParseHexByte(e.L, out int l))
+                !TryGetActualHl(e, out int actual))
             {
                 continue;
             }
 
             int expected = Compute3C0aExpectedHl(d, probeE);
-            int actual = ((h & 0xFF) << 8) | (l & 0xFF);
             lines.Add($"  D={e.D} E={e.E} actualHL={FormatWord(actual)} expectedHL={FormatWord(expected)} match={actual == expected} context={TileLookupContext(e)}");
             printed++;
+        }
+    }
+
+    private static void AppendLocalDoorTileValueSummary(List<string> lines, IReadOnlyList<EnemyWorkPcEvent> events)
+    {
+        List<EnemyWorkPcEvent> reads = events.Where(IsLocalDoorTileRead).ToList();
+        List<EnemyWorkPcEvent> accepts = events.Where(e => e.Source.Equals("4185_LOCAL_DOOR_ACCEPT", StringComparison.OrdinalIgnoreCase)).ToList();
+        List<EnemyWorkPcEvent> rejects = events.Where(e => e.Source.Equals("4187_LOCAL_DOOR_REJECT", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        lines.Add(string.Empty);
+        lines.Add("0x4130 local-door tile-value summary");
+        lines.Add("------------------------------------");
+
+        if (reads.Count == 0)
+        {
+            lines.Add("no caller-side 0x4130 tile-value reads were captured");
+            lines.Add("expected sources: 4144_AFTER_4143_TILE_READ_DOWN, 4157_AFTER_4156_TILE_READ_LEFT, 416A_AFTER_4169_TILE_READ_UP, 417D_AFTER_417C_TILE_READ_RIGHT");
+            return;
+        }
+
+        int comparableAddress = 0;
+        int addressMatches = 0;
+        int addressMismatches = 0;
+        int expectedRejects = 0;
+        int expectedAccepts = 0;
+        string firstAddressMismatch = string.Empty;
+        var branchCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var branchTileCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var branchRejectExpectations = new Dictionary<string, (int accept, int reject)>(StringComparer.OrdinalIgnoreCase);
+        var uniqueLogicalCells = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (EnemyWorkPcEvent e in reads)
+        {
+            LocalDoorTileBranch branch = LocalDoorTileBranches[e.Source];
+            Increment(branchCounts, $"{branch.Name}/dir={branch.DirectionMask}");
+            Increment(branchTileCounts, $"{branch.Name}:tile={e.A}");
+
+            bool shouldReject = branch.RejectTiles.Contains(e.A, StringComparer.OrdinalIgnoreCase);
+            if (shouldReject)
+                expectedRejects++;
+            else
+                expectedAccepts++;
+
+            branchRejectExpectations.TryGetValue(branch.Name, out (int accept, int reject) counts);
+            if (shouldReject)
+                counts.reject++;
+            else
+                counts.accept++;
+            branchRejectExpectations[branch.Name] = counts;
+
+            if (TryParseHexByte(e.D, out int d) &&
+                TryParseHexByte(e.E, out int probeE) &&
+                TryGetActualHl(e, out int actual))
+            {
+                comparableAddress++;
+                int expectedHl = Compute3C0aExpectedHl(d, probeE);
+                if (actual == expectedHl)
+                {
+                    addressMatches++;
+                }
+                else
+                {
+                    addressMismatches++;
+                    if (string.IsNullOrEmpty(firstAddressMismatch))
+                    {
+                        firstAddressMismatch =
+                            $"branch={branch.Name} tile={e.A} expectedHL={FormatWord(expectedHl)} actualHL={FormatWord(actual)} event={FormatEvent(e)}";
+                    }
+                }
+
+                uniqueLogicalCells.Add($"{(d >> 4):X1}:{(probeE >> 4):X1}");
+            }
+        }
+
+        lines.Add($"tileReadEvents={reads.Count}, acceptsObserved={accepts.Count}, rejectsObserved={rejects.Count}");
+        lines.Add($"expectedAcceptsFromTileValue={expectedAccepts}, expectedRejectsFromTileValue={expectedRejects}");
+        lines.Add($"addressComparable={comparableAddress}, addressMatches={addressMatches}, addressMismatches={addressMismatches}");
+        lines.Add($"uniqueLogical16x16CellsApprox={uniqueLogicalCells.Count}");
+        lines.Add("logical-cell note: approximate cell key uses X>>4 and Y>>4 because one maze cell appears to be 2x2 8x8 tiles.");
+
+        if (!string.IsNullOrEmpty(firstAddressMismatch))
+            lines.Add("first local-door address mismatch: " + firstAddressMismatch);
+
+        lines.Add("branches:");
+        foreach (KeyValuePair<string, int> pair in branchCounts.OrderByDescending(p => p.Value).ThenBy(p => p.Key))
+            lines.Add($"  {pair.Key}: {pair.Value}");
+
+        lines.Add("branch accept/reject expectation from tile value:");
+        foreach (KeyValuePair<string, (int accept, int reject)> pair in branchRejectExpectations.OrderBy(p => p.Key))
+            lines.Add($"  {pair.Key}: expectedAccept={pair.Value.accept}, expectedReject={pair.Value.reject}");
+
+        lines.Add("tiles by branch:");
+        foreach (KeyValuePair<string, int> pair in branchTileCounts.OrderByDescending(p => p.Value).ThenBy(p => p.Key))
+            lines.Add($"  {pair.Key}: {pair.Value}");
+
+        lines.Add("sample local-door tile reads:");
+        foreach (EnemyWorkPcEvent e in reads.Take(20))
+        {
+            LocalDoorTileBranch branch = LocalDoorTileBranches[e.Source];
+            bool shouldReject = branch.RejectTiles.Contains(e.A, StringComparer.OrdinalIgnoreCase);
+            string actualHl = TryGetActualHl(e, out int actual) ? FormatWord(actual) : "????";
+            string expectedHl = TryParseHexByte(e.D, out int d) && TryParseHexByte(e.E, out int probeE)
+                ? FormatWord(Compute3C0aExpectedHl(d, probeE))
+                : "????";
+            lines.Add($"  branch={branch.Name} dir={branch.DirectionMask} probeAdjust={branch.ProbeAdjustment} tile={e.A} expectedReject={shouldReject} actualHL={actualHl} expectedHL={expectedHl} D={e.D} E={e.E} tmp={e.TempDir}:{e.TempX},{e.TempY}");
         }
     }
 
@@ -250,9 +346,6 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
     private static string TileLookupContext(EnemyWorkPcEvent e)
     {
-        // This is intentionally simple and based on the observable exact-PC state.
-        // 0x3C0A is a shared helper, so until caller-specific tile-load breakpoints
-        // are added, this only labels the most useful context families.
         if (e.Ix.Equals("61BE", StringComparison.OrdinalIgnoreCase))
             return "enemyWork-local-door-or-decision";
 
@@ -315,10 +408,14 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         int cyclesWithRejectWrites = cycles.Count(c => c.RejectWriters.Count > 0);
         int cyclesWithFallbackEntry = cycles.Count(c => c.FallbackEntries.Count > 0);
         int cyclesWithDoorReject = cycles.Count(c => c.DoorRejects.Count > 0);
+        int cyclesWithDoorTileRead = cycles.Count(c => c.LocalDoorTileReads.Count > 0);
+        int cyclesWithDoorAccept = cycles.Count(c => c.DoorAccepts.Count > 0);
         int cyclesWithForcedReversal = cycles.Count(c => c.ForcedReversals.Count > 0);
 
         lines.Add($"cycles: {cycles.Count}");
         lines.Add($"cycles with rejectedMask write candidates: {cyclesWithRejectWrites}");
+        lines.Add($"cycles with local-door tile reads: {cyclesWithDoorTileRead}");
+        lines.Add($"cycles with local-door accept breakpoint: {cyclesWithDoorAccept}");
         lines.Add($"cycles with local-door reject breakpoint: {cyclesWithDoorReject}");
         lines.Add($"cycles entering fallback: {cyclesWithFallbackEntry}");
         lines.Add($"cycles with forced reversal: {cyclesWithForcedReversal}");
@@ -347,6 +444,7 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
                 cycle.RejectWriters.Count > 0 ||
                 cycle.FallbackEntries.Count > 0 ||
                 cycle.DoorRejects.Count > 0 ||
+                cycle.LocalDoorTileReads.Count > 0 ||
                 cycle.ForcedReversals.Count > 0 ||
                 cycle.FallbackStepReads.Count != 1;
 
@@ -434,29 +532,23 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         lines.Add("- nextDir is inferred from the next cycle's start temp direction. It is a cycle-level summary, not a separate exact-PC commit breakpoint.");
     }
 
-    private static void AppendClassificationCount(
-        List<string> lines,
-        string label,
-        IReadOnlyList<CycleView> cycles,
-        Func<CycleView, bool> predicate)
-    {
-        lines.Add($"{label}: {cycles.Count(predicate)}");
-    }
-
-    private static string JoinCycleIndexes(IEnumerable<CycleView> cycles)
-    {
-        return string.Join(",", cycles.Select(c => c.Cycle.Index.ToString(CultureInfo.InvariantCulture)));
-    }
-
     private static string FormatCycle(EnemyWorkCycle cycle, EnemyWorkCycle? next)
     {
         string rejectWrites = cycle.RejectWriters.Count == 0
             ? "none"
             : string.Join(",", cycle.RejectWriters.Select(e => $"{e.Source}@{e.Pc}:A={e.A}:preC1={e.Rejected}"));
 
+        string tileReads = cycle.LocalDoorTileReads.Count == 0
+            ? "none"
+            : string.Join(",", cycle.LocalDoorTileReads.Select(FormatLocalDoorTileReadShort));
+
         string doorRejects = cycle.DoorRejects.Count == 0
             ? "none"
             : string.Join(",", cycle.DoorRejects.Select(e => $"{e.Pc}:A={e.A}:HLactual={e.ActualHlText}:DE={e.DeComposite}"));
+
+        string doorAccepts = cycle.DoorAccepts.Count == 0
+            ? "none"
+            : string.Join(",", cycle.DoorAccepts.Select(e => $"{e.Pc}:A={e.A}:HLactual={e.ActualHlText}:DE={e.DeComposite}"));
 
         string fallbackEntries = cycle.FallbackEntries.Count == 0
             ? "none"
@@ -480,11 +572,34 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             $"startPref=[{cycle.Start.Preferred}]",
             $"startE0={cycle.Start.Enemies[0]}",
             $"rejectWrites={rejectWrites}",
+            $"doorTileReads={tileReads}",
+            $"doorAccepts={doorAccepts}",
             $"doorRejects={doorRejects}",
             $"fallbackEntries={fallbackEntries}",
             $"fallbackStepReads={cycle.FallbackStepReads.Count}",
             $"forcedReversals={forcedReversals}",
             nextText);
+    }
+
+    private static string FormatLocalDoorTileReadShort(EnemyWorkPcEvent e)
+    {
+        LocalDoorTileBranch branch = LocalDoorTileBranches[e.Source];
+        bool expectedReject = branch.RejectTiles.Contains(e.A, StringComparer.OrdinalIgnoreCase);
+        return $"{branch.Name}@{e.Pc}:dir={branch.DirectionMask}:tile={e.A}:HLactual={e.ActualHlText}:expectedReject={expectedReject}";
+    }
+
+    private static void AppendClassificationCount(
+        List<string> lines,
+        string label,
+        IReadOnlyList<CycleView> cycles,
+        Func<CycleView, bool> predicate)
+    {
+        lines.Add($"{label}: {cycles.Count(predicate)}");
+    }
+
+    private static string JoinCycleIndexes(IEnumerable<CycleView> cycles)
+    {
+        return string.Join(",", cycles.Select(c => c.Cycle.Index.ToString(CultureInfo.InvariantCulture)));
     }
 
     private static bool IsRejectedWriter(EnemyWorkPcEvent e)
@@ -499,6 +614,11 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         return e.Source.Equals("42CF_FALLBACK_RESET", StringComparison.OrdinalIgnoreCase) ||
                e.Source.Equals("43C4_FALLBACK_STEP_INC", StringComparison.OrdinalIgnoreCase) ||
                e.Source.Equals("43C5_FALLBACK_STEP_READ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLocalDoorTileRead(EnemyWorkPcEvent e)
+    {
+        return LocalDoorTileBranches.ContainsKey(e.Source);
     }
 
     private static void AppendEventSection(List<string> lines, string title, IEnumerable<EnemyWorkPcEvent> events)
@@ -516,6 +636,25 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
 
         if (count == 0)
             lines.Add("none");
+    }
+
+    private static void AppendChanges(
+        List<string> lines,
+        string title,
+        List<(int index, string previous, string current, EnemyWorkPcEvent e)> changes)
+    {
+        lines.Add(string.Empty);
+        lines.Add(title);
+        lines.Add(new string('-', title.Length));
+
+        if (changes.Count == 0)
+        {
+            lines.Add("none");
+            return;
+        }
+
+        foreach ((int index, string previous, string current, EnemyWorkPcEvent e) in changes.Take(80))
+            lines.Add($"#{index}: {previous}->{current} {FormatEvent(e)}");
     }
 
     private static List<(int index, string previous, string current, EnemyWorkPcEvent e)> CollectChanges(
@@ -708,6 +847,16 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
         return int.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out parsed);
     }
 
+    private static bool TryGetActualHl(EnemyWorkPcEvent e, out int actual)
+    {
+        actual = 0;
+        if (!TryParseHexByte(e.H, out int h) || !TryParseHexByte(e.L, out int l))
+            return false;
+
+        actual = ((h & 0xFF) << 8) | (l & 0xFF);
+        return true;
+    }
+
     private static string FormatWord(int value)
     {
         return (value & 0xFFFF).ToString("X4", CultureInfo.InvariantCulture);
@@ -796,6 +945,14 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
             Events.Where(e => e.Source.Equals("4187_LOCAL_DOOR_REJECT", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
+        public List<EnemyWorkPcEvent> DoorAccepts =>
+            Events.Where(e => e.Source.Equals("4185_LOCAL_DOOR_ACCEPT", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        public List<EnemyWorkPcEvent> LocalDoorTileReads =>
+            Events.Where(IsLocalDoorTileRead)
+            .ToList();
+
         public List<EnemyWorkPcEvent> FallbackEntries =>
             Events.Where(e =>
                 e.Source.Equals("4241_FALLBACK_ENTRY", StringComparison.OrdinalIgnoreCase) ||
@@ -841,20 +998,20 @@ public static class LadyBugEnemyWorkPcLogAnalyzer
     {
         public int ActiveEnemyCount => CountActiveEnemies(Enemies);
 
-        public string ActualHlText
-        {
-            get
-            {
-                if (!TryParseHexByte(H, out int h) || !TryParseHexByte(L, out int l))
-                    return "????";
-
-                return FormatWord((h << 8) | l);
-            }
-        }
+        public string ActualHlText => TryGetActualHl(this, out int actual)
+            ? FormatWord(actual)
+            : "????";
     }
 
     private sealed record EnemySnapshot(string Raw, string X, string Y)
     {
         public override string ToString() => string.Join(":", Raw, X + "," + Y);
     }
+
+    private sealed record LocalDoorTileBranch(
+        string Name,
+        string DirectionMask,
+        string LoadAddress,
+        string ProbeAdjustment,
+        IReadOnlyList<string> RejectTiles);
 }

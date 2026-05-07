@@ -2,9 +2,8 @@
 --
 -- Exact-PC MAME debugger trace for Lady Bug EnemyWork decision diagnostics.
 --
--- v0.6.94 extends the existing EnemyWork exact-PC diagnostic with the
--- 0x3C0A tile lookup return breakpoint. This is the first safe step toward a
--- source-faithful 0x4130 / 0x4189 local-door validator.
+-- v0.6.96 extends the 0x3C0A address diagnostic with exact-PC tile-value
+-- breakpoints for the 0x4130 local-door validator.
 --
 -- Core decision breakpoints:
 --   0x42CC : exact reset write to 61C1 / rejectedMask
@@ -15,6 +14,7 @@
 --   0x43C5 : fallback helper value after increment
 --   0x3911 : logical maze direction validation entry
 --   0x4130 : local door validation entry
+--   0x4185 : local door accept return path
 --   0x4187 : local door/tile rejection point
 --   0x4241 : generic fallback entry point
 --   0x4347 : forced reversal point
@@ -38,6 +38,16 @@
 --              0xD0A0 + ((D & 0xF8) * 4) + (E >> 3)
 --            This formula intentionally preserves the arcade VRAM layout:
 --            columns, bottom-to-top, not row-major screen order.
+--
+-- Local-door tile-value breakpoints added in v0.6.96:
+--   0x4144 : immediately after 0x4143 LD A,(HL), down branch tile value in A
+--   0x4157 : immediately after 0x4156 LD A,(HL), left branch tile value in A
+--   0x416A : immediately after 0x4169 LD A,(HL), up branch tile value in A
+--   0x417D : immediately after 0x417C LD A,(HL), right branch tile value in A
+--
+-- Important: Lady Bug's logical maze cell appears to be 16x16 pixels, i.e. 2x2
+-- tiles. 0x3C0A/0x4130 still operate on individual 8x8 tile probes inside or
+-- around that logical cell.
 --
 -- This is still a diagnostic, not gameplay simulation. Its job is to reveal the
 -- exact order of source-PC events around release, fallback, commit, and tile probes.
@@ -142,7 +152,7 @@ local function open_outputs_if_needed()
     output_opened_at_frame = mame_frame
 
     hits_file:write("# Lady Bug EnemyWork exact-PC diagnostic hits\n")
-    hits_file:write("# v0.6.94 includes 0x3C0A/0x3C2B tile lookup return logging, plus release and decision breakpoints.\n")
+    hits_file:write("# v0.6.96 includes 0x4130 local-door tile value breakpoints, plus 0x3C0A address validation.\n")
     hits_file:write("# pollTick/mameFrame are Lua drain time, not exact CPU time.\n")
     hits_file:write("# LBEW payload is emitted at the exact breakpoint through MAME debugger logerror.\n")
     hits_file:write("# The launcher enables -log; inspect tools/mame/lua/error.log as primary raw output.\n")
@@ -308,10 +318,16 @@ local function install_breakpoints()
     set_breakpoint(0x43c5, "43C5_FALLBACK_STEP_READ")
 
     -- 0x3C0A returns with HL pointing at the selected VRAM tile.
-    -- This is the source-level bridge needed before 0x4130 can stop using a
-    -- permissive tile reader.  The expected address is:
-    --   0xD0A0 + ((D & 0xF8) * 4) + (E >> 3)
+    -- This validates the source address formula but not the tile value.
     set_breakpoint(0x3c2b, "3C2B_TILE_LOOKUP_RETURN")
+
+    -- 0x4130 local-door tile value reads. We stop at the following CP
+    -- instruction so A already contains the value loaded by LD A,(HL).
+    set_breakpoint(0x4144, "4144_AFTER_4143_TILE_READ_DOWN")
+    set_breakpoint(0x4157, "4157_AFTER_4156_TILE_READ_LEFT")
+    set_breakpoint(0x416a, "416A_AFTER_4169_TILE_READ_UP")
+    set_breakpoint(0x417d, "417D_AFTER_417C_TILE_READ_RIGHT")
+    set_breakpoint(0x4185, "4185_LOCAL_DOOR_ACCEPT")
 
     -- Context around validation / fallback / forced reversal / commit.
     set_breakpoint(0x3911, "3911_LOGICAL_MAZE_VALIDATE")
@@ -346,7 +362,7 @@ local function write_summary(reason)
 
     summary_file:write("Lady Bug EnemyWork exact-PC diagnostic summary\n")
     summary_file:write("============================================\n\n")
-    summary_file:write("version: v0.6.94 0x3C0A tile lookup return breakpoint extension\n")
+    summary_file:write("version: v0.6.96 local-door tile value breakpoint extension\n")
     summary_file:write("reason: " .. tostring(reason) .. "\n")
     summary_file:write("save_state: " .. tostring(CONFIG.save_state) .. "\n")
     summary_file:write("frames_after_tick0_to_capture: " .. tostring(CONFIG.frames_after_tick0_to_capture) .. "\n")
@@ -545,4 +561,4 @@ post_load_subscription = emu.add_machine_post_load_notifier(on_post_load)
 reset_subscription = emu.add_machine_reset_notifier(on_reset)
 frame_subscription = emu.add_machine_frame_notifier(on_frame)
 
-emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.94 0x3C0A tile lookup breakpoint extension.")
+emu.print_info("Lady Bug EnemyWork PC trace script loaded, v0.6.96 local-door tile value breakpoint extension.")
