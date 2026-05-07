@@ -13,10 +13,11 @@ using System.Collections.Generic;
 /// source-first 0x4315 shadow check that runs the reconstructed 0x42E6 model over
 /// the exact-PC validated current-kept cycles.
 ///
-/// v0.7.00 keeps the non-invasive 0x4130 local-door shadow check, but normal
-/// decision-center cycles now start from the previous enemy slot state and pass
-/// through the full source-first 0x427E decision gate before choosing 0x42E0
-/// preferred-decision or 0x433A outside-center logic.
+/// v0.7.01 broadens the non-invasive source-first shadow from decision-center
+/// cycles to every active Enemy_UpdateOne transition in the current one-enemy
+/// trace. Normal cycles start from the previous enemy slot state, pass through
+/// the full source-first 0x427E decision gate, choose either 0x42E0 or 0x433A,
+/// then apply the one-pixel 0x43BA movement step.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -24,7 +25,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, and source-first 0x4130 local-door and 0x427E decision-gate summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, and source-first Enemy_UpdateOne / 0x427E / 0x4130 summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.

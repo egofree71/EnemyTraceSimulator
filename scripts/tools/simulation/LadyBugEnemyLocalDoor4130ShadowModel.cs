@@ -4,19 +4,20 @@ using System.Globalization;
 using System.Text;
 
 /// <summary>
-/// Source-first shadow diagnostic for the 0x4130 local-door/tile validator.
+/// Source-first shadow diagnostic for Enemy_UpdateOne around the 0x427E / 0x4130 / 0x433A path.
 ///
 /// v0.6.96 proved with exact-PC logs that:
 /// - 0x3C0A computes HL as D0A0 + ((D & F8) * 4) + (E >> 3);
 /// - 0x4130 reads the true tile value immediately after each 0x3C0A call;
 /// - tile values 35/37 reject vertical probes and 3D/3F reject horizontal probes.
 ///
-/// This v0.7.00 class wires that knowledge into the existing source-first
-/// LadyBugEnemyDecisionModel.TryPreferredDirection() transcription, but only as a
-/// shadow diagnostic. Normal cycles load the start scratch from the previous
-/// enemy slot state, matching the source flow at 0x43F0..0x4405.
+/// This v0.7.01 class broadens the previous local-door shadow into a full
+/// one-step Enemy_UpdateOne shadow for all active one-enemy transitions. It is
+/// still diagnostic-only: normal cycles load the start scratch from the previous
+/// enemy slot state, matching 0x43F0..0x4405, then choose 0x42E0 or 0x433A via
+/// the source-first 0x427E carry gate and apply the 0x43BA one-pixel step.
 ///
-/// v0.7.00 also replaces the old pixel-only center predicate with a source-first
+/// v0.7.00 replaced the old pixel-only center predicate with a source-first
 /// transcription of the full 0x427E decision gate.  The arcade only enters
 /// 0x42E0 preferred-decision logic when 0x427E returns carry set; pixel alignment
 /// alone is not sufficient.
@@ -29,7 +30,7 @@ using System.Text;
 /// </summary>
 public static class LadyBugEnemyLocalDoor4130ShadowModel
 {
-    private const string Version = "v0.7.00";
+    private const string Version = "v0.7.01";
     private const int VramBase = 0xD000;
     private const int VramLength = 0x0400;
 
@@ -38,8 +39,9 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         public int Frames;
         public int Transitions;
         public int ReleaseActivationTransitions;
-        public int DecisionCenterCandidates;
+        public int SourceUpdateCandidates;
         public int PixelAlignedCandidates;
+        public int PixelUnalignedOutsideCenter;
         public int DecisionGateCarrySet;
         public int DecisionGateCarryClear;
         public int OutsideCenterPath;
@@ -52,7 +54,6 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         public int SkippedMissingEnemyWork;
         public int SkippedMissingPreferred;
         public int SkippedMissingVram;
-        public int SkippedNonCenter;
         public int SkippedNoActiveEnemy;
         public int SkippedPreviousSlotMissing;
         public int SkippedPreviousSlotInactive;
@@ -203,13 +204,8 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         LadyBugEnemyDecisionGate427EModel.Result gate =
             LadyBugEnemyDecisionGate427EModel.Evaluate(scratch.TempDir, scratch.TempX, scratch.TempY);
 
-        if (!gate.PixelAligned)
-        {
-            counters.SkippedNonCenter++;
-            return;
-        }
-
-        counters.PixelAlignedCandidates++;
+        if (gate.PixelAligned)
+            counters.PixelAlignedCandidates++;
 
         RunCandidate(
             currentFrame,
@@ -218,7 +214,9 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
             slot,
             gate.CarrySet
                 ? "43F0_427E_CARRY_SET_4130_DECISION_CENTER"
-                : "43F0_427E_CARRY_CLEAR_433A_OUTSIDE_CENTER",
+                : gate.PixelAligned
+                    ? "43F0_427E_CARRY_CLEAR_433A_OUTSIDE_CENTER"
+                    : "43F0_427E_PIXEL_UNALIGNED_433A_OUTSIDE_CENTER",
             gate,
             counters);
     }
@@ -238,7 +236,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
             return;
         }
 
-        counters.DecisionCenterCandidates++;
+        counters.SourceUpdateCandidates++;
         counters.Checks++;
 
         string decisionSource;
@@ -259,6 +257,8 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         {
             counters.DecisionGateCarryClear++;
             counters.OutsideCenterPath++;
+            if (!decisionGate.PixelAligned)
+                counters.PixelUnalignedOutsideCenter++;
 
             bool forcedReversal = LadyBugEnemyDecisionModel.CheckDoorForcedReversal(
                 scratch.TempDir,
@@ -457,12 +457,13 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
     private static string BuildSummaryText(Counters counters)
     {
         var builder = new StringBuilder();
-        builder.Append("Lady Bug source-first 0x4130 local-door shadow ").Append(Version).Append(": ");
+        builder.Append("Lady Bug source-first Enemy_UpdateOne shadow ").Append(Version).Append(": ");
         builder.Append("frames=").Append(counters.Frames);
         builder.Append(", transitions=").Append(counters.Transitions);
         builder.Append(", releaseActivationTransitions=").Append(counters.ReleaseActivationTransitions);
-        builder.Append(", decisionCenterCandidates=").Append(counters.DecisionCenterCandidates);
+        builder.Append(", sourceUpdateCandidates=").Append(counters.SourceUpdateCandidates);
         builder.Append(", pixelAlignedCandidates=").Append(counters.PixelAlignedCandidates);
+        builder.Append(", pixelUnalignedOutsideCenter=").Append(counters.PixelUnalignedOutsideCenter);
         builder.Append(", decisionGateCarrySet=").Append(counters.DecisionGateCarrySet);
         builder.Append(", decisionGateCarryClear=").Append(counters.DecisionGateCarryClear);
         builder.Append(", outsideCenterPath=").Append(counters.OutsideCenterPath);
@@ -479,7 +480,6 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         builder.Append(", skippedMissingEnemyWork=").Append(counters.SkippedMissingEnemyWork);
         builder.Append(", skippedMissingPreferred=").Append(counters.SkippedMissingPreferred);
         builder.Append(", skippedMissingVram=").Append(counters.SkippedMissingVram);
-        builder.Append(", skippedNonCenter=").Append(counters.SkippedNonCenter);
         builder.Append(", skippedNoActiveEnemy=").Append(counters.SkippedNoActiveEnemy);
         builder.Append(", skippedPreviousSlotMissing=").Append(counters.SkippedPreviousSlotMissing);
         builder.Append(", skippedPreviousSlotInactive=").Append(counters.SkippedPreviousSlotInactive);
@@ -500,7 +500,7 @@ public static class LadyBugEnemyLocalDoor4130ShadowModel
         }
         else
         {
-            builder.Append(". NOTE: shadow-only; normal cycles load scratch from the previous slot state following 0x43F0..0x4405 and use the full 0x427E carry gate before choosing between 0x42E0 preferred-decision and 0x433A outside-center logic; authoritative enemy direction/rejectedMask remain reference-synced.");
+            builder.Append(". NOTE: shadow-only; all active normal cycles load scratch from the previous slot state following 0x43F0..0x4405, use the full 0x427E carry gate, run either 0x42E0 preferred-decision or 0x433A outside-center keep/reverse logic, then apply the one-pixel 0x43BA step; authoritative enemy direction/rejectedMask remain reference-synced.");
         }
 
         return builder.ToString();
