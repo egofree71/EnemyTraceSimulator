@@ -32,6 +32,10 @@ public sealed class LadyBugSimulationState
     private string _firstDenExitCandidate = string.Empty;
     private int _referenceRejectedMaskSyncs;
     private int _referenceFallbackMaskSyncs;
+    private int _runtimeRejectedMaskModeledKeeps;
+    private int _runtimeRejectedMaskModeledDiffers;
+    private int _runtimeFallbackHelperModeledKeeps;
+    private int _runtimeFallbackHelperModeledDiffers;
     private int _rejectedMaskShadowChecks;
     private int _rejectedMaskShadowMatches;
     private int _rejectedMaskShadowMismatches;
@@ -290,14 +294,15 @@ public sealed class LadyBugSimulationState
 
         EnemyWork.FallbackHelperShadow = fallbackHelperShadow;
         EnemyWork.FallbackHelperShadowSource = fallbackHelperShadowSource;
+        EnemyWork.FallbackMask = fallbackHelperShadow;
         UpdateFallbackHelperShadowDiagnostics(
             fallbackHelperShadow,
             fallbackHelperShadowSource,
             referenceFrame,
             referenceFrame.enemyWork);
 
-        SyncReferenceRejectedMaskState(EnemyWork, referenceFrame.enemyWork);
-        SyncReferenceFallbackState(EnemyWork, referenceFrame.enemyWork);
+        KeepModeledRejectedMaskState(EnemyWork, referenceFrame.enemyWork);
+        KeepModeledFallbackState(EnemyWork, referenceFrame.enemyWork);
 
         if (!SyncReferencePreferredState(EnemyWork, referenceFrame.enemyWork))
             UpdatePreferredDirectionCandidate(EnemyWork, simulatedEnemy);
@@ -426,51 +431,49 @@ public sealed class LadyBugSimulationState
     }
 
     /// <summary>
-    /// Temporary bridge for rejectedMask.
+    /// v0.7.17 runtime no-sync checkpoint for 0x61C1.
     ///
-    /// rejectedMask is a short-lived scratch field produced by the direction
-    /// validation / wall rejection logic. The current adapter does not yet fully
-    /// simulate that decision pipeline, and the den-exit trace showed that a
-    /// partial rejectedMask model can create a few misleading mismatches even
-    /// when position, direction, fallback, and preferred[] all match MAME.
+    /// The full source-first Enemy_UpdateOne shadow has now been validated with
+    /// exact-PC aligned preferred[] input on the current one-enemy trace. Keep
+    /// the modeled rejectedMask value that was just produced instead of overwriting
+    /// it with MAME at the end of the tick.
     ///
-    /// Until the real rejection/fallback generator is implemented, keep this
-    /// scratch field aligned with the reference trace, like fallback helper,
-    /// preferred[], and chase state.
+    /// This is still a scoped checkpoint: the current trace validates the
+    /// 0x4189 clear path only; the carry-set forced-reversal branch remains a
+    /// later validation target.
     /// </summary>
-    private void SyncReferenceRejectedMaskState(
+    private void KeepModeledRejectedMaskState(
         SimulationEnemyWorkState enemyWork,
         EnemyTraceEnemyWorkState? referenceEnemyWork)
     {
         if (referenceEnemyWork == null)
             return;
 
-        if (enemyWork.RejectedMask != referenceEnemyWork.rejectedMask)
-            _referenceRejectedMaskSyncs++;
-
-        enemyWork.RejectedMask = referenceEnemyWork.rejectedMask;
+        if ((enemyWork.RejectedMask & 0x0F) == (referenceEnemyWork.rejectedMask & 0x0F))
+            _runtimeRejectedMaskModeledKeeps++;
+        else
+            _runtimeRejectedMaskModeledDiffers++;
     }
 
     /// <summary>
-    /// Temporary bridge for the fallback helper at 0x61C2.
+    /// v0.7.17 runtime no-sync checkpoint for 0x61C2.
     ///
-    /// The source string already describes fallback as reference-synced. In the
-    /// den-exit trace this value is stable at 01 while the simulation still held
-    /// the initial B0, creating hundreds of unhelpful mismatches unrelated to
-    /// preferred[] or pixel movement. Until the fallback generator is implemented,
-    /// keep it aligned with MAME just like preferred[] and chase timers.
+    /// The field is still historically named FallbackMask in the DTO, but exact-PC
+    /// logs identify it as a fallback step counter/helper. Keep the modeled value
+    /// produced by DeriveFallbackHelperCandidate() instead of overwriting it with
+    /// the reference byte from MAME.
     /// </summary>
-    private void SyncReferenceFallbackState(
+    private void KeepModeledFallbackState(
         SimulationEnemyWorkState enemyWork,
         EnemyTraceEnemyWorkState? referenceEnemyWork)
     {
         if (referenceEnemyWork == null)
             return;
 
-        if (enemyWork.FallbackMask != referenceEnemyWork.fallbackMask)
-            _referenceFallbackMaskSyncs++;
-
-        enemyWork.FallbackMask = referenceEnemyWork.fallbackMask;
+        if ((enemyWork.FallbackMask & 0xFF) == (referenceEnemyWork.fallbackMask & 0xFF))
+            _runtimeFallbackHelperModeledKeeps++;
+        else
+            _runtimeFallbackHelperModeledDiffers++;
     }
 
     /// <summary>
@@ -802,6 +805,22 @@ public sealed class LadyBugSimulationState
         {
             builder.Append(", reference fallback helper syncs=");
             builder.Append(_referenceFallbackMaskSyncs);
+        }
+
+        if (_runtimeRejectedMaskModeledKeeps > 0 || _runtimeRejectedMaskModeledDiffers > 0)
+        {
+            builder.Append(", runtime modeled rejectedMask keeps=");
+            builder.Append(_runtimeRejectedMaskModeledKeeps);
+            builder.Append(", runtime modeled rejectedMask differs=");
+            builder.Append(_runtimeRejectedMaskModeledDiffers);
+        }
+
+        if (_runtimeFallbackHelperModeledKeeps > 0 || _runtimeFallbackHelperModeledDiffers > 0)
+        {
+            builder.Append(", runtime modeled fallback helper keeps=");
+            builder.Append(_runtimeFallbackHelperModeledKeeps);
+            builder.Append(", runtime modeled fallback helper differs=");
+            builder.Append(_runtimeFallbackHelperModeledDiffers);
         }
 
         builder.Append(", sources: ");
