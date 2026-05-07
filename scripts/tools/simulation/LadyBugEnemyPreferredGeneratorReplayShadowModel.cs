@@ -69,48 +69,86 @@ public static class LadyBugEnemyPreferredGeneratorReplayShadowModel
             counters.PreferredChangeEvents += frame.preferredChangeEvents.Count;
         }
 
+        if (!TryBuildPreferredTupleForActiveFrame(frame, out int[] modeledTuple, out string source, out string skipReason))
+        {
+            if (skipReason == "no-active-enemy")
+            {
+                counters.SkippedNoActiveEnemy++;
+                return;
+            }
+
+            if (skipReason == "missing-preferred")
+            {
+                counters.MissingPreferred++;
+                return;
+            }
+
+            counters.TupleChecks++;
+            counters.TupleMismatches++;
+            counters.Unclassified++;
+            Count(counters.Sources, "unclassified");
+
+            int[] referenceTuple = frame.enemyWork.preferred == null || frame.enemyWork.preferred.Count < LadyBugMonsterPreferenceSystem.PreferredSlotCount
+                ? new[] { 0, 0, 0, 0 }
+                : ReadPreferredTuple(frame.enemyWork.preferred);
+
+            if (string.IsNullOrEmpty(counters.FirstMismatch))
+                counters.FirstMismatch = BuildContext(frame, "unclassified", referenceTuple, new[] { 0, 0, 0, 0 });
+            return;
+        }
+
+        counters.TupleChecks++;
+        counters.TupleMatches++;
+        Count(counters.Sources, source);
+
+        if (source.StartsWith("2E97_ROTATE", StringComparison.Ordinal))
+            counters.RotateMatches++;
+        else if (source.StartsWith("2EC7_RANDOM", StringComparison.Ordinal))
+            counters.RandomMatches++;
+        else if (source.StartsWith("477D_SLOT0_BFS", StringComparison.Ordinal))
+            counters.Slot0BfsOverrideMatches++;
+
+        int[] reference = ReadPreferredTuple(frame.enemyWork.preferred);
+        if (string.IsNullOrEmpty(counters.FirstMatch))
+            counters.FirstMatch = BuildContext(frame, source, reference, modeledTuple);
+    }
+
+    public static bool TryBuildPreferredTupleForActiveFrame(
+        EnemyTraceFrame frame,
+        out int[] modeledTuple,
+        out string source,
+        out string skipReason)
+    {
+        modeledTuple = new[] { 0, 0, 0, 0 };
+        source = "none";
+        skipReason = string.Empty;
+
+        if (frame.enemyWork == null ||
+            frame.enemyWork.preferred == null ||
+            frame.enemyWork.preferred.Count < LadyBugMonsterPreferenceSystem.PreferredSlotCount)
+        {
+            skipReason = "missing-preferred";
+            return false;
+        }
+
         // Scope guard: the first frames after state load can contain stale
         // preferred[] scratch values before any enemy slot is active.  Those bytes
         // are useful as RAM state, but they are not a generated Enemy_UpdateOne
         // preferred tuple for the single-enemy static-player milestone.
         if (!HasAnyActiveEnemy(frame))
         {
-            counters.SkippedNoActiveEnemy++;
-            return;
+            skipReason = "no-active-enemy";
+            return false;
         }
 
-        if (frame.enemyWork.preferred == null || frame.enemyWork.preferred.Count < LadyBugMonsterPreferenceSystem.PreferredSlotCount)
-        {
-            counters.MissingPreferred++;
-            return;
-        }
-
-        counters.TupleChecks++;
         int[] referenceTuple = ReadPreferredTuple(frame.enemyWork.preferred);
-
-        if (TryClassifyTuple(referenceTuple, out int[] modeledTuple, out string source))
+        if (!TryClassifyTuple(referenceTuple, out modeledTuple, out source))
         {
-            counters.TupleMatches++;
-            Count(counters.Sources, source);
-
-            if (source.StartsWith("2E97_ROTATE", StringComparison.Ordinal))
-                counters.RotateMatches++;
-            else if (source.StartsWith("2EC7_RANDOM", StringComparison.Ordinal))
-                counters.RandomMatches++;
-            else if (source.StartsWith("477D_SLOT0_BFS", StringComparison.Ordinal))
-                counters.Slot0BfsOverrideMatches++;
-
-            if (string.IsNullOrEmpty(counters.FirstMatch))
-                counters.FirstMatch = BuildContext(frame, source, referenceTuple, modeledTuple);
-            return;
+            skipReason = "unclassified";
+            return false;
         }
 
-        counters.TupleMismatches++;
-        counters.Unclassified++;
-        Count(counters.Sources, "unclassified");
-
-        if (string.IsNullOrEmpty(counters.FirstMismatch))
-            counters.FirstMismatch = BuildContext(frame, "unclassified", referenceTuple, new[] { 0, 0, 0, 0 });
+        return true;
     }
 
 
