@@ -35,10 +35,11 @@ using System.Collections.Generic;
 /// ladybug_enemywork_pc_trace.lua and reports whether the preferred[] random/BFS
 /// tape is available as an offline companion artifact.
 ///
-/// v0.7.12 adds a cautious window-alignment diagnostic between the standard
-/// active-frame preferred[] sequence and the imported exact-PC 2E5C call tape.
-/// It is still diagnostic-only and deliberately does not replace the standard
-/// replay/classifier provider yet.
+/// v0.7.12 aligns the imported exact-PC 0x2E5C tape with the active-frame
+/// preferred[] sequence from the standard trace.
+///
+/// v0.7.13 adds a selected preferred[slot] shadow that consumes the aligned
+/// exact-PC tape window instead of the standard-trace tuple classifier.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -46,7 +47,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Description =>
         "Build the future Lady Bug simulation state from the trace. " +
-        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 with replay-provider preferred input, preferred-generator replay-shadow, Enemy_UpdateOne preferred-input bridge, offline exact-PC preferred-tape import, and tentative exact-PC/standard sequence-alignment summaries in parallel.";
+        "AdvanceOneTick syncs reference controls, moves active enemies by one pixel using the MAME direction, updates first EnemyWork fields, keeps preferred[]/rejectedMask/fallback temporarily synced from the reference trace, and computes diagnostic preferred[], rejectedMask, fallback-helper, direction, source-first transition, source-first 0x4315, source-first Enemy_UpdateOne / 0x427E / 0x4130 / 0x4189 with replay-provider preferred input, preferred-generator replay-shadow, Enemy_UpdateOne preferred-input bridge, offline exact-PC preferred-tape import, exact-PC tape alignment, and exact-PC selected preferred-input shadow summaries in parallel.";
 
     // This adapter is now a valid checkpoint for the current one-enemy trace.
     // It is still reference-assisted, but the comparison pipeline should pass.
@@ -86,6 +87,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
         string updateOnePreferredInputShadow = LadyBugEnemyUpdateOnePreferredInputShadowModel.BuildSummary(referenceFrames);
         string preferredExactPcTapeImport = LadyBugPreferredExactPcTapeImportSummaryModel.BuildSummary(referenceFrames);
         string preferredExactPcTapeAlignment = LadyBugPreferredExactPcTapeAlignmentSummaryModel.BuildSummary(referenceFrames);
+        string updateOneExactPcPreferredInputShadow = LadyBugEnemyUpdateOneExactPcPreferredInputShadowModel.BuildSummary(referenceFrames);
 
         return new SimulationAdapterResult(
             frames,
@@ -101,6 +103,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             updateOnePreferredInputShadow + "; " +
             preferredExactPcTapeImport + "; " +
             preferredExactPcTapeAlignment + "; " +
+            updateOneExactPcPreferredInputShadow + "; " +
             "real enemy decision logic is not implemented yet");
     }
 }
