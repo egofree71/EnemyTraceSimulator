@@ -4,22 +4,20 @@ using System.Collections.Generic;
 /// Concise reference-direction validation adapter for the v0.9.x comparison work.
 ///
 /// This adapter intentionally keeps the visible side-by-side replay stable:
-/// active enemies still move using the MAME reference direction. The important
-/// v0.9.7 diagnostic is not a new runtime model; it is a transition-based
-/// source-path inspector that explains which directions the source path actually
-/// tested for each frame transition.
+/// active enemies still move using the MAME reference direction. The diagnostic
+/// appended to the Compare report is a transition-based source-path inspector.
 ///
-/// The old all-four-directions collision report is intentionally not appended in
-/// this adapter because it can produce false positives: it asks directions that
-/// the arcade source path did not necessarily test at that update.
+/// v0.9.8 keeps the inspector single-enemy-safe: transitions with more than one
+/// active enemy are explicitly skipped and counted, rather than being interpreted
+/// as if the single-enemy attribution rules still applied.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
     public string Name => "Lady Bug reference-direction step";
 
     public string Description =>
-        "v0.9.7 concise replay: keep the reference-direction visual comparison stable, " +
-        "then run the compact transition-based source-path decision inspector with mirrored vertical static-maze direction mapping. " +
+        "v0.9.8 concise replay: keep the reference-direction visual comparison stable, " +
+        "then run the transition-based source-path decision inspector in single-enemy-safe mode. " +
         "The all-four-directions collision probe is disabled in the normal report.";
 
     public bool ExpectedToMismatch => false;
@@ -49,7 +47,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
         return new SimulationAdapterResult(
             frames,
-            "Lady Bug reference-direction replay v0.9.7; " +
+            "Lady Bug reference-direction replay v0.9.8; " +
             "initial state: " + initialState.Summary + "; " +
             "normal Compare no longer appends legacy exact-PC/shadow summaries; " +
             "error.log is not used by this adapter; " +

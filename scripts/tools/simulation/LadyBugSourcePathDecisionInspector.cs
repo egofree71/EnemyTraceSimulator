@@ -4,34 +4,25 @@ using System.Globalization;
 using System.Text;
 
 /// <summary>
-/// v0.9.7 transition-based source-path inspector with compact normal reporting.
+/// v0.9.8 transition-based source-path inspector with compact normal reporting.
 ///
-/// This diagnostic follows the arcade update timing instead of inspecting the
+/// The inspector follows the arcade update timing instead of inspecting the
 /// already displayed frame as if it were the routine input.
 ///
 /// For a normal enemy update, the source code loads the current enemy slot into
 /// the 0x61BD..0x61BF scratch area at the start of the update, then commits the
-/// resulting one-pixel step. In a frame trace, that means the meaningful source
-/// input for frame i is normally frame i-1, and the reference result is frame i.
+/// resulting one-pixel step. In a frame trace, the meaningful source input for
+/// frame i is normally frame i-1, and the reference result is frame i.
 ///
-/// The inspector deliberately does not test all four directions independently.
-/// It follows the source path only:
-///   0x427E decision gate
-///     carry set   -> 0x42E6 preferred, then 0x4325 current, then 0x4241 fallback
-///     carry clear -> 0x433A outside-center keep / door-forced-reversal path
-///   0x43BA one-pixel movement step
-///
-/// It reports the first source path where a direction actually tested by the
-/// source would be accepted by 0x3911+0x4130 while the static maze oracle says it
-/// is blocked. v0.9.6 fixed the static-maze comparison by mirroring vertical
-/// source enemy directions before reading maze.json wall flags. v0.9.7 keeps the
-/// normal Compare output compact: detailed transition examples are only emitted
-/// when a real problem is found.
+/// Scope note for v0.9.8:
+/// this diagnostic is explicitly single-enemy safe. If a transition contains
+/// more than one active known enemy on either side, it is skipped and counted as
+/// multi-enemy unsupported rather than being interpreted with ambiguous EnemyWork
+/// attribution.
 /// </summary>
 public static class LadyBugSourcePathDecisionInspector
 {
-    private const string Version = "v0.9.7";
-    private const int MaxExamples = 6;
+    private const string Version = "v0.9.8";
 
     public static string BuildSummary(IReadOnlyList<EnemyTraceFrame> referenceFrames)
     {
@@ -71,74 +62,95 @@ public static class LadyBugSourcePathDecisionInspector
             return;
         }
 
-        if (startFrame.enemies == null || startFrame.enemies.Count == 0)
+        int activeStartCount = CountActiveKnownEnemies(startFrame);
+        int activeResultCount = CountActiveKnownEnemies(resultFrame);
+
+        if (activeStartCount == 0)
         {
-            stats.SkippedNoStartEnemies++;
+            stats.SkippedNoActiveStartEnemyTransitions++;
             return;
         }
 
-        foreach (EnemyTraceActor startEnemy in startFrame.enemies)
+        if (activeResultCount == 0)
         {
-            if (!startEnemy.active || !startEnemy.HasKnownPosition)
-                continue;
-
-            stats.ActiveStartEnemyStates++;
-
-            int slot = Math.Clamp(startEnemy.slot, 0, 3);
-            if (!TryGetEnemySlot(resultFrame, slot, out EnemyTraceActor? resultEnemy) || resultEnemy == null)
-            {
-                stats.SkippedMissingResultSlot++;
-                continue;
-            }
-
-            if (!resultEnemy.active || !resultEnemy.HasKnownPosition)
-            {
-                stats.SkippedInactiveResultSlot++;
-                continue;
-            }
-
-            int currentDir = DirectionFromRaw(startEnemy.raw);
-            if (!IsOneHotDirection(currentDir))
-            {
-                stats.InvalidCurrentDirection++;
-                continue;
-            }
-
-            int preferred = TryGetPreferred(resultFrame, slot, out int value) ? value : 0;
-            if (!IsOneHotDirection(preferred))
-            {
-                stats.MissingPreferred++;
-                continue;
-            }
-
-            var scratch = new LadyBugEnemyDecisionModel.EnemyDecisionScratch
-            {
-                TempDir = currentDir,
-                TempX = startEnemy.x & 0xFF,
-                TempY = startEnemy.y & 0xFF,
-                RejectedDirMask = 0,
-                FallbackHelper = 0
-            };
-
-            if (!LadyBugMameLocalTile4130Oracle.TryCreate(resultFrame, out LadyBugMameLocalTile4130Oracle? localTileOracle) || localTileOracle == null)
-            {
-                stats.MissingVramInspections++;
-                continue;
-            }
-
-            TransitionInspection inspection = InspectSourcePath(
-                resultFrameIndex,
-                startFrame,
-                resultFrame,
-                startEnemy,
-                resultEnemy,
-                scratch,
-                preferred,
-                staticOracle,
-                localTileOracle);
-
-            stats.Record(inspection);
+            stats.SkippedNoActiveResultEnemyTransitions++;
+            return;
         }
+
+        if (activeStartCount != 1 || activeResultCount != 1)
+        {
+            stats.SkippedMultiEnemyTransitions++;
+            stats.FirstSkippedMultiEnemyTransition ??=
+                $"firstSkippedMultiEnemyTransition startIndex={resultFrameIndex - 1} startTick={startFrame.frame} " +
+                $"resultIndex={resultFrameIndex} resultTick={resultFrame.frame} " +
+                $"activeStart={activeStartCount} activeResult={activeResultCount}";
+            return;
+        }
+
+        stats.SingleEnemyTransitions++;
+
+        if (!TryGetOnlyActiveKnownEnemy(startFrame, out EnemyTraceActor? startEnemy) || startEnemy == null)
+        {
+            stats.SkippedNoActiveStartEnemyTransitions++;
+            return;
+        }
+
+        int slot = Math.Clamp(startEnemy.slot, 0, 3);
+        if (!TryGetEnemySlot(resultFrame, slot, out EnemyTraceActor? resultEnemy) || resultEnemy == null)
+        {
+            stats.SkippedMissingResultSlot++;
+            return;
+        }
+
+        if (!resultEnemy.active || !resultEnemy.HasKnownPosition)
+        {
+            stats.SkippedInactiveResultSlot++;
+            return;
+        }
+
+        stats.ActiveStartEnemyStates++;
+
+        int currentDir = DirectionFromRaw(startEnemy.raw);
+        if (!IsOneHotDirection(currentDir))
+        {
+            stats.InvalidCurrentDirection++;
+            return;
+        }
+
+        int preferred = TryGetPreferred(resultFrame, slot, out int value) ? value : 0;
+        if (!IsOneHotDirection(preferred))
+        {
+            stats.MissingPreferred++;
+            return;
+        }
+
+        var scratch = new LadyBugEnemyDecisionModel.EnemyDecisionScratch
+        {
+            TempDir = currentDir,
+            TempX = startEnemy.x & 0xFF,
+            TempY = startEnemy.y & 0xFF,
+            RejectedDirMask = 0,
+            FallbackHelper = 0
+        };
+
+        if (!LadyBugMameLocalTile4130Oracle.TryCreate(resultFrame, out LadyBugMameLocalTile4130Oracle? localTileOracle) || localTileOracle == null)
+        {
+            stats.MissingVramInspections++;
+            return;
+        }
+
+        TransitionInspection inspection = InspectSourcePath(
+            resultFrameIndex,
+            startFrame,
+            resultFrame,
+            startEnemy,
+            resultEnemy,
+            scratch,
+            preferred,
+            staticOracle,
+            localTileOracle);
+
+        stats.Record(inspection);
     }
 
     private static TransitionInspection InspectSourcePath(
@@ -356,12 +368,48 @@ public static class LadyBugSourcePathDecisionInspector
             logical.AllowedMask,
             localOpen,
             localTile.BlockKind,
-            localTile.Details,
             staticMaze.Allowed,
             staticMaze.BlockKind,
-            staticMaze.Details,
             LadyBugGodotStaticMazeOracle.ToGodotMazeDirectionLabel(direction),
             sourceFinalAllowed);
+    }
+
+    private static int CountActiveKnownEnemies(EnemyTraceFrame frame)
+    {
+        if (frame.enemies == null)
+            return 0;
+
+        int count = 0;
+        foreach (EnemyTraceActor enemy in frame.enemies)
+        {
+            if (enemy.active && enemy.HasKnownPosition)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static bool TryGetOnlyActiveKnownEnemy(EnemyTraceFrame frame, out EnemyTraceActor? enemy)
+    {
+        enemy = null;
+        if (frame.enemies == null)
+            return false;
+
+        foreach (EnemyTraceActor candidate in frame.enemies)
+        {
+            if (!candidate.active || !candidate.HasKnownPosition)
+                continue;
+
+            if (enemy != null)
+            {
+                enemy = null;
+                return false;
+            }
+
+            enemy = candidate;
+        }
+
+        return enemy != null;
     }
 
     private static bool TryGetPreferred(EnemyTraceFrame frame, int slot, out int preferred)
@@ -428,6 +476,10 @@ public static class LadyBugSourcePathDecisionInspector
     {
         public int Frames;
         public int Transitions;
+        public int SingleEnemyTransitions;
+        public int SkippedNoActiveStartEnemyTransitions;
+        public int SkippedNoActiveResultEnemyTransitions;
+        public int SkippedMultiEnemyTransitions;
         public int ActiveStartEnemyStates;
         public int InvalidCurrentDirection;
         public int PixelUnalignedStartStates;
@@ -451,19 +503,12 @@ public static class LadyBugSourcePathDecisionInspector
         public int ResultMismatchesEnemyWork;
         public int MissingVramInspections;
         public int SkippedMissingEnemyWork;
-        public int SkippedNoStartEnemies;
         public int SkippedMissingResultSlot;
         public int SkippedInactiveResultSlot;
-        public string? FirstDecisionPath;
-        public string? FirstPreferredAccepted;
-        public string? FirstPreferredRejectedCurrentKept;
-        public string? FirstFallbackSelected;
-        public string? FirstOutsideCenter;
+        public string? FirstSkippedMultiEnemyTransition;
         public string? FirstSourceAcceptedButStaticBlocked;
         public string? FirstResultMismatchSlot;
         public string? FirstResultMismatchEnemyWork;
-        public string? FirstCarryClearExample;
-        public readonly List<string> Examples = new();
 
         public void Record(TransitionInspection inspection)
         {
@@ -484,16 +529,13 @@ public static class LadyBugSourcePathDecisionInspector
             {
                 case "42E6_PREFERRED_ACCEPTED":
                     PreferredAccepted++;
-                    FirstPreferredAccepted ??= inspection.ToSummary("firstPreferredAccepted");
                     break;
                 case "4315_PREFERRED_REJECTED_CURRENT_KEPT":
                     PreferredRejectedCurrentKept++;
-                    FirstPreferredRejectedCurrentKept ??= inspection.ToSummary("firstPreferredRejectedCurrentKept");
                     break;
                 case "4331_FALLBACK_SELECTED":
                     FallbackEntered++;
                     FallbackSelected++;
-                    FirstFallbackSelected ??= inspection.ToSummary("firstFallbackSelected");
                     break;
                 case "4331_FALLBACK_NOT_FOUND":
                     FallbackEntered++;
@@ -501,21 +543,15 @@ public static class LadyBugSourcePathDecisionInspector
                     break;
                 case "433A_OUTSIDE_CENTER_FORCED_REVERSAL":
                     OutsideCenterForcedReversal++;
-                    FirstOutsideCenter ??= inspection.ToSummary("firstOutsideCenter");
                     break;
                 default:
                     if (inspection.Path.StartsWith("433A_OUTSIDE_CENTER", StringComparison.Ordinal))
-                    {
                         OutsideCenterKeep++;
-                        FirstOutsideCenter ??= inspection.ToSummary("firstOutsideCenter");
-                    }
                     break;
             }
 
             if (inspection.ResultMatchesSlot)
-            {
                 ResultMatchesSlot++;
-            }
             else
             {
                 ResultMismatchesSlot++;
@@ -523,9 +559,7 @@ public static class LadyBugSourcePathDecisionInspector
             }
 
             if (inspection.ResultMatchesEnemyWork)
-            {
                 ResultMatchesEnemyWork++;
-            }
             else
             {
                 ResultMismatchesEnemyWork++;
@@ -537,26 +571,11 @@ public static class LadyBugSourcePathDecisionInspector
                 SourceAcceptedButStaticBlockedProbes++;
                 FirstSourceAcceptedButStaticBlocked ??= inspection.ToSummary("firstSourceAcceptedButStaticBlocked", emphasizeStaticBlock: true);
             }
-
-            if (!inspection.Gate.CarrySet)
-            {
-                FirstCarryClearExample ??=
-                    $"firstCarryClearExample {FormatFrameLabel("start", inspection.StartFrameIndex, inspection.StartFrame)} " +
-                    $"{FormatFrameLabel("result", inspection.ResultFrameIndex, inspection.ResultFrame)} " +
-                    $"slot={inspection.Slot} startPos=({Hex2(inspection.StartX)},{Hex2(inspection.StartY)}) " +
-                    $"current={DirLabel(inspection.StartDir)} gate={inspection.Gate.Source}/{inspection.Gate.Helper} " +
-                    $"compare={inspection.Gate.CompareCount}:{Hex2(inspection.Gate.FinalA)}/{Hex2(inspection.Gate.FinalB)}";
-            }
-
-            FirstDecisionPath ??= inspection.ToSummary("firstDecisionPath");
-
-            if (Examples.Count < MaxExamples)
-                Examples.Add(inspection.ToSummary("example"));
         }
 
         public string BuildSummary()
         {
-            bool clean =
+            bool noInspectionErrors =
                 InvalidCurrentDirection == 0 &&
                 MissingPreferred == 0 &&
                 FallbackNotFound == 0 &&
@@ -565,14 +584,19 @@ public static class LadyBugSourcePathDecisionInspector
                 ResultMismatchesEnemyWork == 0 &&
                 MissingVramInspections == 0 &&
                 SkippedMissingEnemyWork == 0 &&
-                SkippedNoStartEnemies == 0 &&
                 SkippedMissingResultSlot == 0 &&
                 SkippedInactiveResultSlot == 0;
+
+            bool clean = noInspectionErrors && SkippedMultiEnemyTransitions == 0;
 
             var builder = new StringBuilder();
             builder.Append($"Lady Bug source-path decision inspector {Version}: ");
             builder.Append($"frames={Frames}, ");
             builder.Append($"transitions={Transitions}, ");
+            builder.Append($"singleEnemyTransitions={SingleEnemyTransitions}, ");
+            builder.Append($"skippedNoActiveStartEnemyTransitions={SkippedNoActiveStartEnemyTransitions}, ");
+            builder.Append($"skippedNoActiveResultEnemyTransitions={SkippedNoActiveResultEnemyTransitions}, ");
+            builder.Append($"skippedMultiEnemyTransitions={SkippedMultiEnemyTransitions}, ");
             builder.Append($"inspectedTransitions={InspectedTransitions}, ");
             builder.Append($"activeStartEnemyStates={ActiveStartEnemyStates}, ");
             builder.Append($"pixelAlignedStartStates={PixelAlignedStartStates}, ");
@@ -591,10 +615,11 @@ public static class LadyBugSourcePathDecisionInspector
             builder.Append($"resultMismatchesEnemyWork={ResultMismatchesEnemyWork}, ");
             builder.Append($"missingVramInspections={MissingVramInspections}, ");
             builder.Append($"skippedMissingEnemyWork={SkippedMissingEnemyWork}, ");
-            builder.Append($"skippedNoStartEnemies={SkippedNoStartEnemies}, ");
             builder.Append($"skippedMissingResultSlot={SkippedMissingResultSlot}, ");
             builder.Append($"skippedInactiveResultSlot={SkippedInactiveResultSlot}, ");
             builder.Append($"clean={(clean ? "true" : "false")}, ");
+            builder.Append($"singleEnemyClean={(noInspectionErrors ? "true" : "false")}, ");
+            builder.Append("multiEnemyMode=skip-until-explicitly-supported, ");
             builder.Append("allDirectionProbeMode=disabled-by-transition-source-path-inspector, ");
             builder.Append("staticMazeDirectionMapping=source-enemy-y-mirrored-to-godot-maze, ");
             builder.Append("normalReport=compact");
@@ -608,6 +633,10 @@ public static class LadyBugSourcePathDecisionInspector
                 AppendOptional(builder, FirstResultMismatchSlot);
                 AppendOptional(builder, FirstResultMismatchEnemyWork);
                 AppendOptional(builder, FirstSourceAcceptedButStaticBlocked);
+                AppendOptional(builder, FirstSkippedMultiEnemyTransition);
+
+                if (SkippedMultiEnemyTransitions > 0)
+                    builder.Append("; multiEnemyNote: trace left the validated single-enemy inspector scope");
 
                 if (FallbackNotFound > 0)
                     builder.Append("; fallbackNotFound: see detailed inspector dump needed");
@@ -616,14 +645,13 @@ public static class LadyBugSourcePathDecisionInspector
                     builder.Append("; missingVramInspections: loaded trace must include rawMemory.vramD000_D3FF");
 
                 if (InvalidCurrentDirection > 0 || MissingPreferred > 0 ||
-                    SkippedMissingEnemyWork > 0 || SkippedNoStartEnemies > 0 ||
-                    SkippedMissingResultSlot > 0 || SkippedInactiveResultSlot > 0)
+                    SkippedMissingEnemyWork > 0 || SkippedMissingResultSlot > 0 || SkippedInactiveResultSlot > 0)
                 {
                     builder.Append("; skippedOrInvalidInput: inspect trace/frame shape before trusting this summary");
                 }
             }
 
-            builder.Append("; NOTE: compact transition-based inspector. Detailed examples are intentionally omitted from normal Compare output. Source input is frame[i-1] enemy slot; reference result is frame[i].");
+            builder.Append("; NOTE: compact transition-based inspector. Detailed examples are intentionally omitted from normal Compare output. Source input is frame[i-1] enemy slot; reference result is frame[i]. Multi-enemy transitions are skipped until explicitly supported.");
 
             return builder.ToString();
         }
@@ -747,11 +775,11 @@ public static class LadyBugSourcePathDecisionInspector
                     builder.Append(" | ");
 
                 DirectionProbeInfo probe = Tested[i];
-                bool emph = emphasizeStaticBlock && probe.SourceFinalAllowed && !probe.StaticAllowed;
-                if (emph)
+                bool emphasize = emphasizeStaticBlock && probe.SourceFinalAllowed && !probe.StaticAllowed;
+                if (emphasize)
                     builder.Append("**");
                 builder.Append(probe.ToSummary());
-                if (emph)
+                if (emphasize)
                     builder.Append("**");
             }
             builder.Append(']');
@@ -772,10 +800,8 @@ public static class LadyBugSourcePathDecisionInspector
             int allowedMask,
             bool localTileOpen,
             string localBlockKind,
-            string localDetails,
             bool staticAllowed,
             string staticBlockKind,
-            string staticDetails,
             string staticMazeDirectionLabel,
             bool sourceFinalAllowed)
         {
@@ -789,10 +815,8 @@ public static class LadyBugSourcePathDecisionInspector
             AllowedMask = allowedMask & 0x0F;
             LocalTileOpen = localTileOpen;
             LocalBlockKind = localBlockKind;
-            LocalDetails = localDetails;
             StaticAllowed = staticAllowed;
             StaticBlockKind = staticBlockKind;
-            StaticDetails = staticDetails;
             StaticMazeDirectionLabel = staticMazeDirectionLabel;
             SourceFinalAllowed = sourceFinalAllowed;
         }
@@ -807,10 +831,8 @@ public static class LadyBugSourcePathDecisionInspector
         public int AllowedMask { get; }
         public bool LocalTileOpen { get; }
         public string LocalBlockKind { get; }
-        public string LocalDetails { get; }
         public bool StaticAllowed { get; }
         public string StaticBlockKind { get; }
-        public string StaticDetails { get; }
         public string StaticMazeDirectionLabel { get; }
         public bool SourceFinalAllowed { get; }
 

@@ -8,7 +8,7 @@
   "luaScriptPath": "res://tools/mame/lua/ladybug_sequence_trace.lua",
   "outputDirectory": "res://traces/mame",
   "outputPrefix": "ladybug_sequence_v8_fullmem",
-  "framesAfterTick0": 600,
+  "framesAfterTick0": 1200,
   "windowed": true,
   "enableDebugger": false,
   "autobootDelay": 1,
