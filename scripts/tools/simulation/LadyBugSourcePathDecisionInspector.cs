@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Text;
 
 /// <summary>
-/// v0.9.6 transition-based source-path inspector.
+/// v0.9.7 transition-based source-path inspector with compact normal reporting.
 ///
 /// This diagnostic follows the arcade update timing instead of inspecting the
 /// already displayed frame as if it were the routine input.
@@ -23,14 +23,14 @@ using System.Text;
 ///
 /// It reports the first source path where a direction actually tested by the
 /// source would be accepted by 0x3911+0x4130 while the static maze oracle says it
-/// is blocked. v0.9.6 fixes the static-maze comparison by mirroring vertical
-/// source enemy directions before reading maze.json wall flags. The report includes both the input frame and the committed result
-/// frame so that apparent contradictions can be checked against the displayed
-/// replay.
+/// is blocked. v0.9.6 fixed the static-maze comparison by mirroring vertical
+/// source enemy directions before reading maze.json wall flags. v0.9.7 keeps the
+/// normal Compare output compact: detailed transition examples are only emitted
+/// when a real problem is found.
 /// </summary>
 public static class LadyBugSourcePathDecisionInspector
 {
-    private const string Version = "v0.9.6";
+    private const string Version = "v0.9.7";
     private const int MaxExamples = 6;
 
     public static string BuildSummary(IReadOnlyList<EnemyTraceFrame> referenceFrames)
@@ -556,56 +556,74 @@ public static class LadyBugSourcePathDecisionInspector
 
         public string BuildSummary()
         {
+            bool clean =
+                InvalidCurrentDirection == 0 &&
+                MissingPreferred == 0 &&
+                FallbackNotFound == 0 &&
+                SourceAcceptedButStaticBlockedProbes == 0 &&
+                ResultMismatchesSlot == 0 &&
+                ResultMismatchesEnemyWork == 0 &&
+                MissingVramInspections == 0 &&
+                SkippedMissingEnemyWork == 0 &&
+                SkippedNoStartEnemies == 0 &&
+                SkippedMissingResultSlot == 0 &&
+                SkippedInactiveResultSlot == 0;
+
             var builder = new StringBuilder();
             builder.Append($"Lady Bug source-path decision inspector {Version}: ");
             builder.Append($"frames={Frames}, ");
             builder.Append($"transitions={Transitions}, ");
-            builder.Append($"activeStartEnemyStates={ActiveStartEnemyStates}, ");
-            builder.Append($"invalidCurrentDirection={InvalidCurrentDirection}, ");
-            builder.Append($"pixelUnalignedStartStates={PixelUnalignedStartStates}, ");
-            builder.Append($"pixelAlignedStartStates={PixelAlignedStartStates}, ");
-            builder.Append($"decisionGateCarryClearStates={DecisionGateCarryClearStates}, ");
-            builder.Append($"decisionGateCarrySetStates={DecisionGateCarrySetStates}, ");
-            builder.Append($"missingPreferred={MissingPreferred}, ");
             builder.Append($"inspectedTransitions={InspectedTransitions}, ");
+            builder.Append($"activeStartEnemyStates={ActiveStartEnemyStates}, ");
+            builder.Append($"pixelAlignedStartStates={PixelAlignedStartStates}, ");
+            builder.Append($"pixelUnalignedStartStates={PixelUnalignedStartStates}, ");
+            builder.Append($"decisionGateCarrySetStates={DecisionGateCarrySetStates}, ");
+            builder.Append($"decisionGateCarryClearStates={DecisionGateCarryClearStates}, ");
             builder.Append($"testedDirectionProbes={TestedDirectionProbes}, ");
             builder.Append($"preferredAccepted={PreferredAccepted}, ");
             builder.Append($"preferredRejectedCurrentKept={PreferredRejectedCurrentKept}, ");
-            builder.Append($"fallbackEntered={FallbackEntered}, ");
             builder.Append($"fallbackSelected={FallbackSelected}, ");
             builder.Append($"fallbackNotFound={FallbackNotFound}, ");
             builder.Append($"outsideCenterKeep={OutsideCenterKeep}, ");
             builder.Append($"outsideCenterForcedReversal={OutsideCenterForcedReversal}, ");
             builder.Append($"sourceAcceptedButStaticBlockedProbes={SourceAcceptedButStaticBlockedProbes}, ");
-            builder.Append($"resultMatchesSlot={ResultMatchesSlot}, ");
             builder.Append($"resultMismatchesSlot={ResultMismatchesSlot}, ");
-            builder.Append($"resultMatchesEnemyWork={ResultMatchesEnemyWork}, ");
             builder.Append($"resultMismatchesEnemyWork={ResultMismatchesEnemyWork}, ");
             builder.Append($"missingVramInspections={MissingVramInspections}, ");
             builder.Append($"skippedMissingEnemyWork={SkippedMissingEnemyWork}, ");
             builder.Append($"skippedNoStartEnemies={SkippedNoStartEnemies}, ");
             builder.Append($"skippedMissingResultSlot={SkippedMissingResultSlot}, ");
             builder.Append($"skippedInactiveResultSlot={SkippedInactiveResultSlot}, ");
-            builder.Append("allDirectionProbeMode=disabled-by-transition-source-path-inspector, staticMazeDirectionMapping=source-enemy-y-mirrored-to-godot-maze");
+            builder.Append($"clean={(clean ? "true" : "false")}, ");
+            builder.Append("allDirectionProbeMode=disabled-by-transition-source-path-inspector, ");
+            builder.Append("staticMazeDirectionMapping=source-enemy-y-mirrored-to-godot-maze, ");
+            builder.Append("normalReport=compact");
 
-            AppendOptional(builder, FirstDecisionPath);
-            AppendOptional(builder, FirstPreferredAccepted);
-            AppendOptional(builder, FirstPreferredRejectedCurrentKept);
-            AppendOptional(builder, FirstFallbackSelected);
-            AppendOptional(builder, FirstOutsideCenter);
-            AppendOptional(builder, FirstSourceAcceptedButStaticBlocked);
-            AppendOptional(builder, FirstResultMismatchSlot);
-            AppendOptional(builder, FirstResultMismatchEnemyWork);
-            AppendOptional(builder, FirstCarryClearExample);
-
-            if (Examples.Count > 0)
+            if (clean)
             {
-                builder.Append("; examples=[");
-                builder.Append(string.Join(" || ", Examples));
-                builder.Append(']');
+                builder.Append("; firstProblem: none");
+            }
+            else
+            {
+                AppendOptional(builder, FirstResultMismatchSlot);
+                AppendOptional(builder, FirstResultMismatchEnemyWork);
+                AppendOptional(builder, FirstSourceAcceptedButStaticBlocked);
+
+                if (FallbackNotFound > 0)
+                    builder.Append("; fallbackNotFound: see detailed inspector dump needed");
+
+                if (MissingVramInspections > 0)
+                    builder.Append("; missingVramInspections: loaded trace must include rawMemory.vramD000_D3FF");
+
+                if (InvalidCurrentDirection > 0 || MissingPreferred > 0 ||
+                    SkippedMissingEnemyWork > 0 || SkippedNoStartEnemies > 0 ||
+                    SkippedMissingResultSlot > 0 || SkippedInactiveResultSlot > 0)
+                {
+                    builder.Append("; skippedOrInvalidInput: inspect trace/frame shape before trusting this summary");
+                }
             }
 
-            builder.Append("; NOTE: transition-based inspector. Source input is frame[i-1] enemy slot; reference result is frame[i]. This avoids treating the already displayed frame as if it were the start of the arcade update.");
+            builder.Append("; NOTE: compact transition-based inspector. Detailed examples are intentionally omitted from normal Compare output. Source input is frame[i-1] enemy slot; reference result is frame[i].");
 
             return builder.ToString();
         }

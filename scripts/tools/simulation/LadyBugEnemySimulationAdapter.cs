@@ -5,7 +5,7 @@ using System.Collections.Generic;
 ///
 /// This adapter intentionally keeps the visible side-by-side replay stable:
 /// active enemies still move using the MAME reference direction. The important
-/// v0.9.6 diagnostic is not a new runtime model; it is a transition-based
+/// v0.9.7 diagnostic is not a new runtime model; it is a transition-based
 /// source-path inspector that explains which directions the source path actually
 /// tested for each frame transition.
 ///
@@ -18,8 +18,8 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
     public string Name => "Lady Bug reference-direction step";
 
     public string Description =>
-        "v0.9.6 concise replay: keep the reference-direction visual comparison stable, " +
-        "then run the transition-based source-path decision inspector with mirrored vertical static-maze direction mapping. " +
+        "v0.9.7 concise replay: keep the reference-direction visual comparison stable, " +
+        "then run the compact transition-based source-path decision inspector with mirrored vertical static-maze direction mapping. " +
         "The all-four-directions collision probe is disabled in the normal report.";
 
     public bool ExpectedToMismatch => false;
@@ -49,7 +49,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
         return new SimulationAdapterResult(
             frames,
-            "Lady Bug reference-direction replay v0.9.6; " +
+            "Lady Bug reference-direction replay v0.9.7; " +
             "initial state: " + initialState.Summary + "; " +
             "normal Compare no longer appends legacy exact-PC/shadow summaries; " +
             "error.log is not used by this adapter; " +
