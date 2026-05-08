@@ -3,26 +3,24 @@ using System.Collections.Generic;
 /// <summary>
 /// Concise reference-direction validation adapter for the v0.9.x comparison work.
 ///
-/// This adapter intentionally keeps the old visible comparison path alive:
-/// active enemies still move using the MAME reference direction, so the existing
-/// side-by-side replay remains stable.
+/// This adapter intentionally keeps the visible side-by-side replay stable:
+/// active enemies still move using the MAME reference direction. The important
+/// v0.9.6 diagnostic is not a new runtime model; it is a transition-based
+/// source-path inspector that explains which directions the source path actually
+/// tested for each frame transition.
 ///
-/// v0.9.0c changes the Compare report strategy:
-/// - no long v0.6/v0.7/v0.8 shadow summaries are appended by default;
-/// - no exact-PC preferred[] tape is loaded by this adapter;
-/// - the report focuses on the current milestone: static maze direction
-///   availability at enemy decision centers.
-///
-/// The old diagnostic classes remain in the project for manual investigation,
-/// but this adapter no longer calls them during the normal Compare action.
+/// The old all-four-directions collision report is intentionally not appended in
+/// this adapter because it can produce false positives: it asks directions that
+/// the arcade source path did not necessarily test at that update.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
     public string Name => "Lady Bug reference-direction step";
 
     public string Description =>
-        "v0.9.0c concise replay: keep the reference-direction visual comparison stable, " +
-        "then report the static maze collision comparison at enemy decision centers, excluding gate-local probes.";
+        "v0.9.6 concise replay: keep the reference-direction visual comparison stable, " +
+        "then run the transition-based source-path decision inspector with mirrored vertical static-maze direction mapping. " +
+        "The all-four-directions collision probe is disabled in the normal report.";
 
     public bool ExpectedToMismatch => false;
 
@@ -46,16 +44,17 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
             frames.Add(simulationState.BuildFrame(i, referenceFrames[i]));
         }
 
-        string staticMazeCollisionComparison =
-            LadyBugStaticMazeCollisionComparisonModel.BuildSummary(referenceFrames);
+        string sourcePathInspection =
+            LadyBugSourcePathDecisionInspector.BuildSummary(referenceFrames);
 
         return new SimulationAdapterResult(
             frames,
-            "Lady Bug reference-direction replay v0.9.0c; " +
+            "Lady Bug reference-direction replay v0.9.6; " +
             "initial state: " + initialState.Summary + "; " +
             "normal Compare no longer appends legacy exact-PC/shadow summaries; " +
             "error.log is not used by this adapter; " +
-            staticMazeCollisionComparison + "; " +
+            "all-four-directions collision comparison is disabled in this adapter because it can produce false positives; " +
+            sourcePathInspection + "; " +
             "real autonomous enemy AI is not enabled yet");
     }
 }

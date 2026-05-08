@@ -3,18 +3,27 @@ using System.Text.Json;
 using Godot;
 
 /// <summary>
-/// Static Godot-side maze oracle for v0.9.0b.
+/// Static Godot-side maze oracle for enemy movement diagnostics.
 ///
-/// This mirrors the static-maze part used by the main LadyBug project:
-/// - data/maze.json stores wall masks;
-/// - enemy positions use the enemy anchor (8,6), not the player anchor (8,7);
-/// - MAME actor Y is converted to the simulator / Godot arcade Y before mapping
-///   to a logical cell.
+/// Important coordinate convention:
+/// - inputs are raw MAME enemy coordinates and raw MAME/source enemy directions;
+/// - MAME Y is mirrored into Godot arcade Y with MameTraceCoordinates;
+/// - therefore vertical enemy directions must be mirrored before testing maze.json.
 ///
-/// v0.9.0b deliberately answers the static navigation question at the current
-/// logical cell: is this direction allowed by the maze wall mask? It does not use
-/// the one-pixel same-cell shortcut, because the MAME 0x6200 map is a direction
-/// availability map, not a per-pixel boundary-crossing test.
+/// Source enemy direction encoding:
+///   01 = left
+///   02 = up    in MAME/source RAM, i.e. Y - 1
+///   04 = right
+///   08 = down  in MAME/source RAM, i.e. Y + 1
+///
+/// After converting Y with godotY = 0xDD - mameY:
+///   source 02/up   moves visually down in Godot maze space;
+///   source 08/down moves visually up in Godot maze space.
+///
+/// v0.9.6 correction: this oracle now maps source enemy directions to the
+/// equivalent Godot maze-wall direction before checking wall masks. This avoids
+/// false SOURCE_ACCEPTS_BUT_STATIC_BLOCKS diagnostics caused by testing the
+/// vertical wall on the wrong side of the cell.
 /// </summary>
 public sealed class LadyBugGodotStaticMazeOracle : IEnemyMazeCollisionOracle
 {
@@ -35,7 +44,8 @@ public sealed class LadyBugGodotStaticMazeOracle : IEnemyMazeCollisionOracle
 
     public EnemyCollisionProbeResult Probe(int x, int y, int direction)
     {
-        Vector2I move = LadyBugDirectionBits.ToGodotVector(direction);
+        int sourceDir = direction & 0x0F;
+        Vector2I move = ToGodotMazeVectorFromSourceEnemyDirection(sourceDir);
         if (move == Vector2I.Zero)
             return EnemyCollisionProbeResult.InvalidDirection(SourceName, direction);
 
@@ -45,10 +55,12 @@ public sealed class LadyBugGodotStaticMazeOracle : IEnemyMazeCollisionOracle
 
         Vector2I currentPixel = new(mameX, godotY);
         Vector2I currentCell = ArcadePixelToLogicalCell(currentPixel);
+        string directionMapping =
+            $"sourceDir={LadyBugDirectionBits.ToLabel(sourceDir)} godotMazeDir={ToGodotMazeDirectionLabel(sourceDir)}";
 
         if (IsLairExitZone(currentCell))
         {
-            bool allowedBySpecialLairRule = (direction & 0x0F) == LadyBugDirectionBits.Up;
+            bool allowedBySpecialLairRule = sourceDir == LadyBugDirectionBits.Up;
 
             return new EnemyCollisionProbeResult
             {
@@ -60,8 +72,8 @@ public sealed class LadyBugGodotStaticMazeOracle : IEnemyMazeCollisionOracle
                 Details =
                     $"mame=({mameX:X2},{mameY:X2}) godotY={godotY:X2} " +
                     $"cell=({currentCell.X},{currentCell.Y}) " +
-                    $"dir={LadyBugDirectionBits.ToLabel(direction)} " +
-                    "special-case: enemy starts in den; left/down/right are den walls; exit is up"
+                    directionMapping + " " +
+                    "special-case: enemy starts in den; left/down/right are den walls; exit is source-up"
             };
         }
 
@@ -74,7 +86,7 @@ public sealed class LadyBugGodotStaticMazeOracle : IEnemyMazeCollisionOracle
                 Source = SourceName,
                 CellX = currentCell.X,
                 CellY = currentCell.Y,
-                Details = $"mame=({mameX:X2},{mameY:X2}) godotY={godotY:X2}"
+                Details = $"mame=({mameX:X2},{mameY:X2}) godotY={godotY:X2} {directionMapping}"
             };
         }
 
@@ -91,7 +103,7 @@ public sealed class LadyBugGodotStaticMazeOracle : IEnemyMazeCollisionOracle
             Details =
                 $"wallMask={mask:X1} mame=({mameX:X2},{mameY:X2}) " +
                 $"godotY={godotY:X2} cell=({currentCell.X},{currentCell.Y}) " +
-                $"dir={LadyBugDirectionBits.ToLabel(direction)}"
+                directionMapping
         };
     }
 
@@ -99,6 +111,30 @@ public sealed class LadyBugGodotStaticMazeOracle : IEnemyMazeCollisionOracle
     {
         return (x & 0x0F) == 0x08 &&
                (y & 0x0F) == 0x06;
+    }
+
+    public static string ToGodotMazeDirectionLabel(int sourceEnemyDirection)
+    {
+        return (sourceEnemyDirection & 0x0F) switch
+        {
+            LadyBugDirectionBits.Left => "left",
+            LadyBugDirectionBits.Up => "down (mirrored from source 02/up)",
+            LadyBugDirectionBits.Right => "right",
+            LadyBugDirectionBits.Down => "up (mirrored from source 08/down)",
+            _ => "none"
+        };
+    }
+
+    private static Vector2I ToGodotMazeVectorFromSourceEnemyDirection(int sourceEnemyDirection)
+    {
+        return (sourceEnemyDirection & 0x0F) switch
+        {
+            LadyBugDirectionBits.Left => Vector2I.Left,
+            LadyBugDirectionBits.Up => Vector2I.Down,
+            LadyBugDirectionBits.Right => Vector2I.Right,
+            LadyBugDirectionBits.Down => Vector2I.Up,
+            _ => Vector2I.Zero
+        };
     }
 
     private bool CanMove(Vector2I cell, Vector2I direction)
