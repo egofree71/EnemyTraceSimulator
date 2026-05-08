@@ -1,10 +1,16 @@
 # Enemy Trace Simulator
 
-Enemy Trace Simulator is a standalone Godot/.NET diagnostic tool used to analyze and compare enemy movement behavior for the arcade game **Lady Bug**.
+Enemy Trace Simulator is a standalone **Godot .NET / C#** diagnostic tool used to validate enemy movement behavior for the arcade game **Lady Bug**.
 
-The repository is separate from the main Lady Bug remake project. Its purpose is to help debug the real C# / Godot enemy implementation by comparing it with MAME reference traces, source-first reverse-engineered models, and exact-PC diagnostics.
+The repository is separate from the main Lady Bug remake project. Its job is not to become a second implementation of Lady Bug. Its job is to act as a microscope:
 
-For detailed reverse-engineering notes, source-address mappings, exact-PC findings, and implementation details, see:
+```text
+MAME trace = reference
+Godot / C# simulation = candidate
+Enemy Trace Simulator = visual and diagnostic comparison harness
+```
+
+For detailed implementation notes, source-address mappings, reverse-engineering status, and workflow details, see:
 
 ```text
 doc/current_implementation.md
@@ -12,137 +18,64 @@ doc/current_implementation.md
 
 ## Current status
 
-Current checkpoint: **v0.8.0**
+Current checkpoint: **v0.9.0**
 
-Latest validated code checkpoint:
-
-```text
-Use exact-PC preferred provider in runtime state
-```
-
-v0.8.0 is an important diagnostic milestone, but it is **not** the final runtime direction.
-
-Validated result on the current one-enemy static-player trace:
+Latest stable milestone:
 
 ```text
-Trace: res://traces/mame/ladybug_sequence_v8_fullmem_trace.jsonl
-Frames: 501
-Frame memory blocks: maze=176 bytes, ram=688 bytes, vram=1024 bytes, color=1024 bytes
-
-Comparison [Lady Bug reference-direction step]: comparedFrames=501, mismatches=0
-
-preferred[] runtime exact-PC no-sync v0.8.0:
-providerConfigured=true
-providerUsable=true
-providerPath=res://tools/mame/lua/error.log
-bestWindowTupleMatches=496
-bestWindowTupleMismatches=0
-updates=496
-matchesReference=496
-differsFromReference=0
-fallbackToReference=0
-clean=true
+Move enemy simulator to v0.9 visual replay validation
 ```
 
-Within the current narrow validation scope, the runtime `EnemyWork` state no longer copies these fields directly from the standard JSONL frame trace:
+This milestone changes the role of the simulator.
+
+Before v0.9, much of the work focused on building source-first diagnostic shadows and replay bridges for enemy movement internals such as `preferred[]`, `rejectedMask`, fallback helper state, and exact-PC MAME events.
+
+From v0.9 onward, the preferred direction is:
 
 ```text
-0x61C1       rejectedMask
-0x61C2       fallback helper
-0x61C4-61C7  preferred[]
+1. load a MAME JSONL trace;
+2. initialize the candidate simulation from the same starting state;
+3. play the sequence visually;
+4. compare the left board against the right board;
+5. stop immediately at the first useful visual mismatch;
+6. use deeper diagnostics only after the first divergence is known.
 ```
 
-However, `preferred[]` in v0.8.0 is still produced by a replay provider built from the separate MAME exact-PC diagnostic file:
+The simulator is therefore moving away from this pattern:
 
 ```text
-res://tools/mame/lua/error.log
+MAME exact-PC logs -> runtime decisions -> perfect replay
 ```
 
-That means v0.8.0 is **not autonomous gameplay logic**. It is a validated replay bridge.
-
-## Strategic direction after v0.8.0
-
-The simulator should no longer grow into a second MAME-assisted enemy engine.
-
-The next direction is:
+and toward this one:
 
 ```text
-MAME trace = reference
-existing Godot enemy logic = candidate
-Enemy Trace Simulator = comparison harness
+real Godot enemy logic -> candidate replay -> first divergence against MAME
 ```
 
-The goal is to use the simulator to debug the existing enemy movement implementation from the main `LadyBug` Godot project, not to keep feeding runtime decisions from `error.log` or frame-level MAME values.
+## What the tool currently does
 
-Next milestone proposal:
+### MAME trace generation
+
+The tool can launch MAME using:
 
 ```text
-v0.9.0 — Compare existing Godot enemy logic against MAME
+config/mame_trace_settings.json
 ```
 
-The simulator should:
-
-```text
-1. load a standard MAME JSONL trace as the reference;
-2. initialize a candidate enemy state from the same starting state;
-3. run the current Godot enemy logic autonomously;
-4. compare position, direction, and decision state frame by frame;
-5. report the first useful divergence;
-6. use source-first models and exact-PC logs only as diagnostic aids, not runtime inputs.
-```
-
-A useful v0.9.0 result is not necessarily `mismatches=0`. A useful result is a clear first divergence, for example:
-
-```text
-firstDivergence:
-  tick=37
-  MAME:  x=58 y=66 dir=01
-  Godot: x=58 y=66 dir=08
-  likely cause: decision-center preferred/current/fallback choice
-```
-
-## Methodology rule
-
-New enemy logic should still be implemented **source-first** from the disassembled Z80 code when possible.
-
-But the simulator must not use MAME logs as runtime decision inputs for the final gameplay path.
-
-Correct distinction:
-
-```text
-MAME traces used for validation: OK.
-MAME traces used as runtime input: diagnostic only, not final implementation.
-```
-
-Avoid adding case-by-case logic such as:
-
-```csharp
-if (tick == 373) ...
-if (referenceRejectedMask == 0) ...
-if (providerPath.Contains("error.log")) ...
-```
-
-unless the behavior is strictly diagnostic and clearly documented.
-
-## Implemented workflows
-
-### 1. Standard JSONL trace workflow
-
-Generated by:
+The normal JSONL trace is generated by:
 
 ```text
 tools/mame/lua/ladybug_sequence_trace.lua
 ```
 
-Used for:
+Recommended current trace:
 
-- frame-by-frame trace loading;
-- visual playback;
-- comparison against candidate simulation frames;
-- full-memory validation of VRAM-dependent logic;
-- source-first shadow diagnostics.
+```text
+res://traces/mame/ladybug_sequence_v8_fullmem_trace.jsonl
+```
 
-Current recommended settings:
+Recommended trace settings:
 
 ```json
 {
@@ -155,64 +88,165 @@ Current recommended settings:
 }
 ```
 
-Expected trace to load:
+The full-memory trace includes RAM, logical maze, VRAM, color RAM, enemies, gates, timers, ports, and player state.
+
+### Visual replay
+
+The main window displays two boards:
 
 ```text
-res://traces/mame/ladybug_sequence_v8_fullmem_trace.jsonl
+left  = Simulation C# / Godot
+right = Trace MAME
 ```
 
-Then run:
+Playback controls:
 
 ```text
-Compare > Lady Bug reference-direction step
+↺   restart from beginning
+▶   resume playback
+❚❚  pause playback
+▶|  advance one tick
 ```
 
-Expected v0.8.0 validation result:
+During playback, the simulator compares the currently displayed simulation state against the currently displayed MAME reference state.
+
+If a mismatch is found:
 
 ```text
-comparedFrames=501
-mismatches=0
+- playback pauses automatically;
+- the display remains on the divergent tick;
+- the status label reports the mismatch;
+- the console prints the first mismatch details.
 ```
 
-### 2. Exact-PC EnemyWork diagnostic workflow
-
-Generated by:
+The visual comparator currently checks:
 
 ```text
-tools/mame/lua/ladybug_enemywork_pc_trace.lua
+player:  active, x, y, direction
+enemies: active, x, y, direction
+gates:   orientation and pivot
 ```
 
-Used for:
+It intentionally ignores internal movement diagnostics such as:
 
-- exact-PC validation of source-first assumptions;
-- preferred[] generator events around `0x2E5C`;
-- `LD A,R` values at `0x2EA5`;
-- BFS/chase preferred[] overwrites at `0x477D`;
-- forced-reversal and decision-cycle diagnostics.
+```text
+preferred[]
+rejectedMask
+fallback helper
+chase timers
+EnemyWork scratch values
+```
 
-Typical settings:
+Those fields are still useful for investigation, but they should not stop the normal visual replay unless they affect visible behavior.
 
-```json
+### Den / lair release handling
+
+The enemy release sequence is special in Lady Bug: an enemy starts inside the central den and is forced to exit upward even though the den is surrounded by walls on the left, bottom, and right.
+
+The visual comparison treats inactive slots carefully:
+
+```text
+inactive vs inactive -> OK, position ignored
+inactive vs active   -> mismatch
+active vs inactive   -> mismatch
+active vs active     -> compare x, y, direction
+```
+
+This avoids false mismatches for inactive enemy slots while still detecting a wrong release tick, wrong release position, or wrong den-exit direction.
+
+### Static maze collision diagnostics
+
+v0.9 also added a diagnostic comparison for static maze collision decisions.
+
+This diagnostic asks a functional question:
+
+```text
+At this enemy pixel position, in this enemy direction, is movement allowed?
+```
+
+It compares:
+
+```text
+MAME logical maze / trace-derived reference
+against
+Godot maze.json / MazeGrid-style static collision
+```
+
+It only treats decision-center positions as comparable for the static maze check:
+
+```text
+x & 0x0F == 0x08
+y & 0x0F == 0x06
+```
+
+Door-affected probes are classified separately because the logical maze in MAME can include dynamic rotating-gate effects.
+
+This diagnostic is useful, but it is not the main playback path. The primary v0.9 workflow is now visual replay with autostop on first mismatch.
+
+## Important coordinate conventions
+
+### MAME-to-Godot vertical mirror
+
+The simulator uses MAME RAM coordinates as the trace reference, but the Godot board displays them through the known vertical mirror:
+
+```csharp
+private const int MameYMirror = 0xDD;
+
+private static int ToMameY(int godotArcadeY)
 {
-  "luaScriptPath": "res://tools/mame/lua/ladybug_enemywork_pc_trace.lua",
-  "outputPrefix": "ladybug_sequence_v8_enemywork_pcdiag",
-  "framesAfterTick0": 600
+    return MameYMirror - godotArcadeY;
 }
 ```
 
-Primary raw output:
+Equivalently:
 
 ```text
-tools/mame/lua/error.log
+godotArcadeY = 0xDD - mameY
 ```
 
-Generated report:
+This is essential when comparing positions visually or converting arcade-pixel probes.
+
+### Enemy direction encoding
+
+Enemy movement uses this encoding:
 
 ```text
-traces/mame/ladybug_sequence_v8_enemywork_pcdiag_enemywork_pc_analysis.txt
+01 = left
+02 = up
+04 = right
+08 = down
 ```
 
-Important: this is not a JSONL frame trace. Do not load it with the standard trace loader. Generate it separately, then reload the standard JSONL trace and run Compare.
+Do not confuse this with player input / player direction encoding, where vertical bits differ.
+
+### VRAM layout
+
+Lady Bug background data is stored column by column, bottom to top:
+
+```text
+D080-D09F = first column, bottom to top
+D0A0-D0BF = second column, bottom to top
+...
+D3E0-D3FF = last column, bottom to top
+```
+
+Do not implement VRAM lookup as row-major screen order.
+
+## Historical v0.8 result
+
+v0.8.0 was an important diagnostic milestone. It validated that a source-first replay bridge could reproduce the current one-enemy static-player trace with:
+
+```text
+Comparison [Lady Bug reference-direction step]: comparedFrames=501, mismatches=0
+```
+
+It also validated a preferred[] exact-PC provider based on:
+
+```text
+res://tools/mame/lua/error.log
+```
+
+However, that approach is a replay bridge, not final autonomous gameplay logic. It remains useful as a diagnostic reference, but it should not define the runtime direction of the simulator.
 
 ## Repository layout
 
@@ -243,59 +277,55 @@ scenes/tools/EnemyTraceSimulator.tscn
 scripts/tools/EnemyTraceSimulatorWindow.cs
 scripts/tools/EnemyTraceBoardView.cs
 scripts/tools/MameTraceLauncher.cs
+scripts/tools/trace/MameTraceLoader.cs
+scripts/tools/trace/EnemyTraceFrame.cs
+scripts/tools/comparison/VisualReplayComparator.cs
+scripts/tools/comparison/VisualReplayFrameConverter.cs
+scripts/tools/comparison/VisualReplayMismatch.cs
 scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
-scripts/tools/simulation/LadyBugSimulationState.cs
-scripts/tools/simulation/LadyBugEnemyDecisionModel.cs
-scripts/tools/simulation/LadyBugEnemyDecisionGate427EModel.cs
-scripts/tools/simulation/LadyBugEnemyLocalDoor4130ShadowModel.cs
-scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
-scripts/tools/simulation/LadyBugPreferredExactPcAlignedProvider.cs
+scripts/tools/simulation/LadyBugStaticMazeCollisionComparisonModel.cs
 tools/mame/lua/ladybug_sequence_trace.lua
-tools/mame/lua/ladybug_enemywork_pc_trace.lua
 doc/current_implementation.md
 ```
 
 ## Current limitations
 
-- The simulator is not yet running the actual autonomous enemy logic from the main Godot `LadyBug` project.
-- Enemy movement direction is still reference-driven in the current comparison adapter.
-- Chase timers and round-robin state are still reference-synced.
-- Enemy release / den-exit is still modeled diagnostically, not as a complete independent runtime system.
-- `preferred[]` in v0.8.0 no longer comes directly from the standard frame trace, but it still depends on the exact-PC `error.log` replay provider.
-- Full BFS/chase pathfinding is not implemented independently.
-- `0x4189` forced-reversal clear path is covered on the current trace, but the carry-set `0x4347` reversal branch still needs a focused validation trace.
-- The current validated trace covers a static player and one active enemy. Multi-enemy behavior is not yet validated.
+- The left-side simulation is not yet a fully autonomous implementation of the real Lady Bug enemy AI.
+- Some comparison paths still use a reference-direction replay adapter.
+- Enemy release timing is still trace-derived in the current harness.
+- Chase timers, round-robin behavior, full BFS/chase, and multi-enemy behavior are not independently validated yet.
+- Static maze collision diagnostics exist, but dynamic gate-aware movement comparison is still incomplete.
+- Exact-PC logs remain useful as diagnostics, but they should not become normal runtime inputs.
 
 ## Roadmap
 
 Near-term:
 
-1. treat v0.8.0 as a diagnostic stop point, not the final runtime direction;
-2. stop expanding the simulator as a MAME-assisted second enemy engine;
-3. add a candidate adapter for the existing Godot enemy logic from the main `LadyBug` project;
-4. compare that candidate logic against the current MAME trace;
-5. report the first useful divergence instead of only chasing `mismatches=0`;
-6. use source-first models and exact-PC logs to explain divergences after they are found.
+1. keep the v0.9 visual replay workflow as the main harness;
+2. connect or mirror the existing enemy logic from the main `LadyBug` Godot project as the candidate simulation;
+3. stop playback at the first visual mismatch;
+4. use static maze, gate, EnemyWork, exact-PC, and source-first diagnostics to explain that first mismatch;
+5. avoid adding new MAME-fed runtime bridges unless they are clearly diagnostic-only.
 
 Later:
 
-- implement independent enemy release and slot activation in the real Godot code;
-- implement or adapt autonomous preferred[] generation without `error.log`;
+- implement independent enemy release and den-exit behavior;
+- validate dynamic rotating-gate behavior against MAME;
+- implement autonomous preferred-direction generation;
 - implement chase activation and timer behavior;
-- implement round-robin behavior independently;
 - implement full BFS/chase direction selection;
-- expand validation to multiple active enemies;
+- validate multi-enemy behavior;
 - add stable regression traces or test fixtures.
 
 ## Commit rhythm
 
-Commit after stable milestones that:
+Commit after meaningful milestones that:
 
 ```text
 - compile;
-- produce a useful comparison result;
-- either validate a meaningful behavior or make the simulator more useful as a harness for the real Godot implementation;
-- update README.md and doc/current_implementation.md when the workflow or strategy changes.
+- run in the Godot tool;
+- produce a useful validation result or cleaner workflow;
+- update README.md and doc/current_implementation.md when the strategy changes.
 ```
 
-Avoid micro-commits for every diagnostic counter. Prefer larger, useful milestones.
+Avoid committing every tiny temporary diagnostic. Prefer stable, understandable checkpoints.
