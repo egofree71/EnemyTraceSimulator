@@ -1,8 +1,8 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.9.9b  
-**Latest validated milestone:** `Source-path single-enemy replay candidate`  
+**Current package version:** v0.9.10b  
+**Latest validated milestone:** `Default source-path single-enemy replay adapter and Compare UI cleanup`  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -60,7 +60,9 @@ This means:
 - diagnostics should follow the source path, not ask artificial questions.
 ```
 
-v0.9.9b is the first checkpoint where the normal candidate replay can compute the active one-enemy movement step from the reconstructed source path.
+v0.9.9b was the first checkpoint where the normal candidate replay could compute the active one-enemy movement step from the reconstructed source path.
+
+v0.9.10/v0.9.10b made that path the clarified default adapter and aligned the Compare UI label with the real mode.
 
 ## 3. Main UI workflow
 
@@ -470,17 +472,27 @@ scripts/tools/simulation/LadyBugMameLocalTile4130Oracle.cs
 scripts/tools/simulation/LadyBugGodotStaticMazeOracle.cs
 ```
 
-### 11.1 Reference-direction baseline
+### 11.1 Default adapter wrapper
 
-Compare mode:
+Current default adapter:
 
 ```text
-Lady Bug reference-direction step
+LadyBugEnemySimulationAdapter
 ```
 
-This mode keeps visual replay stable by applying the direction observed in the MAME trace, then runs the compact transition-based source-path inspector.
+It is intentionally a small stable wrapper around:
 
-It remains useful as a baseline check for trace loading, visual comparison, and source-path explanation.
+```text
+LadyBugSourcePathSingleEnemyReplayAdapter
+```
+
+Purpose:
+
+```text
+- keep one default adapter entry point for the UI and playback code;
+- allow the implementation to evolve behind that entry point;
+- make the current default candidate explicit.
+```
 
 ### 11.2 Source-path single-enemy replay
 
@@ -490,9 +502,9 @@ Compare mode:
 Lady Bug source-path single-enemy replay
 ```
 
-This is the v0.9.9b milestone adapter.
+In v0.9.10b, the Compare button uses this label directly.
 
-For one-active-enemy transitions, it computes the visible enemy movement step through the reconstructed source path rather than using the reference direction:
+For one-active-enemy transitions, this adapter computes the visible enemy movement step through the reconstructed source path rather than using the reference direction:
 
 ```text
 0x427E decision gate
@@ -506,7 +518,7 @@ then:
   0x43BA one-pixel movement step
 ```
 
-Still synchronized from the trace in v0.9.9b:
+Still synchronized from the trace in v0.9.10b:
 
 ```text
 release timing
@@ -523,7 +535,9 @@ The adapter reports:
 
 ```text
 modeledSingleEnemyTransitions
+modeledSlotMatches
 modeledSlotMismatches
+modeledEnemyWorkMatches
 modeledEnemyWorkMismatches
 modeledClean
 fullScopeClean
@@ -531,7 +545,15 @@ firstModeledProblem
 firstMultiEnemySync
 ```
 
-### 11.3 v0.9.9b rejected-mask correction
+### 11.3 Reference-direction baseline
+
+The earlier reference-direction behavior remains conceptually useful as a baseline, but it is no longer the default UI label.
+
+It kept visual replay stable by applying the direction observed in the MAME trace, then ran the compact transition-based source-path inspector.
+
+Use this idea only as a diagnostic fallback if the source-path candidate needs to be compared against the old harness.
+
+### 11.4 v0.9.9b rejected-mask correction
 
 The first v0.9.9 replay exposed a single `EnemyWork` mismatch in the fallback path:
 
@@ -599,7 +621,7 @@ activeStart=1 and activeResult=1 -> inspect or replay normally
 activeStart>1 or activeResult>1 -> skipped / synced multi-enemy transition
 ```
 
-For the 1201-frame test trace under v0.9.9b:
+For the 1201-frame test trace under v0.9.9b/v0.9.10:
 
 ```text
 modeledSingleEnemyTransitions=827
@@ -646,7 +668,7 @@ So v0.8 was a validated replay bridge, not final autonomous AI.
 
 ## 14. Current validation status
 
-Validated on two different 600-tick static-player traces:
+Validated on three different 600-tick static-player traces:
 
 ```text
 visual replay comparison: mismatches=0
@@ -655,6 +677,17 @@ modeledEnemyWorkMismatches=0
 modeledClean=true
 fullScopeClean=true
 firstModeledProblem: none
+```
+
+Recent richer 600-tick trace:
+
+```text
+modeledSingleEnemyTransitions=585
+preferredRejectedCurrentKept=2
+fallbackSelected=8
+testedDirectionProbes=55
+modeledSlotMatches=585
+modeledEnemyWorkMatches=585
 ```
 
 Validated on a 1200-tick trace that reaches two active enemies:
@@ -694,7 +727,7 @@ Current known limitations:
 
 ### Priority: validate one-enemy movement with static player
 
-This remains the immediate priority, but v0.9.9b is a major step because the active one-enemy movement step is now modeled through the source path.
+This remains the immediate priority, but v0.9.9b/v0.9.10 is a major step because the active one-enemy movement step is now modeled through the source path and exposed as the default candidate.
 
 Tasks:
 
@@ -718,7 +751,7 @@ Likely next dependencies to remove or reduce:
 5. true multi-enemy source-path replay later.
 ```
 
-Multi-enemy support is intentionally not the next priority. v0.9.8/v0.9.9b only make the current code safe when a trace leaves the one-enemy scope.
+Multi-enemy support is intentionally not the next priority. v0.9.8/v0.9.9b/v0.9.10 only make the current code safe when a trace leaves the one-enemy scope.
 
 ## 17. Documentation rhythm
 
@@ -732,7 +765,8 @@ Update documentation at significant milestones:
 - important reverse-engineering correction;
 - removal of obsolete diagnostic paths;
 - validation scope changes such as multi-enemy-safe skipping;
-- replay scope changes such as v0.9.9b source-path single-enemy replay.
+- replay scope changes such as v0.9.9b source-path single-enemy replay;
+- adapter/UI cleanup such as v0.9.10b default source-path Compare action.
 ```
 
 Do not update the documentation for every tiny temporary counter or throwaway experiment.

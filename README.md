@@ -18,17 +18,25 @@ doc/current_implementation.md
 
 ## Current status
 
-Current checkpoint: **v0.9.9b**
+Current checkpoint: **v0.9.10b**
 
 Latest stable milestone:
 
 ```text
-Source-path single-enemy replay candidate
+Default source-path single-enemy replay adapter and Compare UI cleanup
 ```
 
-v0.9.9b is the first milestone where the simulation board can run a real source-path replay for the active single enemy, instead of only using reference-direction movement.
+v0.9.10b keeps the v0.9.9b movement logic, but cleans up the adapter/UI layer so the tool now presents the validated replay mode consistently.
 
-The current validated scope is:
+The important current state is:
+
+```text
+default adapter = Lady Bug source-path single-enemy replay
+Compare button  = Run Lady Bug source-path single-enemy replay
+baseline        = older reference-direction behavior is no longer the main UI label
+```
+
+The current validated scope remains:
 
 ```text
 validated scope    = one active enemy, static player, trace-synced preferred[] and environment
@@ -36,7 +44,7 @@ out-of-scope now   = autonomous release, autonomous preferred[], moving player, 
 future scope       = moving player, pivoting-door interaction, multi-enemy logic
 ```
 
-The important distinction is:
+The key distinction remains:
 
 ```text
 Before v0.9.9:
@@ -47,6 +55,9 @@ Since v0.9.9b:
     0x427E decision gate
     -> 0x42E6 preferred / 0x4325 current / 0x4241 fallback
     -> 0x43BA one-pixel movement
+
+Since v0.9.10b:
+  this source-path replay is the default candidate exposed by the UI and adapter wrapper.
 ```
 
 Some inputs are still synchronized from MAME for this controlled milestone:
@@ -62,11 +73,13 @@ inactive slots
 multi-enemy frames after the scope limit
 ```
 
-So this is not yet fully autonomous enemy AI, but it is now a true candidate movement replay for the one-active-enemy/static-player scope.
+So this is not yet fully autonomous enemy AI, but it is now a true candidate movement replay for the one-active-enemy/static-player scope, and the UI no longer suggests that the main mode is the older reference-direction baseline.
 
 ## Current validated results
 
-v0.9.9b has been validated on two different 600-tick static-player traces:
+v0.9.10 has been validated on three different 600-tick static-player traces.
+
+Typical clean result:
 
 ```text
 visual replay comparison: comparedFrames=601, mismatches=0
@@ -77,7 +90,20 @@ fullScopeClean=true
 firstModeledProblem: none
 ```
 
-It has also been validated on a 1201-frame trace where a second enemy appears later:
+The third 600-tick trace produced a richer set of decision paths:
+
+```text
+modeledSingleEnemyTransitions=585
+preferredRejectedCurrentKept=2
+fallbackSelected=8
+testedDirectionProbes=55
+modeledSlotMatches=585
+modeledEnemyWorkMatches=585
+modeledSlotMismatches=0
+modeledEnemyWorkMismatches=0
+```
+
+v0.9.9b/v0.9.10 has also been validated on a 1201-frame trace where a second enemy appears later:
 
 ```text
 visual replay comparison: comparedFrames=1201, mismatches=0
@@ -192,28 +218,24 @@ EnemyWork scratch values
 
 Those fields are useful for analysis, but they should not stop the normal visual replay unless they affect visible behavior.
 
-### Compare adapters
+### Compare adapter
 
-The Compare window now has two useful modes:
+The current main Compare action is:
 
 ```text
-Lady Bug reference-direction step
-Lady Bug source-path single-enemy replay
+Run Lady Bug source-path single-enemy replay
 ```
 
-#### Lady Bug reference-direction step
+This mode is implemented through:
 
-This remains the stable baseline adapter.
+```text
+LadyBugEnemySimulationAdapter
+  -> LadyBugSourcePathSingleEnemyReplayAdapter
+```
 
-It keeps the visual board aligned by applying the direction observed in the MAME trace, then runs the compact transition-based source-path inspector.
+`LadyBugEnemySimulationAdapter` is now a stable default wrapper. `LadyBugSourcePathSingleEnemyReplayAdapter` is the real implementation.
 
-Use it when you want to check that the trace pipeline and diagnostic inspector are still coherent.
-
-#### Lady Bug source-path single-enemy replay
-
-This is the current main v0.9.9b validation adapter.
-
-In the one-active-enemy scope, it computes the enemy movement step with the reconstructed source path:
+For one-active-enemy transitions, it computes the enemy movement step with the reconstructed source path:
 
 ```text
 0x427E decision gate
@@ -395,6 +417,10 @@ v0.9.8 made the source-path inspector multi-enemy safe by skipping unsupported m
 
 v0.9.9 introduced the first source-path single-enemy replay adapter. v0.9.9b corrected the fallback rejected-mask behavior: directions rejected during the internal fallback scan are not added to `0x61C1`; only the preferred/current rejection path updates the rejected mask.
 
+### v0.9.10b cleanup
+
+v0.9.10 made the source-path single-enemy replay adapter the clarified default candidate. v0.9.10b renamed the Compare UI action so it no longer refers to the obsolete reference-direction label.
+
 ## Repository layout
 
 ```text
@@ -473,14 +499,13 @@ This includes:
 Likely next steps:
 
 ```text
-1. cleanly document or expose the v0.9.9b source-path replay adapter as the main one-enemy validation mode;
-2. investigate which trace-synced dependency to remove next, probably preferred[] or release timing;
-3. add traces where the player moves;
-4. add explicit pivoting-door interaction traces;
-5. add true multi-enemy source-path analysis later.
+1. investigate which trace-synced dependency to remove next, probably preferred[] or release timing;
+2. add traces where the player moves;
+3. add explicit pivoting-door interaction traces;
+4. add true multi-enemy source-path analysis later.
 ```
 
-Multi-enemy support is intentionally not the immediate priority. v0.9.8/v0.9.9b only make the current code safe when a trace leaves the one-enemy scope.
+Multi-enemy support is intentionally not the immediate priority. v0.9.8/v0.9.9b/v0.9.10 only make the current code safe when a trace leaves the one-enemy scope.
 
 ## Commit rhythm
 
