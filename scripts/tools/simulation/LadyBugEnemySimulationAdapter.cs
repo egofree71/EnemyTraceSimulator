@@ -1,20 +1,15 @@
 using System.Collections.Generic;
 
 /// <summary>
-/// Default Lady Bug simulation adapter.
+/// Default Lady Bug simulation adapter for the v0.9.11 milestone.
 ///
-/// This class intentionally stays as the stable UI-facing adapter name used by
-/// EnemyTraceSimulatorWindow and Compare.  The actual implementation is delegated
-/// to <see cref="LadyBugSourcePathSingleEnemyReplayAdapter"/>.
+/// The default visual candidate remains the source-path single-enemy replay
+/// adapter. v0.9.11 appends a diagnostic-only preferred[] trace-sync preflight
+/// so we can measure how well the observed preferred[] tuple is explained by
+/// the reconstructed 0x2E5C / 0x2E97 / 0x2EC7 / 0x477D model before trying to
+/// remove preferred[] trace synchronization.
 ///
-/// Current default, v0.9.10:
-/// - compute the active mono-enemy transition through the validated source path;
-/// - keep release timing, player, gates, timers, preferred[], VRAM context,
-///   inactive slots, and multi-enemy frames synchronized from the reference trace;
-/// - stop pretending that the old reference-direction step is the main candidate.
-///
-/// This is still not the final autonomous Lady Bug enemy AI. It is the validated
-/// single-enemy candidate replay used before removing more trace-synced inputs.
+/// This wrapper intentionally does not change visible replay logic.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {
@@ -22,12 +17,18 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 
     public string Name => _inner.Name;
 
-    public string Description => _inner.Description;
+    public string Description =>
+        _inner.Description + " v0.9.11 also appends a diagnostic-only preferred[] trace-sync preflight.";
 
     public bool ExpectedToMismatch => _inner.ExpectedToMismatch;
 
     public SimulationAdapterResult Run(IReadOnlyList<EnemyTraceFrame> referenceFrames)
     {
-        return _inner.Run(referenceFrames);
+        SimulationAdapterResult result = _inner.Run(referenceFrames);
+        string preferredSummary = LadyBugPreferredTraceClassifier.BuildSummary(referenceFrames);
+
+        return new SimulationAdapterResult(
+            result.Frames,
+            result.Summary + "; " + preferredSummary);
     }
 }
