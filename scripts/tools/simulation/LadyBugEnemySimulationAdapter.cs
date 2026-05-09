@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 
 /// <summary>
-/// Default Lady Bug simulation adapter for the v0.9.11 milestone.
+/// Default Lady Bug simulation adapter for the v0.9.12 milestone.
 ///
 /// The default visual candidate remains the source-path single-enemy replay
 /// adapter. v0.9.11 appends a diagnostic-only preferred[] trace-sync preflight
@@ -18,7 +18,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
     public string Name => _inner.Name;
 
     public string Description =>
-        _inner.Description + " v0.9.11 also appends a diagnostic-only preferred[] trace-sync preflight.";
+        _inner.Description + " v0.9.12 uses modeled 0x2E97 rotate preferred[] when safe and keeps the preferred[] preflight summary.";
 
     public bool ExpectedToMismatch => _inner.ExpectedToMismatch;
 
