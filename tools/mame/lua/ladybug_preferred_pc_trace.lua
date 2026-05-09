@@ -2,14 +2,38 @@
 --
 -- Targeted MAME debugger trace for Lady Bug EnemyWork.preferred[] writes.
 --
--- Breakpoints:
---   0x2E97 : base preferred generation, player-dir / rotate branch
---   0x2EC7 : base preferred generation, random LD A,R branch
+-- v0.9.13c extends the previous preferred[] exact-PC diagnostic so the
+-- random/R-low branch can be inspected at the real source PCs instead of trying
+-- to infer it from frame-boundary R values.
+--
+-- IMPORTANT:
+--   This is not a normal JSONL gameplay trace. It produces exact-PC diagnostic
+--   output through MAME debugger logerror lines. Do not load the resulting files
+--   with the normal "Load trace" workflow.
+--
+-- The C# launcher recognizes this exact filename and automatically enables:
+--   -debug -log -debugscript ladybug_preferred_pc_debug_startup.cmd
+--
+-- Stable LBPREF write markers kept for the existing C# analyzer:
+--   0x2E97 : base preferred generation, player-dir / rotate branch write
+--   0x2EC7 : base preferred generation, random LD A,R branch write
 --   0x477D : chase/BFS override writing preferred[]
 --
--- This script requires MAME debugger support. The C# launcher auto-adds:
---   -debug -log -debugscript ladybug_preferred_pc_debug_startup.cmd
--- when this script is selected.
+-- Extra LBRND markers added for random/R-low investigation:
+--   0x2E5C : base preferred[] generator entry
+--   0x2E6A : threshold compare using 61B9
+--   0x2E84 : input read result before zero/non-zero branch
+--   0x2E8C : rotate branch selected, A contains PLAYER_DIR_CURRENT
+--   0x2E9E : random branch selected
+--   0x2EA3 : random loop before LD A,R
+--   0x2EA5 : immediately after LD A,R; A contains the true R value used
+--   0x2ECB : base generator calls BFS/chase override
+--   0x46D8 : BFS/chase override entry
+--
+-- Output files:
+--   <output_prefix>_preferred_pc_hits.log
+--   <output_prefix>_preferred_pc_summary.txt
+--   error.log  (primary raw MAME -log output in tools/mame/lua)
 
 local CONFIG = {
     output_prefix = "ladybug_sequence_v8_pcdiag",
@@ -17,7 +41,7 @@ local CONFIG = {
 
     save_state = "test1",
     load_after_frames = 5,
-    frames_after_tick0_to_capture = 800,
+    frames_after_tick0_to_capture = 600,
 
     exit_when_done = true,
     pause_when_done = false,
@@ -76,11 +100,18 @@ local reset_subscription = nil
 
 local breakpoint_ids = {}
 local copied_hit_count = 0
+local copied_lbpref_count = 0
+local copied_lbrnd_count = 0
 local output_opened_at_frame = -1
-local previous_lbpref_lines = {}
+local last_errorlog_index = 0
+
+local source_counts = {}
+local random_r_low_counts = {}
+local random_write_direction_counts = {}
 
 local function h2(v) return string.format("%02X", v & 0xff) end
 local function h4(v) return string.format("%04X", v & 0xffff) end
+local function h1(v) return string.format("%X", v & 0x0f) end
 
 local function output_path(suffix)
     local dir = CONFIG.output_dir or "."
@@ -112,10 +143,11 @@ local function open_outputs_if_needed()
     output_opened_at_frame = mame_frame
 
     hits_file:write("# Lady Bug preferred[] exact-PC diagnostic hits\n")
-    hits_file:write("# breakpoint PCs: 2E97=rotate/write, 2EC7=random/write, 477D=BFS/write\n")
+    hits_file:write("# v0.9.13c adds LBRND markers around 0x2EA3/0x2EA5 so the true LD A,R value can be captured.\n")
+    hits_file:write("# LBPREF markers are kept for existing write-analysis compatibility: 2E97, 2EC7, 477D.\n")
+    hits_file:write("# LBRND markers are additional context and should not be treated as preferred[] writes.\n")
     hits_file:write("# pollTick/mameFrame are Lua drain time, not exact CPU time.\n")
-    hits_file:write("# LBPREF payload is emitted at the exact breakpoint through MAME debugger logerror.\n")
-    hits_file:write("# v0.6.60 drains debugger.errorlog as a circular buffer by comparing visible content.\n")
+    hits_file:write("# The payload after LBPREF/LBRND is emitted at the exact breakpoint through MAME debugger logerror.\n")
     hits_file:write("# The launcher also enables -log; if this file misses lines, inspect tools/mame/lua/error.log.\n")
     hits_file:write(string.format("# output opened at mameFrame=%d\n", mame_frame))
     hits_file:flush()
@@ -189,40 +221,64 @@ local function active_enemy_count()
     return count
 end
 
-local function debugger_lbpref_lines()
-    local lines = {}
-
-    if machine_debugger == nil or machine_debugger.errorlog == nil then
-        return lines
-    end
-
-    local n = #machine_debugger.errorlog
-    for i = 1, n do
-        local line = tostring(machine_debugger.errorlog[i] or "")
-        if line:find("LBPREF", 1, true) ~= nil then
-            lines[#lines + 1] = line
-        end
-    end
-
-    return lines
+local function inc_count(table_ref, key)
+    key = tostring(key or "")
+    if key == "" then key = "unknown" end
+    table_ref[key] = (table_ref[key] or 0) + 1
 end
 
-local function make_set(lines)
-    local set = {}
-    for _, line in ipairs(lines) do
-        set[line] = true
+local function parse_hex_field(line, key)
+    local pattern = key .. "=([0-9A-Fa-f]+)"
+    local text = line:match(pattern)
+    if text == nil then return nil end
+    return tonumber(text, 16)
+end
+
+local function observe_line(line)
+    local marker = nil
+    if line:find("LBPREF", 1, true) ~= nil then
+        marker = "LBPREF"
+        copied_lbpref_count = copied_lbpref_count + 1
+    elseif line:find("LBRND", 1, true) ~= nil then
+        marker = "LBRND"
+        copied_lbrnd_count = copied_lbrnd_count + 1
+    else
+        return
     end
-    return set
+
+    copied_hit_count = copied_hit_count + 1
+
+    local source = line:match("source=([^|]+)") or "unknown"
+    inc_count(source_counts, marker .. ":" .. source)
+
+    if source == "2EA5_PREF_RANDOM_R_VALUE" then
+        local a = parse_hex_field(line, "a")
+        if a ~= nil then inc_count(random_r_low_counts, h1(a)) end
+    elseif source == "2EC7_RANDOM_WRITE" then
+        local a = parse_hex_field(line, "a")
+        if a ~= nil then inc_count(random_write_direction_counts, h2(a)) end
+    end
+end
+
+local function is_preferred_diag_line(line)
+    return line:find("LBPREF", 1, true) ~= nil or line:find("LBRND", 1, true) ~= nil
 end
 
 local function copy_new_debugger_log_lines(poll_tick)
-    if hits_file == nil then return end
+    if hits_file == nil or machine_debugger == nil or machine_debugger.errorlog == nil then return end
 
-    local current_lines = debugger_lbpref_lines()
-    local previous_set = make_set(previous_lbpref_lines)
+    local n = #machine_debugger.errorlog
 
-    for _, line in ipairs(current_lines) do
-        if not previous_set[line] then
+    -- Some MAME builds expose debugger.errorlog like a bounded visible buffer.
+    -- If it appears to have wrapped or been cleared, restart from the beginning.
+    if n < last_errorlog_index then
+        last_errorlog_index = 0
+    end
+
+    for i = last_errorlog_index + 1, n do
+        local line = tostring(machine_debugger.errorlog[i] or "")
+        if is_preferred_diag_line(line) then
+            observe_line(line)
             hits_file:write(
                 string.format(
                     "pollTick=%d|mameFrame=%d|activeEnemies=%d|preferredNow=%s|chaseNow=%s|%s\n",
@@ -232,23 +288,28 @@ local function copy_new_debugger_log_lines(poll_tick)
                     preferred_snapshot_text(),
                     chase_snapshot_text(),
                     line))
-            copied_hit_count = copied_hit_count + 1
         end
     end
 
-    previous_lbpref_lines = current_lines
+    last_errorlog_index = n
 
     if CONFIG.flush_every_trace_line then
         hits_file:flush()
     end
 end
 
-local function set_breakpoint(addr, label)
+local function make_breakpoint_action(marker, label)
     -- The debugger action logs exact register/memory state, then continues with g.
     -- b@61C4..b@61C7 are the values before the current instruction executes.
-    local action = string.format(
-        'logerror "LBPREF|source=%s|pc=%%04X|r=%%02X|a=%%02X|b=%%02X|c=%%02X|d=%%02X|e=%%02X|h=%%02X|l=%%02X|hl=%%04X|iy=%%04X|sp=%%04X|p0=%%02X|p1=%%02X|p2=%%02X|p3=%%02X|tmpDir=%%02X|tmpX=%%02X|tmpY=%%02X|rejected=%%02X|fallback=%%02X|chase0=%%02X|chase1=%%02X|chase2=%%02X|chase3=%%02X|rr=%%02X\\n",pc,r,a,b,c,d,e,h,l,(h*256)+l,iy,sp,b@61c4,b@61c5,b@61c6,b@61c7,b@61bd,b@61be,b@61bf,b@61c1,b@61c2,b@61ce,b@61cf,b@61d0,b@61d1,b@61d2;g',
+    -- Extra fields are intentionally harmless for the existing preferred analyzer.
+    return string.format(
+        'logerror "%s|source=%s|pc=%%04X|r=%%02X|a=%%02X|b=%%02X|c=%%02X|d=%%02X|e=%%02X|h=%%02X|l=%%02X|hl=%%04X|de=%%04X|ix=%%04X|iy=%%04X|sp=%%04X|p0=%%02X|p1=%%02X|p2=%%02X|p3=%%02X|tmpDir=%%02X|tmpX=%%02X|tmpY=%%02X|rejected=%%02X|fallback=%%02X|chase0=%%02X|chase1=%%02X|chase2=%%02X|chase3=%%02X|rr=%%02X|timer61B9=%%02X|playerDir=%%02X|playerX=%%02X|playerY=%%02X|e0Raw=%%02X|e0X=%%02X|e0Y=%%02X|e1Raw=%%02X|e1X=%%02X|e1Y=%%02X|e2Raw=%%02X|e2X=%%02X|e2Y=%%02X|e3Raw=%%02X|e3X=%%02X|e3Y=%%02X\\n",pc,r,a,b,c,d,e,h,l,(h*256)+l,(d*256)+e,ix,iy,sp,b@61c4,b@61c5,b@61c6,b@61c7,b@61bd,b@61be,b@61bf,b@61c1,b@61c2,b@61ce,b@61cf,b@61d0,b@61d1,b@61d2,b@61b9,b@6198,b@6027,b@6028,b@602b,b@602c,b@602d,b@6030,b@6031,b@6032,b@6035,b@6036,b@6037,b@603a,b@603b,b@603c;g',
+        marker,
         label)
+end
+
+local function set_breakpoint(addr, marker, label)
+    local action = make_breakpoint_action(marker, label)
 
     local ok, bp_or_error = pcall(function()
         return cpu_debug:bpset(addr, "", action)
@@ -259,17 +320,37 @@ local function set_breakpoint(addr, label)
     end
 
     breakpoint_ids[#breakpoint_ids + 1] = bp_or_error
-    emu.print_info(string.format("Lady Bug preferred PC trace: breakpoint %s at %04X -> #%s", label, addr, tostring(bp_or_error)))
+    emu.print_info(string.format("Lady Bug preferred PC trace: breakpoint %s/%s at %04X -> #%s", marker, label, addr, tostring(bp_or_error)))
 end
 
 local function install_breakpoints()
     if #breakpoint_ids > 0 then return end
 
-    previous_lbpref_lines = debugger_lbpref_lines()
+    if machine_debugger ~= nil and machine_debugger.errorlog ~= nil then
+        last_errorlog_index = #machine_debugger.errorlog
+    else
+        last_errorlog_index = 0
+    end
 
-    set_breakpoint(0x2e97, "2E97_ROTATE_WRITE")
-    set_breakpoint(0x2ec7, "2EC7_RANDOM_WRITE")
-    set_breakpoint(0x477d, "477D_BFS_WRITE")
+    -- Base preferred[] generator context.
+    set_breakpoint(0x2e5c, "LBRND", "2E5C_PREF_ENTRY")
+    set_breakpoint(0x2e6a, "LBRND", "2E6A_PREF_THRESHOLD_COMPARE")
+    set_breakpoint(0x2e84, "LBRND", "2E84_PREF_INPUT_READ_RESULT")
+
+    -- Rotate branch. The write remains LBPREF-compatible for existing analysis.
+    set_breakpoint(0x2e8c, "LBRND", "2E8C_PREF_ROTATE_BRANCH")
+    set_breakpoint(0x2e97, "LBPREF", "2E97_ROTATE_WRITE")
+
+    -- Random branch. 0x2EA5 is the key: A contains the exact R value read by LD A,R.
+    set_breakpoint(0x2e9e, "LBRND", "2E9E_PREF_RANDOM_BRANCH")
+    set_breakpoint(0x2ea3, "LBRND", "2EA3_PREF_RANDOM_LOOP_BEFORE_LD_R")
+    set_breakpoint(0x2ea5, "LBRND", "2EA5_PREF_RANDOM_R_VALUE")
+    set_breakpoint(0x2ec7, "LBPREF", "2EC7_RANDOM_WRITE")
+
+    -- BFS/chase override context. The write remains LBPREF-compatible.
+    set_breakpoint(0x2ecb, "LBRND", "2ECB_PREF_CALL_BFS_OVERRIDE")
+    set_breakpoint(0x46d8, "LBRND", "46D8_BFS_OVERRIDE_ENTRY")
+    set_breakpoint(0x477d, "LBPREF", "477D_BFS_WRITE")
 
     -- Extra safety: if MAME is currently stopped in the debugger, resume.
     pcall(function()
@@ -292,11 +373,37 @@ local function clear_breakpoints()
     breakpoint_ids = {}
 end
 
+local function sorted_pairs_by_count(counts)
+    local pairs = {}
+    for k, v in pairs(counts) do
+        pairs[#pairs + 1] = { key = k, value = v }
+    end
+    table.sort(pairs, function(a, b)
+        if a.value == b.value then return a.key < b.key end
+        return a.value > b.value
+    end)
+    return pairs
+end
+
+local function write_counts(title, counts)
+    summary_file:write(title .. "\n")
+    local pairs = sorted_pairs_by_count(counts)
+    if #pairs == 0 then
+        summary_file:write("  none\n")
+        return
+    end
+
+    for _, pair in ipairs(pairs) do
+        summary_file:write(string.format("  %s=%d\n", pair.key, pair.value))
+    end
+end
+
 local function write_summary(reason)
     if summary_file == nil then return end
 
     summary_file:write("Lady Bug preferred[] exact-PC diagnostic summary\n")
     summary_file:write("================================================\n\n")
+    summary_file:write("version: v0.9.13c random/R-low exact-PC extension\n")
     summary_file:write("reason: " .. tostring(reason) .. "\n")
     summary_file:write("save_state: " .. tostring(CONFIG.save_state) .. "\n")
     summary_file:write("frames_after_tick0_to_capture: " .. tostring(CONFIG.frames_after_tick0_to_capture) .. "\n")
@@ -309,12 +416,27 @@ local function write_summary(reason)
     summary_file:write("load_call_error: " .. tostring(load_call_error) .. "\n")
     summary_file:write("breakpoints_installed: " .. tostring(#breakpoint_ids) .. "\n")
     summary_file:write("copied_hit_count: " .. tostring(copied_hit_count) .. "\n")
+    summary_file:write("copied_lbpref_count: " .. tostring(copied_lbpref_count) .. "\n")
+    summary_file:write("copied_lbrnd_count: " .. tostring(copied_lbrnd_count) .. "\n")
+    summary_file:write("\n")
 
     if mem ~= nil then
         summary_file:write("current_preferred: " .. preferred_snapshot_text() .. "\n")
         summary_file:write("current_chase: " .. chase_snapshot_text() .. "\n")
         summary_file:write("active_enemy_count: " .. tostring(active_enemy_count()) .. "\n")
+        summary_file:write("\n")
     end
+
+    write_counts("source_counts", source_counts)
+    summary_file:write("\n")
+    write_counts("random_true_R_low_counts_from_2EA5_A", random_r_low_counts)
+    summary_file:write("\n")
+    write_counts("random_write_direction_counts_from_2EC7_A", random_write_direction_counts)
+    summary_file:write("\n")
+    summary_file:write("notes:\n")
+    summary_file:write("  - LBRND:2EA5_PREF_RANDOM_R_VALUE captures A immediately after LD A,R and before AND 0F.\n")
+    summary_file:write("  - LBPREF:2EC7_RANDOM_WRITE captures the selected one-hot direction being written to preferred[].\n")
+    summary_file:write("  - The existing C# preferred PC analyzer still reads LBPREF writes; LBRND lines are extra random/R-low context.\n")
 
     summary_file:flush()
 end
@@ -434,10 +556,12 @@ local function on_frame_impl()
 
         if frames_after_tick0_written % 60 == 0 then
             hits_file:write(string.format(
-                "# heartbeat pollTick=%d mameFrame=%d copiedHitCount=%d preferred=%s chase=%s\n",
+                "# heartbeat pollTick=%d mameFrame=%d copiedHitCount=%d LBPREF=%d LBRND=%d preferred=%s chase=%s\n",
                 frames_after_tick0_written,
                 mame_frame,
                 copied_hit_count,
+                copied_lbpref_count,
+                copied_lbrnd_count,
                 preferred_snapshot_text(),
                 chase_snapshot_text()))
             hits_file:flush()
@@ -493,4 +617,4 @@ post_load_subscription = emu.add_machine_post_load_notifier(on_post_load)
 reset_subscription = emu.add_machine_reset_notifier(on_reset)
 frame_subscription = emu.add_machine_frame_notifier(on_frame)
 
-emu.print_info("Lady Bug preferred PC trace script loaded.")
+emu.print_info("Lady Bug preferred PC trace script v0.9.13c loaded.")
