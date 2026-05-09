@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 
 /// <summary>
-/// Default Lady Bug simulation adapter for the v0.9.14c diagnostic package.
+/// Default Lady Bug simulation adapter for the v0.9.15 random-mode package.
 ///
 /// The visual candidate now remains the source-path single-enemy replay, with a
 /// slightly larger modeled preferred[] subset:
@@ -10,7 +10,7 @@ using System.Collections.Generic;
 /// - deterministic 0x2E97 rotate preferred[] tuples are modeled and used;
 /// - visible 0x477D BFS/chase overrides are modeled from the source 0x45DC
 ///   coordinate-to-logical-maze guidance path and used when safe;
-/// - random/R-register base tuples are still trace-synced by design.
+/// - random/R-register base tuples are trace-synced by default, or generated with a seeded C# Random when behavior mode is enabled.
 ///
 /// The appended preflights remain diagnostic-only. They keep reporting coverage
 /// and reverse-engineering confidence, but the actual replay result comes from
@@ -23,7 +23,7 @@ public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
     public string Name => _inner.Name;
 
     public string Description =>
-        _inner.Description + " v0.9.14c appends preferred[], random/R-low and BFS/chase source-guidance diagnostics.";
+        _inner.Description + " v0.9.15 appends preferred[], random/R-low and BFS/chase diagnostics, plus optional C# random behavior mode.";
 
     public bool ExpectedToMismatch => _inner.ExpectedToMismatch;
 

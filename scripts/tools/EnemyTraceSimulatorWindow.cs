@@ -19,6 +19,7 @@ public partial class EnemyTraceSimulatorWindow : Control
     private const string PauseButtonText = "❚❚";
     private const string StepButtonText = "▶|";
     private const string DefaultMameConfigPath = "res://config/mame_trace_settings.json";
+    private const string DefaultSimulationConfigPath = LadyBugEnemySimulationSettings.ConfigResourcePath;
     private const string DefaultTracePath = "res://traces/mame/ladybug_sequence_v8_trace.jsonl";
 
     private static readonly JsonSerializerOptions SettingsJsonOptions = new()
@@ -47,6 +48,8 @@ public partial class EnemyTraceSimulatorWindow : Control
     private List<EnemyTraceFrame> _frames = new();
     private List<SimulationFrame> _simulationFrames = new();
     private string _simulationSummary = string.Empty;
+    private bool _simulationExpectedToMismatch;
+    private bool _expectedDivergenceAlreadyLogged;
     private int _currentFrameIndex;
     private bool _isRunning;
     private bool _isPaused = true;
@@ -62,8 +65,9 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.9.10b: source-path single-enemy replay is the default candidate; Compare UI labels cleaned.");
+        Log("v0.9.15b: source-path single-enemy replay supports optional C# seeded random behavior mode, editable from settings.");
         Log($"MAME config: {DefaultMameConfigPath}");
+        Log($"Simulation config: {DefaultSimulationConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
 
@@ -134,7 +138,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
     private void ConfigurePlaybackButtons()
     {
-        ConfigurePlaybackButton(_settingsButton, "⚙", "Éditer config/mame_trace_settings.json");
+        ConfigurePlaybackButton(_settingsButton, "⚙", "Éditer les réglages MAME et simulation");
         ConfigurePlaybackButton(_runSimulationButton, RestartButtonText, "Relancer la séquence depuis le début");
         ConfigurePlaybackButton(_pauseResumeButton, ResumeButtonText, "Mettre en pause ou reprendre la séquence");
         ConfigurePlaybackButton(_stepButton, StepButtonText, "Avancer d’un tick et comparer");
@@ -249,6 +253,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _isPaused = true;
         _playbackAccumulator = 0;
         _lastVisualMismatch = VisualReplayMismatch.None;
+        _expectedDivergenceAlreadyLogged = false;
 
         BuildSimulationFramesForLoadedTrace();
         ConfigureTickSpinBoxForLoadedTrace();
@@ -286,6 +291,8 @@ public partial class EnemyTraceSimulatorWindow : Control
     {
         _simulationFrames.Clear();
         _simulationSummary = string.Empty;
+        _simulationExpectedToMismatch = false;
+        _expectedDivergenceAlreadyLogged = false;
 
         if (_frames.Count == 0)
             return;
@@ -295,7 +302,9 @@ public partial class EnemyTraceSimulatorWindow : Control
             IEnemySimulationAdapter adapter = new LadyBugEnemySimulationAdapter();
             SimulationAdapterResult result = adapter.Run(_frames);
             _simulationFrames = result.Frames;
-            _simulationSummary = $"Simulation candidate: {adapter.Name}; frames={_simulationFrames.Count}";
+            _simulationExpectedToMismatch = adapter.ExpectedToMismatch;
+            _simulationSummary = $"Simulation candidate: {adapter.Name}; frames={_simulationFrames.Count}" +
+                                 (_simulationExpectedToMismatch ? "; expected random divergence mode" : string.Empty);
         }
         catch (Exception ex)
         {
@@ -320,6 +329,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _isPaused = false;
         _playbackAccumulator = 0;
         _lastVisualMismatch = VisualReplayMismatch.None;
+        _expectedDivergenceAlreadyLogged = false;
         ApplyCurrentFrame();
         UpdatePauseResumeButtonText();
         UpdateStatus();
@@ -408,6 +418,20 @@ public partial class EnemyTraceSimulatorWindow : Control
         }
 
         _lastVisualMismatch = mismatch;
+
+        if (_simulationExpectedToMismatch)
+        {
+            if (!_expectedDivergenceAlreadyLogged || logMatchAtEnd)
+            {
+                Log("Expected visual divergence in C# random behavior mode; playback continues.");
+                Log(mismatch.ToString());
+                _expectedDivergenceAlreadyLogged = true;
+            }
+
+            UpdateStatus();
+            return false;
+        }
+
         _isPaused = true;
         _playbackAccumulator = 0;
         UpdatePauseResumeButtonText();
@@ -453,6 +477,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         _isPaused = true;
         _playbackAccumulator = 0;
         _lastVisualMismatch = VisualReplayMismatch.None;
+        _expectedDivergenceAlreadyLogged = false;
         ApplyCurrentFrame();
         CheckCurrentVisualStateAndPauseIfMismatch(logMatchAtEnd: false);
 
@@ -548,7 +573,9 @@ public partial class EnemyTraceSimulatorWindow : Control
         EnemyTraceFrame frame = _frames[_currentFrameIndex];
         string state = _isPaused ? "pause" : "lecture";
         string mismatch = _lastVisualMismatch.HasMismatch
-            ? $" | STOP mismatch: {_lastVisualMismatch.Category}"
+            ? (_simulationExpectedToMismatch
+                ? $" | divergence attendue: {_lastVisualMismatch.Category}"
+                : $" | STOP mismatch: {_lastVisualMismatch.Category}")
             : string.Empty;
 
         _statusLabel.Text =
@@ -604,7 +631,7 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "Run the current default Lady Bug candidate adapter and compare the visual replay state. The normal playback buttons already stop on the first visual mismatch.",
+            Text = "Run the current default Lady Bug candidate adapter and compare the visual replay state. In C# random mode, divergence from the MAME trace is expected.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
@@ -816,12 +843,13 @@ public partial class EnemyTraceSimulatorWindow : Control
     {
         try
         {
-            MameTraceSettings settings = LoadMameTraceSettings();
-            ShowMameSettingsDialog(settings);
+            MameTraceSettings mameSettings = LoadMameTraceSettings();
+            LadyBugEnemySimulationSettings simulationSettings = LoadEnemySimulationSettings();
+            ShowSettingsDialog(mameSettings, simulationSettings);
         }
         catch (Exception ex)
         {
-            Log($"Could not open MAME settings dialog: {ex.Message}");
+            Log($"Could not open settings dialog: {ex.Message}");
         }
     }
 
@@ -850,15 +878,41 @@ public partial class EnemyTraceSimulatorWindow : Control
         Log($"MAME settings saved: {DefaultMameConfigPath}");
     }
 
-    private void ShowMameSettingsDialog(MameTraceSettings settings)
+    private LadyBugEnemySimulationSettings LoadEnemySimulationSettings()
+    {
+        string configAbsolutePath = ResolveProjectPath(DefaultSimulationConfigPath);
+        if (!System.IO.File.Exists(configAbsolutePath))
+        {
+            Log($"Simulation settings file not found. A new one will be created: {DefaultSimulationConfigPath}");
+            return new LadyBugEnemySimulationSettings();
+        }
+
+        string json = System.IO.File.ReadAllText(configAbsolutePath);
+        return JsonSerializer.Deserialize<LadyBugEnemySimulationSettings>(json, SettingsJsonOptions)
+               ?? new LadyBugEnemySimulationSettings();
+    }
+
+    private void SaveEnemySimulationSettings(LadyBugEnemySimulationSettings settings)
+    {
+        string configAbsolutePath = ResolveProjectPath(DefaultSimulationConfigPath);
+        string? directory = System.IO.Path.GetDirectoryName(configAbsolutePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            System.IO.Directory.CreateDirectory(directory);
+
+        string json = JsonSerializer.Serialize(settings, SettingsJsonOptions);
+        System.IO.File.WriteAllText(configAbsolutePath, json + System.Environment.NewLine);
+        Log($"Simulation settings saved: {DefaultSimulationConfigPath}");
+    }
+
+    private void ShowSettingsDialog(MameTraceSettings settings, LadyBugEnemySimulationSettings simulationSettings)
     {
         var dialog = new Window
         {
-            Title = "MAME trace settings",
+            Title = "Trace and simulation settings",
             Transient = true,
             Exclusive = true,
             Unresizable = false,
-            MinSize = new Vector2I(560, 440)
+            MinSize = new Vector2I(640, 560)
         };
 
         var margin = new MarginContainer();
@@ -891,6 +945,8 @@ public partial class EnemyTraceSimulatorWindow : Control
         };
         scroll.AddChild(grid);
 
+        AddSettingsSection(grid, "MAME trace generation");
+
         var fields = new MameSettingsEditorFields
         {
             MameExecutable = AddLineSetting(grid, "MAME executable", settings.MameExecutable),
@@ -913,6 +969,23 @@ public partial class EnemyTraceSimulatorWindow : Control
             IncludeLogicalMazeEachFrame = AddBoolSetting(grid, "Include logical maze each frame", settings.IncludeLogicalMazeEachFrame)
         };
 
+        AddSettingsSection(grid, "Simulation candidate behavior");
+
+        fields.PreferredRandomMode = AddRandomModeSetting(
+            grid,
+            "preferredRandomMode",
+            simulationSettings.RandomMode);
+        fields.CSharpRandomSeed = AddIntSetting(
+            grid,
+            "csharpRandomSeed",
+            simulationSettings.CSharpRandomSeed,
+            0,
+            int.MaxValue);
+        fields.ContinuePlaybackOnExpectedRandomDivergence = AddBoolSetting(
+            grid,
+            "continuePlaybackOnExpectedRandomDivergence",
+            simulationSettings.ContinuePlaybackOnExpectedRandomDivergence);
+
         var buttonRow = new HBoxContainer
         {
             Alignment = BoxContainer.AlignmentMode.End,
@@ -928,12 +1001,14 @@ public partial class EnemyTraceSimulatorWindow : Control
         {
             try
             {
-                SaveMameTraceSettings(BuildSettingsFromFields(fields));
+                SaveMameTraceSettings(BuildMameSettingsFromFields(fields));
+                SaveEnemySimulationSettings(BuildSimulationSettingsFromFields(fields));
+                RebuildSimulationAfterSettingsChange();
                 dialog.QueueFree();
             }
             catch (Exception ex)
             {
-                Log($"Could not save MAME settings: {ex.Message}");
+                Log($"Could not save settings: {ex.Message}");
             }
         };
 
@@ -943,10 +1018,10 @@ public partial class EnemyTraceSimulatorWindow : Control
         buttonRow.AddChild(cancelButton);
 
         AddChild(dialog);
-        dialog.PopupCentered(new Vector2I(700, 560));
+        dialog.PopupCentered(new Vector2I(760, 680));
     }
 
-    private static MameTraceSettings BuildSettingsFromFields(MameSettingsEditorFields fields)
+    private static MameTraceSettings BuildMameSettingsFromFields(MameSettingsEditorFields fields)
     {
         return new MameTraceSettings
         {
@@ -969,6 +1044,69 @@ public partial class EnemyTraceSimulatorWindow : Control
             IncludeFullMemoryEachFrame = fields.IncludeFullMemoryEachFrame.ButtonPressed,
             IncludeLogicalMazeEachFrame = fields.IncludeLogicalMazeEachFrame.ButtonPressed
         };
+    }
+
+    private static LadyBugEnemySimulationSettings BuildSimulationSettingsFromFields(MameSettingsEditorFields fields)
+    {
+        return new LadyBugEnemySimulationSettings
+        {
+            PreferredRandomMode = GetSelectedRandomMode(fields.PreferredRandomMode),
+            CSharpRandomSeed = (int)Math.Round(fields.CSharpRandomSeed.Value),
+            ContinuePlaybackOnExpectedRandomDivergence = fields.ContinuePlaybackOnExpectedRandomDivergence.ButtonPressed
+        };
+    }
+
+    private void RebuildSimulationAfterSettingsChange()
+    {
+        if (_frames.Count == 0)
+            return;
+
+        BuildSimulationFramesForLoadedTrace();
+        ApplyCurrentFrame();
+
+        if (!string.IsNullOrWhiteSpace(_simulationSummary))
+            Log(_simulationSummary);
+    }
+
+    private static void AddSettingsSection(GridContainer grid, string title)
+    {
+        var label = new Label
+        {
+            Text = title,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(230, 34)
+        };
+        label.AddThemeFontSizeOverride("font_size", 16);
+        grid.AddChild(label);
+        grid.AddChild(new Label { Text = string.Empty });
+    }
+
+    private static OptionButton AddRandomModeSetting(
+        GridContainer grid,
+        string labelText,
+        LadyBugPreferredRandomMode value)
+    {
+        grid.AddChild(MakeSettingsLabel(labelText));
+
+        var option = new OptionButton
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            TooltipText = "TraceSynced = comparaison exacte avec MAME. CSharpSeeded = random C# répétable pour observer le comportement autonome."
+        };
+        option.AddItem("TraceSynced");
+        option.AddItem("CSharpSeeded");
+        option.Selected = value == LadyBugPreferredRandomMode.CSharpSeeded ? 1 : 0;
+        grid.AddChild(option);
+        return option;
+    }
+
+    private static string GetSelectedRandomMode(OptionButton option)
+    {
+        int selected = option.Selected;
+        if (selected >= 0)
+            return option.GetItemText(selected);
+
+        return "TraceSynced";
     }
 
     private static LineEdit AddLineSetting(GridContainer grid, string labelText, string value)
@@ -1049,6 +1187,9 @@ public partial class EnemyTraceSimulatorWindow : Control
         public CheckBox FlushEveryTraceLine { get; init; } = null!;
         public CheckBox IncludeFullMemoryEachFrame { get; init; } = null!;
         public CheckBox IncludeLogicalMazeEachFrame { get; init; } = null!;
+        public OptionButton PreferredRandomMode { get; set; } = null!;
+        public SpinBox CSharpRandomSeed { get; set; } = null!;
+        public CheckBox ContinuePlaybackOnExpectedRandomDivergence { get; set; } = null!;
     }
 
     private static int CountActiveEnemies(EnemyTraceFrame frame)

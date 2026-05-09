@@ -1,0 +1,9 @@
+{
+  "PreferredRandomMode": "CSharpSeeded",
+  "CSharpRandomSeed": 1981,
+  "ContinuePlaybackOnExpectedRandomDivergence": true,
+  "RandomMode": 1,
+  "UsesCSharpRandom": true,
+  "ExpectedToDivergeFromTrace": true,
+  "RandomModeLabel": "csharp-seeded"
+}
