@@ -1,8 +1,8 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.9.10b  
-**Latest validated milestone:** `Default source-path single-enemy replay adapter and Compare UI cleanup`  
+**Current package version:** v0.9.12  
+**Latest validated milestone:** `Hybrid preferred[] provider for deterministic 0x2E97 rotate tuples`  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -60,9 +60,14 @@ This means:
 - diagnostics should follow the source path, not ask artificial questions.
 ```
 
-v0.9.9b was the first checkpoint where the normal candidate replay could compute the active one-enemy movement step from the reconstructed source path.
+Checkpoint progression:
 
-v0.9.10/v0.9.10b made that path the clarified default adapter and aligned the Compare UI label with the real mode.
+```text
+v0.9.9b  first candidate replay computing active one-enemy movement through the source path
+v0.9.10b default adapter/UI cleanup for source-path single-enemy replay
+v0.9.11  preferred[] trace-sync preflight classifier
+v0.9.12  hybrid preferred[] provider: model 0x2E97 rotate, keep random/BFS trace-synced
+```
 
 ## 3. Main UI workflow
 
@@ -429,6 +434,9 @@ Important source concepts:
 ```text
 0x05AE  enemy slot allocation / release helper
 0x3061  initialize released enemy slot
+0x2E5C  preferred[] base generation routine
+0x2E97  deterministic rotate preferred[] branch
+0x2EC7  random/R-register preferred[] branch
 0x3911  logical maze validation
 0x3C0A  tile address lookup
 0x4130  local door / tile validation
@@ -448,6 +456,7 @@ Core enemy movement principles:
 - integer arcade-pixel positions;
 - one-pixel movement steps;
 - direction decisions at enemy centers only;
+- preferred direction is generated before enemy slot updates;
 - preferred direction is validated before use;
 - fallback order is left, up, right, down;
 - door-local validation can reject a direction;
@@ -465,6 +474,9 @@ Implemented / relevant files:
 ```text
 scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
 scripts/tools/simulation/LadyBugSourcePathSingleEnemyReplayAdapter.cs
+scripts/tools/simulation/LadyBugPreferredHybridProvider.cs
+scripts/tools/simulation/LadyBugPreferredTraceClassifier.cs
+scripts/tools/simulation/LadyBugMonsterPreferenceSystem.cs
 scripts/tools/simulation/LadyBugSourcePathDecisionInspector.cs
 scripts/tools/simulation/LadyBugEnemyDecisionModel.cs
 scripts/tools/simulation/LadyBugEnemyDecisionGate427EModel.cs
@@ -502,8 +514,6 @@ Compare mode:
 Lady Bug source-path single-enemy replay
 ```
 
-In v0.9.10b, the Compare button uses this label directly.
-
 For one-active-enemy transitions, this adapter computes the visible enemy movement step through the reconstructed source path rather than using the reference direction:
 
 ```text
@@ -518,11 +528,12 @@ then:
   0x43BA one-pixel movement step
 ```
 
-Still synchronized from the trace in v0.9.10b:
+Still synchronized from the trace in v0.9.12:
 
 ```text
 release timing
-preferred[]
+random 0x2EC7 preferred[] cases
+BFS/chase 0x477D preferred[] override cases
 player
 gates
 timers
@@ -539,13 +550,85 @@ modeledSlotMatches
 modeledSlotMismatches
 modeledEnemyWorkMatches
 modeledEnemyWorkMismatches
+preferredModeledRotateTransitions
+preferredTraceFallbackTransitions
 modeledClean
 fullScopeClean
 firstModeledProblem
 firstMultiEnemySync
 ```
 
-### 11.3 Reference-direction baseline
+### 11.3 Hybrid preferred[] provider
+
+Implemented file:
+
+```text
+scripts/tools/simulation/LadyBugPreferredHybridProvider.cs
+```
+
+Mode:
+
+```text
+preferredMode=hybrid-modeled-2E97-rotate-else-trace-synced
+```
+
+Behavior:
+
+```text
+- compute the deterministic 0x2E97 rotate tuple from the player current direction;
+- if the modeled rotate tuple matches the observed trace tuple, use the modeled tuple;
+- otherwise, fall back to the trace preferred[] tuple;
+- keep reporting how often each path was used.
+```
+
+This means v0.9.12 removes trace-sync only for a safe deterministic preferred[] family. It does not yet attempt to model the random/R-register branch or the BFS override branch autonomously.
+
+Typical 600-tick result:
+
+```text
+preferredModeledRotateTransitions=204
+preferredTraceFallbackTransitions=391
+```
+
+Typical 1201-frame result before the multi-enemy scope limit:
+
+```text
+preferredModeledRotateTransitions=241
+preferredTraceFallbackTransitions=586
+```
+
+### 11.4 Preferred[] trace preflight
+
+Implemented file:
+
+```text
+scripts/tools/simulation/LadyBugPreferredTraceClassifier.cs
+```
+
+v0.9.11 added this classifier to validate coverage before the hybrid provider started using modeled tuples.
+
+It classifies observed preferred[] tuples into source families:
+
+```text
+2E97_ROTATE_FROM_..
+2EC7_RANDOM_RLOW_..
+477D_SLOT0_BFS_OVER_...
+```
+
+Expected clean output:
+
+```text
+tupleChecks > 0
+classifiedMatches = tupleChecks
+classifiedMismatches=0
+unclassified=0
+missingPreferred=0
+clean=true
+```
+
+The preflight is still useful in v0.9.12 because it verifies that the hybrid fallback remains explainable.
+
+### 11.5 Reference-direction baseline
 
 The earlier reference-direction behavior remains conceptually useful as a baseline, but it is no longer the default UI label.
 
@@ -553,7 +636,7 @@ It kept visual replay stable by applying the direction observed in the MAME trac
 
 Use this idea only as a diagnostic fallback if the source-path candidate needs to be compared against the old harness.
 
-### 11.4 v0.9.9b rejected-mask correction
+### 11.6 v0.9.9b rejected-mask correction
 
 The first v0.9.9 replay exposed a single `EnemyWork` mismatch in the fallback path:
 
@@ -621,7 +704,7 @@ activeStart=1 and activeResult=1 -> inspect or replay normally
 activeStart>1 or activeResult>1 -> skipped / synced multi-enemy transition
 ```
 
-For the 1201-frame test trace under v0.9.9b/v0.9.10:
+For the 1201-frame test trace under v0.9.12:
 
 ```text
 modeledSingleEnemyTransitions=827
@@ -668,7 +751,7 @@ So v0.8 was a validated replay bridge, not final autonomous AI.
 
 ## 14. Current validation status
 
-Validated on three different 600-tick static-player traces:
+Validated on 600-tick static-player traces:
 
 ```text
 visual replay comparison: mismatches=0
@@ -679,15 +762,16 @@ fullScopeClean=true
 firstModeledProblem: none
 ```
 
-Recent richer 600-tick trace:
+Current v0.9.12 600-tick hybrid preferred[] result:
 
 ```text
-modeledSingleEnemyTransitions=585
-preferredRejectedCurrentKept=2
+modeledSingleEnemyTransitions=595
+preferredRejectedCurrentKept=1
 fallbackSelected=8
-testedDirectionProbes=55
-modeledSlotMatches=585
-modeledEnemyWorkMatches=585
+modeledSlotMatches=595
+modeledEnemyWorkMatches=595
+preferredModeledRotateTransitions=204
+preferredTraceFallbackTransitions=391
 ```
 
 Validated on a 1200-tick trace that reaches two active enemies:
@@ -700,10 +784,12 @@ modeledSlotMismatches=0
 modeledEnemyWorkMismatches=0
 modeledClean=true
 fullScopeClean=false
+preferredModeledRotateTransitions=241
+preferredTraceFallbackTransitions=586
 firstMultiEnemySync startTick=837 resultTick=838 activeStart=1 activeResult=2
 ```
 
-This proves the current one-enemy replay remains clean and that the tool now reports unsupported multi-enemy transitions instead of pretending to model them.
+This proves the current one-enemy replay remains clean, that deterministic rotate preferred[] tuples can be modeled safely in the tested scope, and that unsupported multi-enemy transitions are still reported instead of being mis-modeled.
 
 ## 15. Current limitations
 
@@ -711,7 +797,7 @@ Current known limitations:
 
 ```text
 - release timing is still trace-derived;
-- preferred[] is still trace-synced;
+- preferred[] is only partially modeled: 0x2E97 rotate is modeled, while 0x2EC7 random and 0x477D BFS/chase are still trace-synced;
 - player state is still trace-synced;
 - gates, timers, VRAM context, inactive slots, and multi-enemy frames are still trace-synced;
 - den-exit logic is not autonomous;
@@ -727,16 +813,16 @@ Current known limitations:
 
 ### Priority: validate one-enemy movement with static player
 
-This remains the immediate priority, but v0.9.9b/v0.9.10 is a major step because the active one-enemy movement step is now modeled through the source path and exposed as the default candidate.
+This remains the immediate priority, but v0.9.12 is a meaningful step because a deterministic subset of preferred[] is now model-driven.
 
 Tasks:
 
 ```text
 - keep the clean two-board visual replay as the main workflow;
 - validate source-path single-enemy replay on several static-player traces;
-- reduce trace-synced inputs one by one;
+- reduce trace-synced inputs one by one only after preflight validation;
 - stop at the first visible mismatch;
-- use the source-path inspector to explain that mismatch.
+- use the source-path and preferred[] diagnostics to explain that mismatch.
 ```
 
 ### Candidate next steps
@@ -744,14 +830,15 @@ Tasks:
 Likely next dependencies to remove or reduce:
 
 ```text
-1. preferred[] trace-sync;
-2. release timing / den-exit trace-sync;
-3. player movement traces;
-4. explicit pivoting-door interaction traces;
-5. true multi-enemy source-path replay later.
+1. model 0x2EC7 random/R-low preferred[] generation more directly;
+2. investigate 0x477D BFS/chase preferred[] overrides separately;
+3. consider release timing / den-exit trace-sync after preferred[] is better understood;
+4. add traces where the player moves;
+5. add explicit pivoting-door interaction traces;
+6. add true multi-enemy source-path analysis later.
 ```
 
-Multi-enemy support is intentionally not the next priority. v0.9.8/v0.9.9b/v0.9.10 only make the current code safe when a trace leaves the one-enemy scope.
+Multi-enemy support is intentionally not the next priority. v0.9.8 and later only make the current code safe when a trace leaves the one-enemy scope.
 
 ## 17. Documentation rhythm
 
@@ -766,7 +853,8 @@ Update documentation at significant milestones:
 - removal of obsolete diagnostic paths;
 - validation scope changes such as multi-enemy-safe skipping;
 - replay scope changes such as v0.9.9b source-path single-enemy replay;
-- adapter/UI cleanup such as v0.9.10b default source-path Compare action.
+- adapter/UI cleanup such as v0.9.10b default source-path Compare action;
+- real reduction of trace-sync dependency such as v0.9.12 hybrid preferred[] provider.
 ```
 
 Do not update the documentation for every tiny temporary counter or throwaway experiment.
