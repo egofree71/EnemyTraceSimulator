@@ -3,32 +3,41 @@ using System.Collections.Generic;
 using System.Globalization;
 
 /// <summary>
-/// Guarded preferred[] provider for v0.9.12.
+/// Guarded preferred[] provider for the source-path replay.
 ///
-/// This is the first step where the movement replay can use a modeled
-/// preferred[] tuple instead of always reading the selected preferred direction
-/// directly from the trace.
+/// v0.9.14c modeled subset:
+/// - deterministic 0x2E97 rotate tuples are generated and used;
+/// - visible 0x477D BFS/chase overrides are generated from the source 0x45DC
+///   coordinate-to-0x6200 guidance path when the context is unambiguous;
+/// - random 0x2EC7 base tuples are still trace-synced by design, but a visible
+///   BFS override over such a base tuple may still be modeled because the
+///   override direction itself comes from 0x45DC + 0x6200.
 ///
-/// Current autonomous subset:
-/// - deterministic 0x2E97 rotate branch, generated from the current player
-///   direction through LadyBugMonsterPreferenceSystem.GenerateRotateBranch().
-///
-/// Still trace-synced:
-/// - 0x2EC7 random/R-register tuples;
-/// - 0x477D BFS/chase overrides;
-/// - any tuple that is not exactly explained by the deterministic rotate model.
-///
-/// The trace tuple is still required as a guard in this package. This makes the
-/// change safe for the visual replay while establishing a real modeled-preferred
-/// path for the deterministic rotate family.
+/// Remaining trace-synced preferred[] cases:
+/// - pure random base tuples;
+/// - invisible BFS/chase writes where 0x477D writes the same direction already
+///   present in the base tuple;
+/// - any case where the source guidance cannot be read or does not match the
+///   observed override.
 /// </summary>
 public static class LadyBugPreferredHybridProvider
 {
     public static bool TryGetPreferred(EnemyTraceFrame frame, int activeSlot, out Result result)
     {
+        return TryGetPreferred(null, frame, activeSlot, -1, -1, out result);
+    }
+
+    public static bool TryGetPreferred(
+        EnemyTraceFrame? sourceFrame,
+        EnemyTraceFrame resultFrame,
+        int activeSlot,
+        int sourceEnemyX,
+        int sourceEnemyY,
+        out Result result)
+    {
         result = Result.Missing(activeSlot);
 
-        if (!TryCopyReferencePreferredTuple(frame, out int[] referenceTuple))
+        if (!TryCopyReferencePreferredTuple(resultFrame, out int[] referenceTuple))
             return false;
 
         if (activeSlot < 0 || activeSlot >= LadyBugMonsterPreferenceSystem.PreferredSlotCount)
@@ -37,7 +46,7 @@ public static class LadyBugPreferredHybridProvider
         if (!IsOneHotDirection(referenceTuple[activeSlot]))
             return false;
 
-        if (TryGetPlayerDirection(frame, out int playerDirection))
+        if (TryGetPlayerDirection(resultFrame, out int playerDirection))
         {
             int[] rotateTuple = LadyBugMonsterPreferenceSystem.GenerateRotateBranch(playerDirection);
             if (LadyBugMonsterPreferenceSystem.TupleEquals(rotateTuple, referenceTuple))
@@ -47,8 +56,105 @@ public static class LadyBugPreferredHybridProvider
             }
         }
 
+        if (sourceFrame != null &&
+            sourceEnemyX >= 0 &&
+            sourceEnemyY >= 0 &&
+            IsChaseTimerActive(resultFrame, activeSlot) &&
+            LadyBugBfsChaseSourceModel.TryGetGuidance(sourceFrame, sourceEnemyX, sourceEnemyY, out LadyBugBfsChaseSourceModel.GuidanceResult guidance))
+        {
+            if (TryBuildVisibleBfsOverrideResult(
+                    resultFrame,
+                    activeSlot,
+                    referenceTuple,
+                    guidance,
+                    out result))
+            {
+                return true;
+            }
+        }
+
         result = Result.TraceFallback(activeSlot, referenceTuple, "trace-sync-random-or-bfs-or-unmatched-rotate");
         return true;
+    }
+
+    private static bool TryBuildVisibleBfsOverrideResult(
+        EnemyTraceFrame resultFrame,
+        int activeSlot,
+        int[] referenceTuple,
+        LadyBugBfsChaseSourceModel.GuidanceResult guidance,
+        out Result result)
+    {
+        result = Result.Missing(activeSlot);
+        int overrideDirection = guidance.Direction & 0x0F;
+
+        if (!IsOneHotDirection(overrideDirection))
+            return false;
+
+        if ((referenceTuple[activeSlot] & 0x0F) != overrideDirection)
+            return false;
+
+        foreach (BaseCandidate candidate in EnumerateBaseCandidates(resultFrame))
+        {
+            if (!IsVisibleOverrideOverBase(referenceTuple, candidate.Tuple, activeSlot))
+                continue;
+
+            int[] modeled = CopyTuple(candidate.Tuple);
+            modeled[activeSlot] = overrideDirection;
+
+            if (!LadyBugMonsterPreferenceSystem.TupleEquals(modeled, referenceTuple))
+                continue;
+
+            result = Result.ModeledBfs(activeSlot, modeled, candidate.Source, guidance);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<BaseCandidate> EnumerateBaseCandidates(EnemyTraceFrame resultFrame)
+    {
+        if (TryGetPlayerDirection(resultFrame, out int playerDirection))
+        {
+            yield return new BaseCandidate(
+                LadyBugMonsterPreferenceSystem.GenerateRotateBranch(playerDirection),
+                "2E97_ROTATE_FROM_" + Hex2(playerDirection));
+        }
+
+        for (int rLow = 0; rLow < 16; rLow++)
+        {
+            yield return new BaseCandidate(
+                LadyBugMonsterPreferenceSystem.GenerateRandomBranchFromUsedRLow(rLow),
+                "2EC7_RANDOM_RLOW_" + rLow.ToString("X1", CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static bool IsVisibleOverrideOverBase(int[] referenceTuple, int[] baseTuple, int activeSlot)
+    {
+        if (activeSlot < 0 || activeSlot >= LadyBugMonsterPreferenceSystem.PreferredSlotCount)
+            return false;
+
+        for (int i = 0; i < LadyBugMonsterPreferenceSystem.PreferredSlotCount; i++)
+        {
+            if (i == activeSlot)
+                continue;
+
+            if ((referenceTuple[i] & 0x0F) != (baseTuple[i] & 0x0F))
+                return false;
+        }
+
+        return (referenceTuple[activeSlot] & 0x0F) != (baseTuple[activeSlot] & 0x0F);
+    }
+
+    private static bool IsChaseTimerActive(EnemyTraceFrame frame, int activeSlot)
+    {
+        if (frame.enemyWork?.chaseTimers == null ||
+            activeSlot < 0 ||
+            activeSlot >= frame.enemyWork.chaseTimers.Count)
+        {
+            return false;
+        }
+
+        return (frame.enemyWork.chaseTimers[activeSlot] & 0xFF) != 0;
     }
 
     private static bool TryCopyReferencePreferredTuple(EnemyTraceFrame frame, out int[] tuple)
@@ -114,9 +220,29 @@ public static class LadyBugPreferredHybridProvider
                d == LadyBugMonsterPreferenceSystem.DirDown;
     }
 
+    private static int[] CopyTuple(IReadOnlyList<int> values)
+    {
+        var tuple = new int[LadyBugMonsterPreferenceSystem.PreferredSlotCount];
+        for (int i = 0; i < tuple.Length && i < values.Count; i++)
+            tuple[i] = values[i] & 0x0F;
+        return tuple;
+    }
+
     private static string Hex2(int value)
     {
         return (value & 0xFF).ToString("X2", CultureInfo.InvariantCulture);
+    }
+
+    private readonly struct BaseCandidate
+    {
+        public BaseCandidate(int[] tuple, string source)
+        {
+            Tuple = tuple;
+            Source = source;
+        }
+
+        public int[] Tuple { get; }
+        public string Source { get; }
     }
 
     public readonly struct Result
@@ -125,18 +251,27 @@ public static class LadyBugPreferredHybridProvider
             int activeSlot,
             int[] preferredTuple,
             bool usedModeledRotate,
-            string source)
+            bool usedModeledBfs,
+            bool usedTraceFallback,
+            string source,
+            string guidance)
         {
             ActiveSlot = activeSlot;
             PreferredTuple = preferredTuple;
             UsedModeledRotate = usedModeledRotate;
+            UsedModeledBfs = usedModeledBfs;
+            UsedTraceFallback = usedTraceFallback;
             Source = source;
+            Guidance = guidance;
         }
 
         public int ActiveSlot { get; }
         public int[] PreferredTuple { get; }
         public bool UsedModeledRotate { get; }
+        public bool UsedModeledBfs { get; }
+        public bool UsedTraceFallback { get; }
         public string Source { get; }
+        public string Guidance { get; }
 
         public int Preferred =>
             ActiveSlot >= 0 && ActiveSlot < PreferredTuple.Length
@@ -145,7 +280,7 @@ public static class LadyBugPreferredHybridProvider
 
         public static Result Missing(int activeSlot)
         {
-            return new Result(activeSlot, new int[LadyBugMonsterPreferenceSystem.PreferredSlotCount], false, "missing");
+            return new Result(activeSlot, new int[LadyBugMonsterPreferenceSystem.PreferredSlotCount], false, false, true, "missing", string.Empty);
         }
 
         public static Result ModeledRotate(int activeSlot, int[] preferredTuple, int playerDirection)
@@ -154,20 +289,31 @@ public static class LadyBugPreferredHybridProvider
                 activeSlot,
                 CopyTuple(preferredTuple),
                 true,
-                "2E97_MODELED_ROTATE_FROM_" + Hex2(playerDirection));
+                false,
+                false,
+                "2E97_MODELED_ROTATE_FROM_" + Hex2(playerDirection),
+                string.Empty);
+        }
+
+        public static Result ModeledBfs(
+            int activeSlot,
+            int[] preferredTuple,
+            string baseSource,
+            LadyBugBfsChaseSourceModel.GuidanceResult guidance)
+        {
+            return new Result(
+                activeSlot,
+                CopyTuple(preferredTuple),
+                false,
+                true,
+                false,
+                "477D_MODELED_BFS_OVER_" + baseSource,
+                guidance.ToCompactString());
         }
 
         public static Result TraceFallback(int activeSlot, int[] preferredTuple, string source)
         {
-            return new Result(activeSlot, CopyTuple(preferredTuple), false, source);
-        }
-
-        private static int[] CopyTuple(IReadOnlyList<int> values)
-        {
-            var tuple = new int[LadyBugMonsterPreferenceSystem.PreferredSlotCount];
-            for (int i = 0; i < tuple.Length && i < values.Count; i++)
-                tuple[i] = values[i] & 0x0F;
-            return tuple;
+            return new Result(activeSlot, CopyTuple(preferredTuple), false, false, true, source, string.Empty);
         }
     }
 }
