@@ -9,15 +9,14 @@ using System.Globalization;
 /// This is intentionally separate from the standard JSONL trace pipeline:
 ///
 /// - JSONL remains the frame-by-frame comparison format.
-/// - error.log / LBPREF is an exact-PC reverse-engineering diagnostic stream.
+/// - error.log / LBPREF / LBRND is an exact-PC reverse-engineering diagnostic stream.
 ///
-/// v0.6.71:
-/// - Adds a shadow replay check that replays the exact-PC LBPREF stream with
-///   LadyBugMonsterPreferenceSystem.
-/// - The replay validates the modeled base writes and checks that the simulated
-///   preferred[] state matches the p0..p3 snapshots before each logged write.
-/// - BFS/chase writes are still applied from the observed 477D hit, because the
-///   full BFS pathfinding system is not implemented yet.
+/// v0.9.13d:
+/// - Keeps the previous LBPREF preferred[] write analysis.
+/// - Adds explicit LBRND analysis for the new exact-PC random probes.
+/// - Pairs 0x2EA5 "true LD A,R value" events with the following 0x2EC7 writes.
+/// - Confirms whether the direction written at 0x2EC7 is exactly predicted from
+///   the low nibble captured at 0x2EA5.
 /// </summary>
 public static class LadyBugPreferredPcLogAnalyzer
 {
@@ -25,41 +24,45 @@ public static class LadyBugPreferredPcLogAnalyzer
     private const string RotateSource = "2E97_ROTATE_WRITE";
     private const string BfsSource = "477D_BFS_WRITE";
 
+    private const string RandomLoopBeforeLdRSource = "2EA3_PREF_RANDOM_LOOP_BEFORE_LD_R";
+    private const string RandomRValueSource = "2EA5_PREF_RANDOM_R_VALUE";
+
     public static IReadOnlyList<string> BuildReport(string errorLogText)
     {
         var lines = new List<string>();
 
-        List<PreferredPcHit> hits = ParseHits(errorLogText);
+        List<PreferredPcHit> preferredHits = ParseHits(errorLogText);
+        List<RandomPcHit> randomHits = ParseRandomHits(errorLogText);
 
         lines.Add("preferred[] exact-PC error.log diagnostics");
-        lines.Add($"  LBPREF hits: {hits.Count}");
+        lines.Add($"  LBPREF hits: {preferredHits.Count}");
+        lines.Add($"  LBRND hits: {randomHits.Count}");
 
-        if (hits.Count == 0)
+        if (preferredHits.Count == 0 && randomHits.Count == 0)
         {
-            lines.Add("  No LBPREF lines found. Make sure MAME was launched with the exact-PC diagnostic script and -log.");
+            lines.Add("  No LBPREF or LBRND lines found. Make sure MAME was launched with the exact-PC diagnostic script and -log.");
             return lines;
         }
 
-        Dictionary<string, int> sourceCounts = CountBySource(hits);
-        int[] slotCounts = InferSlotCounts(hits, out int unknownSlotCount);
+        if (preferredHits.Count > 0)
+        {
+            AppendPreferredWriteReport(lines, preferredHits);
+        }
+        else
+        {
+            lines.Add("preferred[] exact-PC write diagnostics");
+            lines.Add("  no LBPREF lines found.");
+        }
 
-        AppendSourceCounts(lines, sourceCounts);
-        AppendSlotCounts(lines, slotCounts, unknownSlotCount);
-        AppendSlotBfsCorrelation(lines, sourceCounts, slotCounts);
-
-        List<PreferredPcTuple> randomTuples = BuildBaseTuples(hits, RandomSource);
-        List<PreferredPcTuple> rotateTuples = BuildBaseTuples(hits, RotateSource);
-
-        lines.Add("preferred[] exact-PC tuple summary");
-        lines.Add($"  {RandomSource}: {randomTuples.Count} complete 4-write tuple(s)");
-        lines.Add($"  {RotateSource}: {rotateTuples.Count} complete 4-write tuple(s)");
-
-        AppendTopTuples(lines, "top random tuples from 2EC7", randomTuples, 12);
-        AppendTopTuples(lines, "top rotate tuples from 2E97", rotateTuples, 8);
-        AppendRandomRDiagnostics(lines, randomTuples);
-        AppendModelCheck(lines, randomTuples, rotateTuples);
-        AppendShadowReplayCheck(lines, hits);
-        AppendBfsSummary(lines, hits);
+        if (randomHits.Count > 0)
+        {
+            AppendExactRandomReport(lines, preferredHits, randomHits);
+        }
+        else
+        {
+            lines.Add("preferred[] exact-PC random LD A,R capture diagnostics");
+            lines.Add("  no LBRND lines found. Use the v0.9.13c+ Lua script to capture 0x2EA3/0x2EA5 probes.");
+        }
 
         return lines;
     }
@@ -71,47 +74,54 @@ public static class LadyBugPreferredPcLogAnalyzer
         if (string.IsNullOrEmpty(errorLogText))
             return hits;
 
-        string[] rows = errorLogText.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        string[] rows = SplitRows(errorLogText);
 
-        foreach (string row in rows)
+        for (int i = 0; i < rows.Length; i++)
         {
+            string row = rows[i];
             if (!row.Contains("LBPREF", StringComparison.Ordinal))
                 continue;
 
-            if (TryParseHit(row, out PreferredPcHit hit))
+            if (TryParsePreferredHit(row, i, out PreferredPcHit hit))
                 hits.Add(hit);
         }
 
         return hits;
     }
 
-    private static bool TryParseHit(string row, out PreferredPcHit hit)
+    public static List<RandomPcHit> ParseRandomHits(string errorLogText)
+    {
+        var hits = new List<RandomPcHit>();
+
+        if (string.IsNullOrEmpty(errorLogText))
+            return hits;
+
+        string[] rows = SplitRows(errorLogText);
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            string row = rows[i];
+            if (!row.Contains("LBRND", StringComparison.Ordinal))
+                continue;
+
+            if (TryParseRandomHit(row, i, out RandomPcHit hit))
+                hits.Add(hit);
+        }
+
+        return hits;
+    }
+
+    private static string[] SplitRows(string text)
+    {
+        return text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+    }
+
+    private static bool TryParsePreferredHit(string row, int sequence, out PreferredPcHit hit)
     {
         hit = new PreferredPcHit();
 
-        int marker = row.IndexOf("LBPREF", StringComparison.Ordinal);
-        if (marker < 0)
+        if (!TryParsePayload(row, "LBPREF", out Dictionary<string, string> values))
             return false;
-
-        string payload = row[marker..].Trim();
-        string[] parts = payload.Split('|', StringSplitOptions.RemoveEmptyEntries);
-
-        if (parts.Length == 0 || parts[0] != "LBPREF")
-            return false;
-
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        for (int i = 1; i < parts.Length; i++)
-        {
-            string part = parts[i].Trim();
-            int eq = part.IndexOf('=');
-            if (eq <= 0)
-                continue;
-
-            string key = part[..eq].Trim();
-            string value = part[(eq + 1)..].Trim();
-            values[key] = value;
-        }
 
         string source = GetString(values, "source");
         string pc = GetString(values, "pc");
@@ -121,6 +131,7 @@ public static class LadyBugPreferredPcLogAnalyzer
 
         hit = new PreferredPcHit
         {
+            Sequence = sequence,
             Source = source,
             Pc = pc,
             R = GetHex(values, "r"),
@@ -148,10 +159,226 @@ public static class LadyBugPreferredPcLogAnalyzer
             Chase2 = GetHex(values, "chase2"),
             Chase3 = GetHex(values, "chase3"),
             RoundRobin = GetHex(values, "rr"),
+            PlayerDir = GetHex(values, "playerDir"),
             RawLine = row
         };
 
         return true;
+    }
+
+    private static bool TryParseRandomHit(string row, int sequence, out RandomPcHit hit)
+    {
+        hit = new RandomPcHit();
+
+        if (!TryParsePayload(row, "LBRND", out Dictionary<string, string> values))
+            return false;
+
+        string source = GetString(values, "source");
+        string pc = GetString(values, "pc");
+
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(pc))
+            return false;
+
+        hit = new RandomPcHit
+        {
+            Sequence = sequence,
+            Source = source,
+            Pc = pc,
+            R = GetHex(values, "r"),
+            A = GetHex(values, "a"),
+            B = GetHex(values, "b"),
+            C = GetHex(values, "c"),
+            D = GetHex(values, "d"),
+            E = GetHex(values, "e"),
+            H = GetHex(values, "h"),
+            L = GetHex(values, "l"),
+            HL = GetHex(values, "hl"),
+            IY = GetHex(values, "iy"),
+            SP = GetHex(values, "sp"),
+            P0 = GetHex(values, "p0"),
+            P1 = GetHex(values, "p1"),
+            P2 = GetHex(values, "p2"),
+            P3 = GetHex(values, "p3"),
+            TempDir = GetHex(values, "tmpDir"),
+            TempX = GetHex(values, "tmpX"),
+            TempY = GetHex(values, "tmpY"),
+            RejectedMask = GetHex(values, "rejected"),
+            FallbackMask = GetHex(values, "fallback"),
+            Chase0 = GetHex(values, "chase0"),
+            Chase1 = GetHex(values, "chase1"),
+            Chase2 = GetHex(values, "chase2"),
+            Chase3 = GetHex(values, "chase3"),
+            RoundRobin = GetHex(values, "rr"),
+            Timer61B9 = GetHex(values, "timer61B9"),
+            PlayerDir = GetHex(values, "playerDir"),
+            PlayerX = GetHex(values, "playerX"),
+            PlayerY = GetHex(values, "playerY"),
+            RawLine = row
+        };
+
+        return true;
+    }
+
+    private static bool TryParsePayload(string row, string markerName, out Dictionary<string, string> values)
+    {
+        values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        int marker = row.IndexOf(markerName, StringComparison.Ordinal);
+        if (marker < 0)
+            return false;
+
+        string payload = row[marker..].Trim();
+        string[] parts = payload.Split('|', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0 || parts[0] != markerName)
+            return false;
+
+        for (int i = 1; i < parts.Length; i++)
+        {
+            string part = parts[i].Trim();
+            int eq = part.IndexOf('=');
+            if (eq <= 0)
+                continue;
+
+            string key = part[..eq].Trim();
+            string value = part[(eq + 1)..].Trim();
+            values[key] = value;
+        }
+
+        return true;
+    }
+
+    private static void AppendPreferredWriteReport(List<string> lines, List<PreferredPcHit> hits)
+    {
+        Dictionary<string, int> sourceCounts = CountBySource(hits);
+        int[] slotCounts = InferSlotCounts(hits, out int unknownSlotCount);
+
+        AppendSourceCounts(lines, sourceCounts);
+        AppendSlotCounts(lines, slotCounts, unknownSlotCount);
+        AppendSlotBfsCorrelation(lines, sourceCounts, slotCounts);
+
+        List<PreferredPcTuple> randomTuples = BuildBaseTuples(hits, RandomSource);
+        List<PreferredPcTuple> rotateTuples = BuildBaseTuples(hits, RotateSource);
+
+        lines.Add("preferred[] exact-PC tuple summary");
+        lines.Add($"  {RandomSource}: {randomTuples.Count} complete 4-write tuple(s)");
+        lines.Add($"  {RotateSource}: {rotateTuples.Count} complete 4-write tuple(s)");
+
+        AppendTopTuples(lines, "top random tuples from 2EC7", randomTuples, 12);
+        AppendTopTuples(lines, "top rotate tuples from 2E97", rotateTuples, 8);
+        AppendRandomRDiagnosticsFromWritePc(lines, randomTuples);
+        AppendModelCheck(lines, randomTuples, rotateTuples);
+        AppendShadowReplayCheck(lines, hits);
+        AppendBfsSummary(lines, hits);
+    }
+
+    private static void AppendExactRandomReport(
+        List<string> lines,
+        List<PreferredPcHit> preferredHits,
+        List<RandomPcHit> randomHits)
+    {
+        lines.Add("preferred[] exact-PC random LD A,R capture diagnostics");
+
+        Dictionary<string, int> randomSourceCounts = CountRandomBySource(randomHits);
+        foreach (KeyValuePair<string, int> pair in TopCounts(randomSourceCounts, 24))
+            lines.Add($"  {pair.Key}: {pair.Value}");
+
+        List<RandomPcHit> randomRValues = FilterRandomHits(randomHits, RandomRValueSource);
+        List<RandomPcHit> beforeLdRValues = FilterRandomHits(randomHits, RandomLoopBeforeLdRSource);
+        List<PreferredPcHit> randomWrites = FilterPreferredHits(preferredHits, RandomSource);
+
+        lines.Add("preferred[] exact-PC random 0x2EA5 -> 0x2EC7 pairing");
+        lines.Add($"  2EA3 before LD A,R hits: {beforeLdRValues.Count}");
+        lines.Add($"  2EA5 true LD A,R value hits: {randomRValues.Count}");
+        lines.Add($"  2EC7 random write hits: {randomWrites.Count}");
+
+        PairingStats stats = PairRandomRValuesWithWrites(randomRValues, randomWrites);
+        lines.Add($"  paired 2EA5->2EC7 events: {stats.PairedCount}");
+        lines.Add($"  exact direction matches from A@2EA5 low nibble: {stats.DirectionMatches}/{stats.PairedCount}");
+        lines.Add($"  missing 2EA5 events before write: {stats.MissingRValueBeforeWrite}");
+        lines.Add($"  leftover unpaired 2EA5 events: {stats.LeftoverRValues}");
+        lines.Add($"  first exact random mismatch: {stats.FirstMismatch}");
+
+        if (stats.PairedCount > 0)
+        {
+            lines.Add("  exact R-low distribution at 2EA5:");
+            foreach (KeyValuePair<string, int> pair in TopCounts(stats.RLowCounts, 16))
+                lines.Add($"    {pair.Value}x RLOW={pair.Key}");
+
+            lines.Add("  direction distribution predicted from 2EA5:");
+            foreach (KeyValuePair<string, int> pair in TopCounts(stats.PredictedDirectionCounts, 8))
+                lines.Add($"    {pair.Value}x DIR={pair.Key}");
+
+            lines.Add("  R delta from 2EA5 to 2EC7 write PC:");
+            foreach (KeyValuePair<string, int> pair in TopCounts(stats.WritePcRDeltaCounts, 16))
+                lines.Add($"    {pair.Value}x delta=+{pair.Key}");
+
+            lines.Add("  first exact random pairs:");
+            foreach (string sample in stats.FirstPairs)
+                lines.Add("    " + sample);
+        }
+
+        lines.Add("  interpretation: 0x2EA5 captures the true value loaded by LD A,R before AND 0x0F. This is the value needed for any future random preferred[] provider.");
+    }
+
+    private static PairingStats PairRandomRValuesWithWrites(
+        List<RandomPcHit> rValues,
+        List<PreferredPcHit> writes)
+    {
+        var stats = new PairingStats();
+        var queue = new Queue<RandomPcHit>();
+        int rIndex = 0;
+
+        foreach (PreferredPcHit write in writes)
+        {
+            while (rIndex < rValues.Count && rValues[rIndex].Sequence < write.Sequence)
+            {
+                queue.Enqueue(rValues[rIndex]);
+                rIndex++;
+            }
+
+            if (queue.Count == 0)
+            {
+                stats.MissingRValueBeforeWrite++;
+                continue;
+            }
+
+            RandomPcHit rHit = queue.Dequeue();
+            int rLow = rHit.A & 0x0F;
+            int predicted = DirectionFromRandomRLow(rLow);
+            int observed = write.A & 0x0F;
+            int delta = (write.R - rHit.A) & 0x0F;
+
+            stats.PairedCount++;
+            Increment(stats.RLowCounts, Hex1(rLow));
+            Increment(stats.PredictedDirectionCounts, Hex2(predicted));
+            Increment(stats.WritePcRDeltaCounts, Hex1(delta));
+
+            if (predicted == observed)
+            {
+                stats.DirectionMatches++;
+            }
+            else if (stats.FirstMismatch == "none")
+            {
+                stats.FirstMismatch =
+                    $"line={write.Sequence} A2EA5={Hex2(rHit.A)} rLow={Hex1(rLow)} predicted={Hex2(predicted)} observed={Hex2(observed)} writeR={Hex2(write.R)}";
+            }
+
+            if (stats.FirstPairs.Count < 8)
+            {
+                stats.FirstPairs.Add(
+                    $"A@2EA5={Hex2(rHit.A)} rLow={Hex1(rLow)} predicted={Hex2(predicted)} observed={Hex2(observed)} R@2EC7={Hex2(write.R)} delta=+{Hex1(delta)} pBefore=[{Hex2(write.P0)},{Hex2(write.P1)},{Hex2(write.P2)},{Hex2(write.P3)}]");
+            }
+        }
+
+        while (rIndex < rValues.Count)
+        {
+            queue.Enqueue(rValues[rIndex]);
+            rIndex++;
+        }
+
+        stats.LeftoverRValues = queue.Count;
+        return stats;
     }
 
     private static Dictionary<string, int> CountBySource(List<PreferredPcHit> hits)
@@ -159,12 +386,45 @@ public static class LadyBugPreferredPcLogAnalyzer
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (PreferredPcHit hit in hits)
-        {
-            counts.TryGetValue(hit.Source, out int count);
-            counts[hit.Source] = count + 1;
-        }
+            Increment(counts, hit.Source);
 
         return counts;
+    }
+
+    private static Dictionary<string, int> CountRandomBySource(List<RandomPcHit> hits)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (RandomPcHit hit in hits)
+            Increment(counts, hit.Source);
+
+        return counts;
+    }
+
+    private static List<PreferredPcHit> FilterPreferredHits(List<PreferredPcHit> hits, string source)
+    {
+        var filtered = new List<PreferredPcHit>();
+
+        foreach (PreferredPcHit hit in hits)
+        {
+            if (hit.Source == source)
+                filtered.Add(hit);
+        }
+
+        return filtered;
+    }
+
+    private static List<RandomPcHit> FilterRandomHits(List<RandomPcHit> hits, string source)
+    {
+        var filtered = new List<RandomPcHit>();
+
+        foreach (RandomPcHit hit in hits)
+        {
+            if (hit.Source == source)
+                filtered.Add(hit);
+        }
+
+        return filtered;
     }
 
     private static int[] InferSlotCounts(List<PreferredPcHit> hits, out int unknown)
@@ -272,11 +532,7 @@ public static class LadyBugPreferredPcLogAnalyzer
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (PreferredPcTuple tuple in tuples)
-        {
-            string key = tuple.FormatDirections();
-            counts.TryGetValue(key, out int count);
-            counts[key] = count + 1;
-        }
+            Increment(counts, tuple.FormatDirections());
 
         lines.Add(title);
 
@@ -290,9 +546,9 @@ public static class LadyBugPreferredPcLogAnalyzer
             lines.Add($"  {pair.Value}x {pair.Key}");
     }
 
-    private static void AppendRandomRDiagnostics(List<string> lines, List<PreferredPcTuple> randomTuples)
+    private static void AppendRandomRDiagnosticsFromWritePc(List<string> lines, List<PreferredPcTuple> randomTuples)
     {
-        lines.Add("preferred[] exact-PC random R diagnostics");
+        lines.Add("preferred[] exact-PC random R diagnostics from 2EC7 write PC");
 
         if (randomTuples.Count == 0)
         {
@@ -306,28 +562,24 @@ public static class LadyBugPreferredPcLogAnalyzer
         {
             PreferredPcHit[] hits = tuple.ToArray();
 
-            for (int i = 0; i < hits.Length; i++)
+            for (int i = 0; i < hits.Length - 1; i++)
             {
                 PreferredPcHit hit = hits[i];
+                PreferredPcHit next = hits[i + 1];
+
                 int direction = hit.A & 0x0F;
-                int usedRLow = LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(hit.R, direction);
+                int usedRLow = ReconstructUsedRLowFromWritePcR(hit.R, direction);
+                int nextDirection = next.A & 0x0F;
+                int nextUsedRLow = ReconstructUsedRLowFromWritePcR(next.R, nextDirection);
+                int delta = (nextUsedRLow - usedRLow) & 0x0F;
 
-                if (i < hits.Length - 1)
+                if (!deltaByDirection.TryGetValue(direction, out Dictionary<int, int>? directionCounts))
                 {
-                    PreferredPcHit next = hits[i + 1];
-                    int nextDirection = next.A & 0x0F;
-                    int nextUsedRLow = LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(next.R, nextDirection);
-                    int delta = (nextUsedRLow - usedRLow) & 0x0F;
-
-                    if (!deltaByDirection.TryGetValue(direction, out Dictionary<int, int>? directionCounts))
-                    {
-                        directionCounts = new Dictionary<int, int>();
-                        deltaByDirection[direction] = directionCounts;
-                    }
-
-                    directionCounts.TryGetValue(delta, out int count);
-                    directionCounts[delta] = count + 1;
+                    directionCounts = new Dictionary<int, int>();
+                    deltaByDirection[direction] = directionCounts;
                 }
+
+                Increment(directionCounts, delta);
             }
         }
 
@@ -370,27 +622,35 @@ public static class LadyBugPreferredPcLogAnalyzer
 
         foreach (PreferredPcTuple tuple in randomTuples)
         {
-            int usedRLowStart = tuple.UsedRLowAtSlot(0);
-            int[] predicted = LadyBugMonsterPreferenceSystem.GenerateRandomBranchFromUsedRLow(usedRLowStart);
+            bool match = true;
+            foreach (PreferredPcHit hit in tuple.ToArray())
+            {
+                int predicted = DirectionFromRandomRLow(
+                    ReconstructUsedRLowFromWritePcR(hit.R, hit.A & 0x0F));
 
-            if (tuple.Matches(predicted))
+                if (predicted != (hit.A & 0x0F))
+                {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (match)
             {
                 randomMatches++;
             }
             else if (firstRandomMismatch == "none")
             {
-                firstRandomMismatch =
-                    $"expected={tuple.FormatDirections()} predicted={LadyBugMonsterPreferenceSystem.FormatTuple(predicted)} " +
-                    $"usedRLowStart={usedRLowStart:X1}";
+                firstRandomMismatch = $"tuple={tuple.FormatDirections()} R@2EC7=[{tuple.FormatRValues()}]";
             }
         }
 
-        lines.Add($"  2EC7 random model matches: {randomMatches}/{randomTuples.Count}");
+        lines.Add($"  2EC7 random write-PC model matches: {randomMatches}/{randomTuples.Count}");
         if (firstRandomMismatch != "none")
             lines.Add($"  first random mismatch: {firstRandomMismatch}");
 
         int rotateMatchesWithDownStart = 0;
-        int[] rotateFromDown = LadyBugMonsterPreferenceSystem.GenerateRotateBranch(LadyBugMonsterPreferenceSystem.DirDown);
+        int[] rotateFromDown = GenerateRotateBranch(DirDown);
 
         foreach (PreferredPcTuple tuple in rotateTuples)
         {
@@ -399,7 +659,7 @@ public static class LadyBugPreferredPcLogAnalyzer
         }
 
         lines.Add($"  2E97 rotate model from PLAYER_DIR_CURRENT=08 matches: {rotateMatchesWithDownStart}/{rotateTuples.Count}");
-        lines.Add($"  rotate from 08 predicts: {LadyBugMonsterPreferenceSystem.FormatTuple(rotateFromDown)}");
+        lines.Add($"  rotate from 08 predicts: {FormatTuple(rotateFromDown)}");
     }
 
     private static void AppendShadowReplayCheck(List<string> lines, List<PreferredPcHit> hits)
@@ -438,9 +698,8 @@ public static class LadyBugPreferredPcLogAnalyzer
                 HasConsecutiveSource(hits, i, 4, hit.Source))
             {
                 int[] predicted = hit.Source == RandomSource
-                    ? LadyBugMonsterPreferenceSystem.GenerateRandomBranchFromUsedRLow(
-                        LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(hit.R, hit.A & 0x0F))
-                    : LadyBugMonsterPreferenceSystem.GenerateRotateBranch(LadyBugMonsterPreferenceSystem.DirDown);
+                    ? PredictRandomTupleFromWritePcHits(hits, i)
+                    : GenerateRotateBranch(hit.PlayerDir != 0 ? hit.PlayerDir : DirDown);
 
                 for (int slot = 0; slot < 4; slot++)
                 {
@@ -474,7 +733,7 @@ public static class LadyBugPreferredPcLogAnalyzer
 
             if (hit.Source == BfsSource)
             {
-                bool applied = LadyBugMonsterPreferenceSystem.TryApplyBfsOverride(state, hit.IY, hit.A);
+                bool applied = TryApplyBfsOverride(state, hit.IY, hit.A);
 
                 if (applied)
                     bfsOverridesApplied++;
@@ -505,6 +764,20 @@ public static class LadyBugPreferredPcLogAnalyzer
 
         lines.Add($"  final shadow preferred[] state: {FormatState(state)}");
         lines.Add("  note: BFS direction is still observed from 477D; full BFS pathfinding is not implemented yet.");
+    }
+
+    private static int[] PredictRandomTupleFromWritePcHits(List<PreferredPcHit> hits, int start)
+    {
+        int[] predicted = new int[4];
+
+        for (int slot = 0; slot < 4; slot++)
+        {
+            PreferredPcHit hit = hits[start + slot];
+            int usedRLow = ReconstructUsedRLowFromWritePcR(hit.R, hit.A & 0x0F);
+            predicted[slot] = DirectionFromRandomRLow(usedRLow);
+        }
+
+        return predicted;
     }
 
     private static void CheckPreState(
@@ -562,6 +835,16 @@ public static class LadyBugPreferredPcLogAnalyzer
         return -1;
     }
 
+    private static bool TryApplyBfsOverride(int[] state, int iy, int value)
+    {
+        int slot = iy - 0x61C4;
+        if (slot < 0 || slot >= 4)
+            return false;
+
+        state[slot] = value & 0x0F;
+        return true;
+    }
+
     private static bool StateEquals(IReadOnlyList<int> a, IReadOnlyList<int> b)
     {
         if (a.Count < 4 || b.Count < 4)
@@ -602,12 +885,10 @@ public static class LadyBugPreferredPcLogAnalyzer
                 bfsUnknownSlotCount++;
 
             string timerKey = $"chase=[{Hex2(hit.Chase0)},{Hex2(hit.Chase1)},{Hex2(hit.Chase2)},{Hex2(hit.Chase3)}] rr={Hex2(hit.RoundRobin)}";
-            timerCounts.TryGetValue(timerKey, out int timerCount);
-            timerCounts[timerKey] = timerCount + 1;
+            Increment(timerCounts, timerKey);
 
             string directionKey = Hex2(hit.A);
-            directionCounts.TryGetValue(directionKey, out int directionCount);
-            directionCounts[directionKey] = directionCount + 1;
+            Increment(directionCounts, directionKey);
         }
 
         lines.Add($"  {BfsSource}: {count} hit(s)");
@@ -658,6 +939,56 @@ public static class LadyBugPreferredPcLogAnalyzer
         return -1;
     }
 
+    private static int ReconstructUsedRLowFromWritePcR(int writePcR, int generatedDirection)
+    {
+        int delta = generatedDirection switch
+        {
+            0x01 => 0x08,
+            0x02 => 0x0A,
+            0x04 => 0x0B,
+            0x08 => 0x0C,
+            _ => 0x00
+        };
+
+        return (writePcR - delta) & 0x0F;
+    }
+
+    private static int DirectionFromRandomRLow(int rLow)
+    {
+        int value = ((rLow & 0x0F) >> 1) + 1;
+
+        if (value < 3)
+            return 0x01;
+
+        if (value < 5)
+            return 0x02;
+
+        if (value < 7)
+            return 0x04;
+
+        return 0x08;
+    }
+
+    private const int DirDown = 0x08;
+
+    private static int[] GenerateRotateBranch(int playerDir)
+    {
+        int[] values = new int[4];
+        int value = playerDir & 0x0F;
+
+        for (int i = 0; i < 4; i++)
+        {
+            bool carry = (value & 0x01) != 0;
+            value >>= 1;
+            if (carry)
+                value |= 0x08;
+
+            values[i] = value & 0x0F;
+        }
+
+        return values;
+    }
+
     private static string GetString(Dictionary<string, string> values, string key)
     {
         return values.TryGetValue(key, out string? value) ? value : string.Empty;
@@ -678,9 +1009,26 @@ public static class LadyBugPreferredPcLogAnalyzer
             : 0;
     }
 
+    private static void Increment(Dictionary<string, int> counts, string key)
+    {
+        counts.TryGetValue(key, out int count);
+        counts[key] = count + 1;
+    }
+
+    private static void Increment(Dictionary<int, int> counts, int key)
+    {
+        counts.TryGetValue(key, out int count);
+        counts[key] = count + 1;
+    }
+
     private static string Hex2(int value) => (value & 0xFF).ToString("X2", CultureInfo.InvariantCulture);
 
     private static string Hex1(int value) => (value & 0x0F).ToString("X1", CultureInfo.InvariantCulture);
+
+    private static string FormatTuple(IReadOnlyList<int> tuple)
+    {
+        return $"[{Hex2(tuple[0])},{Hex2(tuple[1])},{Hex2(tuple[2])},{Hex2(tuple[3])}]";
+    }
 
     private static string FormatTopDeltaCounts(Dictionary<int, int> counts)
     {
@@ -730,9 +1078,9 @@ public static class LadyBugPreferredPcLogAnalyzer
 
     public sealed class PreferredPcHit
     {
+        public int Sequence { get; init; }
         public string Source { get; init; } = string.Empty;
         public string Pc { get; init; } = string.Empty;
-
         public int R { get; init; }
         public int A { get; init; }
         public int B { get; init; }
@@ -744,24 +1092,58 @@ public static class LadyBugPreferredPcLogAnalyzer
         public int HL { get; init; }
         public int IY { get; init; }
         public int SP { get; init; }
-
         public int P0 { get; init; }
         public int P1 { get; init; }
         public int P2 { get; init; }
         public int P3 { get; init; }
-
         public int TempDir { get; init; }
         public int TempX { get; init; }
         public int TempY { get; init; }
         public int RejectedMask { get; init; }
         public int FallbackMask { get; init; }
-
         public int Chase0 { get; init; }
         public int Chase1 { get; init; }
         public int Chase2 { get; init; }
         public int Chase3 { get; init; }
         public int RoundRobin { get; init; }
+        public int PlayerDir { get; init; }
+        public string RawLine { get; init; } = string.Empty;
+    }
 
+    public sealed class RandomPcHit
+    {
+        public int Sequence { get; init; }
+        public string Source { get; init; } = string.Empty;
+        public string Pc { get; init; } = string.Empty;
+        public int R { get; init; }
+        public int A { get; init; }
+        public int B { get; init; }
+        public int C { get; init; }
+        public int D { get; init; }
+        public int E { get; init; }
+        public int H { get; init; }
+        public int L { get; init; }
+        public int HL { get; init; }
+        public int IY { get; init; }
+        public int SP { get; init; }
+        public int P0 { get; init; }
+        public int P1 { get; init; }
+        public int P2 { get; init; }
+        public int P3 { get; init; }
+        public int TempDir { get; init; }
+        public int TempX { get; init; }
+        public int TempY { get; init; }
+        public int RejectedMask { get; init; }
+        public int FallbackMask { get; init; }
+        public int Chase0 { get; init; }
+        public int Chase1 { get; init; }
+        public int Chase2 { get; init; }
+        public int Chase3 { get; init; }
+        public int RoundRobin { get; init; }
+        public int Timer61B9 { get; init; }
+        public int PlayerDir { get; init; }
+        public int PlayerX { get; init; }
+        public int PlayerY { get; init; }
         public string RawLine { get; init; } = string.Empty;
     }
 
@@ -804,7 +1186,7 @@ public static class LadyBugPreferredPcLogAnalyzer
                 _ => S0
             };
 
-            return LadyBugMonsterPreferenceSystem.ReconstructUsedRLowFromWritePcR(hit.R, hit.A & 0x0F);
+            return ReconstructUsedRLowFromWritePcR(hit.R, hit.A & 0x0F);
         }
 
         public string FormatDirections()
@@ -823,8 +1205,20 @@ public static class LadyBugPreferredPcLogAnalyzer
             int r1 = UsedRLowAtSlot(1);
             int r2 = UsedRLowAtSlot(2);
             int r3 = UsedRLowAtSlot(3);
-
             return $"{Hex1(r0)},{Hex1(r1)},{Hex1(r2)},{Hex1(r3)}";
         }
+    }
+
+    private sealed class PairingStats
+    {
+        public int PairedCount { get; set; }
+        public int DirectionMatches { get; set; }
+        public int MissingRValueBeforeWrite { get; set; }
+        public int LeftoverRValues { get; set; }
+        public string FirstMismatch { get; set; } = "none";
+        public Dictionary<string, int> RLowCounts { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, int> PredictedDirectionCounts { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, int> WritePcRDeltaCounts { get; } = new(StringComparer.Ordinal);
+        public List<string> FirstPairs { get; } = new();
     }
 }
