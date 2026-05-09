@@ -1,8 +1,8 @@
 # Current Implementation
 
 **Project:** Enemy Trace Simulator  
-**Current package version:** v0.9.8  
-**Latest validated milestone:** `Multi-enemy-safe transition source-path inspector`  
+**Current package version:** v0.9.9b  
+**Latest validated milestone:** `Source-path single-enemy replay candidate`  
 **Engine target:** Godot Engine .NET 4.6.2  
 **Language:** C#  
 
@@ -60,6 +60,8 @@ This means:
 - diagnostics should follow the source path, not ask artificial questions.
 ```
 
+v0.9.9b is the first checkpoint where the normal candidate replay can compute the active one-enemy movement step from the reconstructed source path.
+
 ## 3. Main UI workflow
 
 The main window shows two boards:
@@ -78,18 +80,10 @@ Load load the current JSONL trace
 ↺    restart visual sequence from the beginning
 ▶    resume playback
 ❚❚   pause playback
-▶|   advance one tick manually
+▶|   advance exactly one tick
 Dump dump the current frame
 Find helper navigation in the trace
 Compare open analytical comparison tools
-```
-
-The three visual sequence buttons are:
-
-```text
-↺   reset to frame 0
-▶/❚❚ pause or resume
-▶|  advance exactly one tick
 ```
 
 ### 3.1 Restart behavior
@@ -226,7 +220,7 @@ Recommended settings for one-enemy validation:
 }
 ```
 
-Longer traces can be used to verify that v0.9.8 correctly detects the transition out of the one-enemy scope:
+Longer traces can be used to verify that the replay detects the transition out of the one-enemy scope:
 
 ```json
 {
@@ -299,7 +293,7 @@ vramD000_D3FF
 colorD400_D7FF
 ```
 
-The raw-memory blocks are used by static maze and tile-level diagnostics.
+The raw-memory blocks are used by source-path, static maze, and tile-level diagnostics.
 
 ## 8. Coordinate conventions
 
@@ -462,12 +456,13 @@ Core enemy movement principles:
 
 The enemy advances by one pixel per update, but it does not choose a new direction at every pixel. Outside decision centers, the source path normally keeps the current direction and only checks the forced-reversal path.
 
-## 11. Source-path decision inspector
+## 11. Compare adapters
 
-Implemented files:
+Implemented / relevant files:
 
 ```text
 scripts/tools/simulation/LadyBugEnemySimulationAdapter.cs
+scripts/tools/simulation/LadyBugSourcePathSingleEnemyReplayAdapter.cs
 scripts/tools/simulation/LadyBugSourcePathDecisionInspector.cs
 scripts/tools/simulation/LadyBugEnemyDecisionModel.cs
 scripts/tools/simulation/LadyBugEnemyDecisionGate427EModel.cs
@@ -475,15 +470,95 @@ scripts/tools/simulation/LadyBugMameLocalTile4130Oracle.cs
 scripts/tools/simulation/LadyBugGodotStaticMazeOracle.cs
 ```
 
-Current Compare workflow:
+### 11.1 Reference-direction baseline
+
+Compare mode:
 
 ```text
-Compare > Lady Bug reference-direction step
+Lady Bug reference-direction step
 ```
 
-The visual replay uses reference-direction movement to keep the left/right boards aligned while the source-path inspector explains the transition.
+This mode keeps visual replay stable by applying the direction observed in the MAME trace, then runs the compact transition-based source-path inspector.
 
-### 11.1 Transition-based timing
+It remains useful as a baseline check for trace loading, visual comparison, and source-path explanation.
+
+### 11.2 Source-path single-enemy replay
+
+Compare mode:
+
+```text
+Lady Bug source-path single-enemy replay
+```
+
+This is the v0.9.9b milestone adapter.
+
+For one-active-enemy transitions, it computes the visible enemy movement step through the reconstructed source path rather than using the reference direction:
+
+```text
+0x427E decision gate
+  carry set:
+    preferred 0x42E6
+    current   0x4325 if preferred rejected
+    fallback  0x4241 if current rejected
+  carry clear:
+    outside-center keep / forced reversal 0x433A
+then:
+  0x43BA one-pixel movement step
+```
+
+Still synchronized from the trace in v0.9.9b:
+
+```text
+release timing
+preferred[]
+player
+gates
+timers
+VRAM context
+inactive slots
+multi-enemy frames after scope limit
+```
+
+The adapter reports:
+
+```text
+modeledSingleEnemyTransitions
+modeledSlotMismatches
+modeledEnemyWorkMismatches
+modeledClean
+fullScopeClean
+firstModeledProblem
+firstMultiEnemySync
+```
+
+### 11.3 v0.9.9b rejected-mask correction
+
+The first v0.9.9 replay exposed a single `EnemyWork` mismatch in the fallback path:
+
+```text
+model=rej:07
+reference=rej:03
+```
+
+The corrected rule in v0.9.9b is:
+
+```text
+preferred rejected -> 0x61C1 |= preferred
+current rejected   -> 0x61C1 |= current
+fallback scan rejected directions are not added to 0x61C1
+```
+
+After this correction:
+
+```text
+modeledEnemyWorkMismatches=0
+```
+
+## 12. Source-path decision inspector
+
+The inspector remains useful for explaining transitions and validating the source path.
+
+### 12.1 Transition-based timing
 
 The inspector uses:
 
@@ -494,7 +569,7 @@ reference result = frame[i] enemy slot and EnemyWork
 
 This fixed a false-positive class where the already displayed frame was treated as if it were the source routine input.
 
-### 11.2 Source path followed
+### 12.2 Source path followed
 
 The inspector follows only source-tested directions:
 
@@ -512,29 +587,7 @@ then:
 
 The all-four-directions collision report is disabled in the normal Compare output because it can create false positives by testing directions the source never tried.
 
-### 11.3 Compact normal report
-
-v0.9.7 made the normal Compare output compact.
-
-The report keeps high-value counters:
-
-```text
-inspectedTransitions
-preferredAccepted
-preferredRejectedCurrentKept
-fallbackSelected
-outsideCenterKeep
-sourceAcceptedButStaticBlockedProbes
-resultMismatchesSlot
-resultMismatchesEnemyWork
-missingVramInspections
-clean
-firstProblem
-```
-
-Detailed examples are intentionally omitted from the normal Compare report.
-
-### 11.4 Multi-enemy-safe mode
+### 12.3 Multi-enemy-safe mode
 
 v0.9.8 does not implement multi-enemy source-path analysis. It only prevents misleading reports.
 
@@ -542,19 +595,18 @@ Transition classification:
 
 ```text
 activeStart=0 -> skippedNoActiveStartEnemyTransitions
-activeStart=1 and activeResult=1 -> inspect normally
-activeStart>1 or activeResult>1 -> skippedMultiEnemyTransitions
+activeStart=1 and activeResult=1 -> inspect or replay normally
+activeStart>1 or activeResult>1 -> skipped / synced multi-enemy transition
 ```
 
-For the 1201-frame test trace:
+For the 1201-frame test trace under v0.9.9b:
 
 ```text
-singleEnemyTransitions=827
-skippedNoActiveStartEnemyTransitions=10
-skippedMultiEnemyTransitions=363
-singleEnemyClean=true
-clean=false
-firstSkippedMultiEnemyTransition startTick=837 resultTick=838 activeStart=1 activeResult=2
+modeledSingleEnemyTransitions=827
+multiEnemySyncTransitions=363
+modeledClean=true
+fullScopeClean=false
+firstMultiEnemySync startTick=837 resultTick=838 activeStart=1 activeResult=2
 ```
 
 Interpretation:
@@ -562,11 +614,11 @@ Interpretation:
 ```text
 - one-enemy section is clean;
 - the trace later leaves the supported scope;
-- multi-enemy transitions are intentionally skipped;
-- clean=false only because unsupported multi-enemy transitions occurred.
+- multi-enemy transitions are intentionally resynchronized;
+- fullScopeClean=false only because unsupported multi-enemy transitions occurred.
 ```
 
-## 12. Historical v0.8 diagnostic bridge
+## 13. Historical v0.8 diagnostic bridge
 
 v0.8.0 validated a diagnostic bridge for the current one-enemy static-player trace.
 
@@ -592,40 +644,45 @@ preferred[] was still replayed from exact-PC MAME events in error.log.
 
 So v0.8 was a validated replay bridge, not final autonomous AI.
 
-## 13. Current validation status
+## 14. Current validation status
 
-Validated on multiple 600-tick static-player traces:
+Validated on two different 600-tick static-player traces:
 
 ```text
 visual replay comparison: mismatches=0
-sourceAcceptedButStaticBlockedProbes=0
-resultMismatchesSlot=0
-resultMismatchesEnemyWork=0
-missingVramInspections=0
+modeledSlotMismatches=0
+modeledEnemyWorkMismatches=0
+modeledClean=true
+fullScopeClean=true
+firstModeledProblem: none
 ```
 
 Validated on a 1200-tick trace that reaches two active enemies:
 
 ```text
 visual replay comparison: mismatches=0
-singleEnemyClean=true
-skippedMultiEnemyTransitions > 0
-multiEnemyMode=skip-until-explicitly-supported
+modeledSingleEnemyTransitions=827
+multiEnemySyncTransitions=363
+modeledSlotMismatches=0
+modeledEnemyWorkMismatches=0
+modeledClean=true
+fullScopeClean=false
+firstMultiEnemySync startTick=837 resultTick=838 activeStart=1 activeResult=2
 ```
 
-This proves the current one-enemy inspector remains clean and that the tool now reports unsupported multi-enemy transitions instead of pretending to understand them.
+This proves the current one-enemy replay remains clean and that the tool now reports unsupported multi-enemy transitions instead of pretending to model them.
 
-## 14. Current limitations
+## 15. Current limitations
 
 Current known limitations:
 
 ```text
-- the left-side simulation is not yet the fully autonomous enemy AI from the main LadyBug project;
-- some paths still use reference-direction replay;
-- enemy release timing is still trace-derived;
-- den-exit logic is not fully autonomous;
-- the source-path inspector is validated only for one active enemy;
-- multi-enemy transitions are skipped explicitly in v0.9.8;
+- release timing is still trace-derived;
+- preferred[] is still trace-synced;
+- player state is still trace-synced;
+- gates, timers, VRAM context, inactive slots, and multi-enemy frames are still trace-synced;
+- den-exit logic is not autonomous;
+- true multi-enemy replay is not implemented;
 - moving-player traces are not implemented yet;
 - pivoting-door interaction as a gameplay input is not yet part of the validation workflow;
 - chase timers and round-robin behavior are not independently modeled;
@@ -633,40 +690,37 @@ Current known limitations:
 - exact-PC logs remain diagnostic aids only.
 ```
 
-## 15. Next milestones
+## 16. Next milestones
 
 ### Priority: validate one-enemy movement with static player
 
-This remains the immediate priority.
+This remains the immediate priority, but v0.9.9b is a major step because the active one-enemy movement step is now modeled through the source path.
 
 Tasks:
 
 ```text
 - keep the clean two-board visual replay as the main workflow;
-- keep source-path transition inspection clean on several static-player traces;
-- connect or mirror the real Godot one-enemy movement candidate;
-- compare the candidate against MAME;
+- validate source-path single-enemy replay on several static-player traces;
+- reduce trace-synced inputs one by one;
 - stop at the first visible mismatch;
 - use the source-path inspector to explain that mismatch.
 ```
 
-### Later options
+### Candidate next steps
 
-After the one-enemy static-player path is solid:
+Likely next dependencies to remove or reduce:
 
 ```text
-1. add traces where the player moves;
-2. add explicit pivoting-door interaction traces;
-3. add true multi-enemy source-path analysis;
-4. implement autonomous enemy release / slot activation;
-5. validate chase activation and timers;
-6. validate BFS / chase guidance;
-7. add regression trace fixtures.
+1. preferred[] trace-sync;
+2. release timing / den-exit trace-sync;
+3. player movement traces;
+4. explicit pivoting-door interaction traces;
+5. true multi-enemy source-path replay later.
 ```
 
-Multi-enemy support is intentionally not the next priority. v0.9.8 only makes the current inspector safe when a trace leaves the one-enemy scope.
+Multi-enemy support is intentionally not the next priority. v0.9.8/v0.9.9b only make the current code safe when a trace leaves the one-enemy scope.
 
-## 16. Documentation rhythm
+## 17. Documentation rhythm
 
 Update documentation at significant milestones:
 
@@ -677,7 +731,8 @@ Update documentation at significant milestones:
 - new trace format requirement;
 - important reverse-engineering correction;
 - removal of obsolete diagnostic paths;
-- validation scope changes such as v0.9.8 multi-enemy-safe skipping.
+- validation scope changes such as multi-enemy-safe skipping;
+- replay scope changes such as v0.9.9b source-path single-enemy replay.
 ```
 
 Do not update the documentation for every tiny temporary counter or throwaway experiment.
