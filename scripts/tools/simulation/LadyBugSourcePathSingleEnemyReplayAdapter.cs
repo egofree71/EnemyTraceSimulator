@@ -4,7 +4,10 @@ using System.Globalization;
 using System.Text;
 
 /// <summary>
-/// v0.9.9b source-path single-enemy replay adapter.
+/// v0.9.10 source-path single-enemy replay adapter.
+///
+/// v0.9.10 is a naming/reporting cleanup over v0.9.9b. The modeled movement
+/// logic is intentionally unchanged.
 ///
 /// Scope:
 /// - reference trace remains the source for player, gates, timers, release timing,
@@ -22,12 +25,12 @@ using System.Text;
 /// </summary>
 public sealed class LadyBugSourcePathSingleEnemyReplayAdapter : IEnemySimulationAdapter
 {
-    private const string Version = "v0.9.9b";
+    private const string Version = "v0.9.10";
 
     public string Name => "Lady Bug source-path single-enemy replay";
 
     public string Description =>
-        "v0.9.9b: compute the active mono-enemy transition with the source-first path; " +
+        "v0.9.10: compute the active mono-enemy transition with the source-first path; " +
         "sync release timing, player, gates, preferred[], VRAM context and multi-enemy frames from the reference trace.";
 
     public bool ExpectedToMismatch => false;
@@ -688,7 +691,9 @@ public sealed class LadyBugSourcePathSingleEnemyReplayAdapter : IEnemySimulation
         builder.Append($"outsideCenterKeep={stats.OutsideCenterKeep}, ");
         builder.Append($"outsideCenterForcedReversal={stats.OutsideCenterForcedReversal}, ");
         builder.Append($"testedDirectionProbes={stats.TestedDirectionProbes}, ");
+        builder.Append($"modeledSlotMatches={stats.ModeledSlotMatches}, ");
         builder.Append($"modeledSlotMismatches={stats.ModeledSlotMismatches}, ");
+        builder.Append($"modeledEnemyWorkMatches={stats.ModeledEnemyWorkMatches}, ");
         builder.Append($"modeledEnemyWorkMismatches={stats.ModeledEnemyWorkMismatches}, ");
         builder.Append($"modeledClean={(modeledClean ? "true" : "false")}, ");
         builder.Append($"fullScopeClean={(fullScopeClean ? "true" : "false")}, ");
@@ -706,7 +711,7 @@ public sealed class LadyBugSourcePathSingleEnemyReplayAdapter : IEnemySimulation
             builder.Append(stats.FirstMultiEnemySync);
         }
 
-        builder.Append("; NOTE: v0.9.9 computes the active single-enemy movement step instead of moving by reference direction. It still syncs release timing, preferred[], player, gates, timers, VRAM context, inactive slots, and multi-enemy frames from MAME.");
+        builder.Append("; NOTE: v0.9.10 default candidate computes the active single-enemy movement step through the source path instead of moving by reference direction. It still syncs release timing, preferred[], player, gates, timers, VRAM context, inactive slots, and multi-enemy frames from MAME.");
         return builder.ToString();
     }
 

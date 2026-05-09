@@ -1,17 +1,20 @@
 using System.Collections.Generic;
 
 /// <summary>
-/// Default Lady Bug simulation adapter for the v0.9.9b milestone.
+/// Default Lady Bug simulation adapter.
 ///
-/// The normal visual replay now uses the source-path single-enemy replay adapter:
-/// it computes slot-0/mono-active enemy movement through the source-first path
-/// validated by v0.9.6-v0.9.8, while still syncing release timing, player,
-/// gates, timers, inactive slots, and out-of-scope multi-enemy frames from the
-/// reference trace.
+/// This class intentionally stays as the stable UI-facing adapter name used by
+/// EnemyTraceSimulatorWindow and Compare.  The actual implementation is delegated
+/// to <see cref="LadyBugSourcePathSingleEnemyReplayAdapter"/>.
 ///
-/// This is not the final autonomous enemy AI yet. It is the first step where the
-/// visible candidate replay no longer advances the active single enemy simply by
-/// copying the reference direction.
+/// Current default, v0.9.10:
+/// - compute the active mono-enemy transition through the validated source path;
+/// - keep release timing, player, gates, timers, preferred[], VRAM context,
+///   inactive slots, and multi-enemy frames synchronized from the reference trace;
+/// - stop pretending that the old reference-direction step is the main candidate.
+///
+/// This is still not the final autonomous Lady Bug enemy AI. It is the validated
+/// single-enemy candidate replay used before removing more trace-synced inputs.
 /// </summary>
 public sealed class LadyBugEnemySimulationAdapter : IEnemySimulationAdapter
 {

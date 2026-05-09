@@ -62,7 +62,7 @@ public partial class EnemyTraceSimulatorWindow : Control
         LoadDefaultMazeInBoards();
 
         Log("Enemy trace simulator UI ready.");
-        Log("v0.9.0f: visual replay autostop with clean boards; release overlay and player cross/target debug removed.");
+        Log("v0.9.10b: source-path single-enemy replay is the default candidate; Compare UI labels cleaned.");
         Log($"MAME config: {DefaultMameConfigPath}");
         Log($"Trace par défaut: {DefaultTracePath}");
     }
@@ -604,15 +604,15 @@ public partial class EnemyTraceSimulatorWindow : Control
 
         var explanation = new Label
         {
-            Text = "Run the current Lady Bug simulation adapter and compare the visual replay state. The normal playback buttons already stop on the first visual mismatch.",
+            Text = "Run the current default Lady Bug candidate adapter and compare the visual replay state. The normal playback buttons already stop on the first visual mismatch.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         root.AddChild(explanation);
 
         var runButton = new Button
         {
-            Text = "Run Lady Bug reference-direction step",
-            CustomMinimumSize = new Vector2(260, 36)
+            Text = "Run Lady Bug source-path single-enemy replay",
+            CustomMinimumSize = new Vector2(340, 36)
         };
         root.AddChild(runButton);
 
